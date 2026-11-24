@@ -1,0 +1,4280 @@
+/*
+ * MOSS 550W Console — View-specific layout, Behance Wandering Earth FUI typography,
+ * semantic state color-coding, tactical contrast accents, and MOSS-avoiding HUD viewers.
+ * Built strictly on vendor/fui.css: flat surfaces, 1px hairlines, 0/2px radii, zero blur/shadow.
+ */
+
+:root {
+  --fui-font-sans: "Rajdhani", "Source Han Sans SC", "思源黑体", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --fui-font-cjk:  "Source Han Sans SC", "思源黑体", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --fui-font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Source Han Sans SC", "思源黑体", monospace;
+  --fui-open-bg: #0a1515;
+  --fui-open-mark: #f0f3f2;
+  --fui-open-red: #f51b19;
+  --fui-open-slate: #566262;
+  --fui-open-caption: #b8c7c5;
+  --fui-open-caption-dim: #a3b4b2;
+  --fui-signal-bridge: #ff645a;
+  --fui-accent-hot: var(--fui-intel); /* official v3.1 aerospace orange-red contrast accent (#ff6b3d) */
+  --fui-badge-slate-hi: #c1c3ce;  /* BSC-IQC badge top-left cool silver-lavender */
+  --fui-badge-slate: #d3d5e0;     /* BSC-IQC badge primary cool silver-lavender */
+  --fui-badge-crimson: #9b0606;   /* BSC-IQC industrial crimson CS / header / stripe */
+  --fui-badge-white: #f9fafc;     /* BSC-IQC lower-right crisp white */
+  --fui-badge-ink: #0b0c10;       /* BSC-IQC deep black print ink */
+}
+
+/* Official v3.1 Intel/Dossier/Document solid badge contrast styling (uses native --fui-intel) */
+.fui .fui-badge[data-state="intel"] {
+  border-color: var(--fui-intel);
+  color: var(--fui-intel);
+}
+.fui .fui-badge--solid[data-state="intel"],
+.fui .fui-badge--solid[data-hud-badge="intel"],
+.fui .fui-badge--solid[data-hud-badge="doc"] {
+  border-color: var(--fui-intel);
+  background: var(--fui-intel);
+  color: var(--fui-on-signal);
+}
+
+/* Global Freeze pauses all live motion cleanly */
+body[data-frozen="true"] .moss-hud-chip__dot,
+body[data-frozen="true"] .moss-strip__live .fui-live__dot {
+  animation: none;
+}
+
+/* ── v3 Station Console Frame: Pure Black Ground + One Teal Blueprint Stage ── */
+.moss-console {
+  background: var(--fui-void);
+  gap: var(--fui-space-2) var(--fui-space-4);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  grid-template:
+    "status status status" auto
+    "nav    main   aside " minmax(0, 1fr)
+    "footer footer footer" auto
+    / 288px minmax(0, 1fr) minmax(356px, 408px);
+}
+.moss-console .fui-console__nav,
+.moss-console .fui-console__aside {
+  background: var(--fui-void);
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fui-line-2) transparent;
+}
+.moss-console .fui-console__nav::-webkit-scrollbar,
+.moss-console .fui-console__aside::-webkit-scrollbar {
+  width: 4px;
+}
+.moss-console .fui-console__nav::-webkit-scrollbar-track,
+.moss-console .fui-console__aside::-webkit-scrollbar-track {
+  background: transparent;
+}
+.moss-console .fui-console__nav::-webkit-scrollbar-thumb,
+.moss-console .fui-console__aside::-webkit-scrollbar-thumb {
+  background: var(--fui-line-2);
+}
+.moss-rail-black {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+}
+.moss-rail-black > .moss-group {
+  flex: none;
+}
+.fui-console__aside.moss-rail-black {
+  gap: 10px;
+}
+.moss-group {
+  display: grid;
+  gap: 4px;
+}
+.moss-group > .fui-cap {
+  margin: 0;
+}
+.moss-group > .fui-cap > h2 {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--fui-space-2);
+  color: var(--fui-text);
+}
+.moss-group > .fui-cap > h2 > span[lang="en"] {
+  margin-left: 0;
+  color: var(--fui-text-dim);
+}
+.moss-console .fui-console__viewport {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 1260px) and (min-width: 1101px) {
+  .moss-console {
+    grid-template-columns: 260px minmax(0, 1fr) 340px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .moss-console {
+    height: auto;
+    min-height: 100dvh;
+    grid-template:
+      "status status" auto
+      "main   main  " auto
+      "aside  nav   " auto
+      "footer footer" auto
+      / minmax(0, 1.15fr) minmax(0, 0.85fr);
+  }
+  .moss-console .fui-console__main {
+    grid-template-rows: minmax(460px, 60vh) auto;
+  }
+  .moss-console .moss-comms-panel {
+    min-height: 440px;
+    max-height: 620px;
+  }
+}
+
+@media (max-width: 720px) {
+  .moss-console {
+    grid-template:
+      "status" auto
+      "main"   auto
+      "aside"  auto
+      "nav"    auto
+      "footer" auto
+      / minmax(0, 1fr);
+  }
+  .moss-console .fui-console__main {
+    grid-template-rows: minmax(400px, 56vh) auto;
+  }
+  .moss-console .moss-comms-panel {
+    min-height: 420px;
+    max-height: 68dvh;
+  }
+}
+
+/* ── Top Status Strip (Pure Black Ground + Rounded White Outlined Keys) ── */
+.moss-strip {
+  gap: var(--fui-space-2);
+  padding: 0 0 var(--fui-space-2);
+  border: 0;
+  border-bottom: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+}
+.moss-strip__ueg {
+  display: block;
+  width: 24px;
+  height: 28px;
+  flex: none;
+  background-color: var(--fui-text-hi);
+  -webkit-mask: url("/vendor/logos/ueg-emblem.svg") center / contain no-repeat;
+  mask: url("/vendor/logos/ueg-emblem.svg") center / contain no-repeat;
+}
+.moss-strip__brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--fui-radius-control);
+  background: transparent;
+  cursor: pointer;
+  flex: none;
+  transition: border-color var(--fui-dur-fast) var(--fui-ease),
+              background-color var(--fui-dur-fast) var(--fui-ease),
+              transform var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-strip__brand:hover {
+  border-color: var(--fui-act);
+  background: var(--fui-surface-1);
+}
+.moss-strip__brand:active {
+  transform: translateY(1px);
+}
+.moss-strip__badge-btn {
+  --s: var(--fui-text-hi);
+}
+.moss-strip__badge-btn:hover {
+  border-color: var(--fui-act);
+  color: var(--fui-act);
+}
+.moss-strip__logo-550w {
+  display: block;
+  width: 74px;
+  height: 24px;
+  object-fit: contain;
+}
+.moss-strip__sep {
+  width: 1px;
+  height: 16px;
+  background: var(--fui-line-2);
+  flex: none;
+}
+.moss-strip__spacer {
+  flex: 1 1 auto;
+  min-width: var(--fui-space-1);
+}
+.moss-strip__group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+  flex: none;
+}
+.moss-strip__model {
+  min-width: 0;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.moss-strip__live[data-link-state="warn"] {
+  color: var(--fui-warn);
+}
+.moss-strip__live[data-link-state="crit"] {
+  color: var(--fui-crit);
+}
+.moss-strip__live[data-live="true"] .fui-live__dot {
+  animation: fui-beat 1.8s linear infinite;
+}
+.moss-footer {
+  padding: var(--fui-space-1) 0 0;
+  border: 0;
+  border-top: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+}
+
+/* ── Behance Wandering Earth Split-Unit Chronometer (YYYY Y MM M DD D  HH H MM MIN SS S) ── */
+.moss-chrono {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.moss-chrono__major {
+  font-weight: 700;
+  color: var(--fui-text-hi);
+  line-height: 1;
+}
+.moss-chrono__minor {
+  font-weight: 600;
+  color: var(--fui-text-hi);
+  line-height: 1;
+}
+.moss-chrono__sec {
+  color: var(--fui-data);
+}
+.moss-chrono__unit {
+  font-size: var(--fui-text-micro);
+  font-weight: 500;
+  color: var(--fui-text-dim);
+  margin-right: 4px;
+  line-height: 1;
+}
+.moss-chrono__gap {
+  display: inline-block;
+  width: 6px;
+}
+.moss-chrono--strip .moss-chrono__major { font-size: var(--fui-text-sm); }
+.moss-chrono--strip .moss-chrono__minor { font-size: var(--fui-num-sm); }
+.moss-chrono--strip .moss-chrono__unit  { margin-right: 3px; }
+.moss-chrono--strip .moss-chrono__gap   { width: 3px; }
+
+.moss-chrono--hero .moss-chrono__major  { font-size: 1.45rem; letter-spacing: 0.02em; }
+.moss-chrono--hero .moss-chrono__minor  { font-size: 1.0rem; }
+.moss-chrono--compact .moss-chrono__major { font-size: 1.2rem; }
+.moss-chrono--compact .moss-chrono__minor { font-size: 0.9rem; }
+
+@media (max-width: 1260px) {
+  .moss-chrono--strip .moss-chrono__major,
+  .moss-chrono--strip .moss-chrono__unit {
+    display: none;
+  }
+  .moss-chrono--strip .moss-chrono__minor {
+    display: inline;
+  }
+}
+@media (max-width: 1100px) {
+  .moss-strip {
+    flex-wrap: wrap;
+    row-gap: var(--fui-space-2);
+    padding-block: var(--fui-space-2);
+  }
+  .moss-strip__spacer { display: none; }
+  .moss-strip__group { flex-wrap: wrap; max-width: 100%; }
+  .moss-comms-drawer[data-mode="drawer"] {
+    top: 88px;
+  }
+}
+@media (max-width: 720px) {
+  .moss-strip__hide-sm { display: none; }
+}
+
+/* ── Left Rail: Unboxed Station Groups Directly on Pure Black ── */
+.moss-stack {
+  display: grid;
+  gap: var(--fui-space-2);
+}
+.moss-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+  flex-wrap: wrap;
+}
+.moss-row--tight {
+  gap: var(--fui-space-1);
+}
+
+/* 550W Camera Key Matrix (3x2 Rounded White Outlined Keys · Movie Orange Selected + Lit Corner) */
+.moss-cam-matrix {
+  --fui-cols: 3;
+  gap: 5px;
+}
+.moss-cam-matrix .fui-matrix__key {
+  min-height: 34px;
+  padding: 2px 4px;
+}
+.moss-cam-matrix .fui-matrix__code {
+  opacity: 0.78;
+}
+@media (pointer: coarse) {
+  .moss-cam-matrix .fui-matrix__key { min-height: 48px; }
+}
+.moss-cam-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: var(--fui-space-1) var(--fui-space-2);
+  padding-top: 2px;
+}
+.moss-cam-angle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--fui-space-1);
+  white-space: nowrap;
+}
+.moss-cam-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+.moss-cam-angle .fui-num {
+  font-size: var(--fui-text-sm);
+  color: var(--fui-act);
+  min-width: 4ch;
+}
+
+/* Host Hardware Telemetry — v3 Three-Column Meter Rows Directly on Pure Black */
+.moss-hw-meters {
+  gap: 4px;
+}
+.moss-hw-meters .fui-meter {
+  grid-template-columns: 3.4em 4.6em minmax(0, 1fr);
+  column-gap: 6px;
+  min-height: 18px;
+}
+.moss-hw-meters .fui-meter__name {
+  font-size: var(--fui-text-label);
+  letter-spacing: 0.06em;
+}
+.moss-hw-meters .fui-meter__value {
+  font-size: var(--fui-num-sm);
+  text-align: right;
+}
+.moss-hw-meters .fui-gauge {
+  --segments: 18;
+  height: 8px;
+}
+.moss-hw-meters .moss-processor-meter {
+  grid-template-columns: 3.4em 4.6em minmax(0, 1fr) 6.2ch;
+}
+.moss-hw-temperature {
+  margin: 0;
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text);
+  text-align: right;
+  white-space: nowrap;
+}
+.moss-hw-meta {
+  display: grid;
+  gap: 4px;
+  padding-top: 2px;
+}
+.moss-hw-meta__stamp {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.moss-hw-meta__btns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.moss-hw-meta__btns .fui-key {
+  width: 100%;
+  padding-inline: var(--fui-space-2);
+}
+@media (pointer: coarse) {
+  .moss-hw-meta__btns .fui-key { min-height: 44px; }
+}
+
+/* Independent Full-Width Optical Modules:
+   1. Real Blender-Exported 550W Holographic CAD Wireframe (.moss-wire-box)
+   2. Privacy-First Local Optical Camera Feed (.moss-cam-box) */
+.moss-optics-box {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--fui-line-3);
+  border-radius: var(--fui-radius);
+  background: var(--fui-void);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-optics-box:hover {
+  border-color: var(--fui-line-hi);
+}
+.moss-wire-box {
+  width: 100%;
+  height: auto;
+  aspect-ratio: var(--moss-stage-aspect, 1.4);
+  min-height: 140px;
+  border-color: var(--fui-line-2);
+  background-color: var(--fui-void);
+  background-image:
+    radial-gradient(ellipse 72% 76% at 50% 54%, var(--fui-field) 0%, transparent 78%),
+    linear-gradient(to right, var(--fui-line-1) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--fui-line-1) 1px, transparent 1px);
+  background-size: 100% 100%, 16px 16px, 16px 16px;
+  background-position: center, -1px -1px, -1px -1px;
+}
+.moss-wire-box:hover {
+  border-color: var(--fui-data);
+}
+.moss-cam-box {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 10;
+}
+.moss-optics-box__head,
+.moss-optics-box__foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 6px;
+  background: var(--fui-hud-plate);
+  font-size: var(--fui-text-micro);
+  line-height: 1;
+  color: var(--fui-text-dim);
+  pointer-events: none;
+}
+.moss-optics-box__head {
+  top: 0;
+}
+.moss-optics-box__foot {
+  bottom: 0;
+}
+.moss-optics-dot {
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: 0.06em;
+  color: var(--fui-text-dim);
+}
+.moss-optics-dot[data-state="ok"]   { color: var(--fui-ok); }
+.moss-optics-dot[data-state="crit"] { color: var(--fui-crit); }
+.moss-wire-pose {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-act);
+}
+.moss-cam-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+.moss-cam-video[hidden] { display: none; }
+.moss-cam-standby {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 3px;
+  padding-top: 14px;
+  background: repeating-linear-gradient(135deg, transparent 0 8px, var(--fui-line-1) 8px 9px);
+}
+.moss-cam-standby[hidden] { display: none; }
+.moss-cam-standby__nosig {
+  font: 600 var(--fui-text-label) / 1 var(--fui-font-cjk);
+  letter-spacing: 0.18em;
+  color: var(--fui-warn);
+}
+.moss-cam-standby[data-cam-state="error"] .moss-cam-standby__nosig {
+  color: var(--fui-crit);
+}
+.moss-cam-standby__sub {
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-dim);
+}
+.moss-wire-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Left Rail Subsystem Self-Check Chip Rows (.fui-chiprows — 2-Col Compact Matrix) */
+.moss-sub-list {
+  gap: 3px;
+}
+.moss-sub-list--grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 8px;
+  row-gap: 3px;
+}
+.moss-sub-list--grid > li {
+  min-width: 0;
+}
+.moss-sub-list--grid > li.moss-sub-span {
+  grid-column: 1 / -1;
+}
+.moss-sub-list .fui-chiprow {
+  min-height: 20px;
+  column-gap: 5px;
+  padding: 0 2px;
+}
+.moss-sub-list .fui-chip {
+  min-width: 34px;
+  padding: 2px 3px;
+}
+.moss-sub-list .fui-chiprow__name {
+  font-size: var(--fui-text-micro);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.moss-sub-list .fui-chiprow__reading {
+  font-size: var(--fui-text-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+@media (pointer: coarse) {
+  .moss-sub-list--grid { grid-template-columns: 1fr; }
+  .moss-sub-list .fui-chiprow { min-height: 44px; }
+}
+
+/* Earth Track + Live Site Weather — Single Bordered Hero Tile in Left Rail */
+.moss-geo-tile {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+.moss-geo-split {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.moss-geo-stage {
+  position: relative;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+  overflow: hidden;
+}
+.moss-geo-canvas {
+  display: block;
+  width: 116px;
+  height: 116px;
+  margin: 0 auto;
+  cursor: grab;
+  touch-action: none;
+}
+.moss-geo-canvas:active { cursor: grabbing; }
+.moss-geo-callout { display: none; }
+.moss-geo-site-col {
+  display: grid;
+  align-content: space-between;
+  min-height: 116px;
+  padding-block: 4px;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+.moss-geo-site-col .fui-coord {
+  max-width: 100%;
+  font-size: 0.72rem;
+  line-height: 1.48;
+  padding: 3px 0 3px 7px;
+  white-space: pre-line;
+  word-break: keep-all;
+  letter-spacing: 0.04em;
+  border-left: 2px solid var(--fui-line-hi);
+}
+.moss-weather-row {
+  display: grid;
+  gap: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--fui-line-1);
+  min-width: 0;
+}
+.moss-weather-city {
+  display: inline-block;
+  justify-self: start;
+  width: auto;
+  max-width: 100%;
+  padding: 0 0 2px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  font-family: "Source Han Sans SC", var(--fui-font-cjk);
+  font-size: var(--moss-city-size, 1.85rem);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: var(--moss-city-track, 0.05em);
+  color: var(--fui-text-hi);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-weather-city:hover {
+  color: var(--fui-act);
+  border-bottom-color: var(--fui-act);
+}
+.moss-weather-temp-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--fui-space-2);
+  min-width: 0;
+}
+.moss-weather-temp {
+  display: inline-flex;
+  align-items: baseline;
+  flex: none;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--fui-text-hi);
+}
+.moss-weather-temp .fui-readout__unit {
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-hi);
+}
+.moss-weather-cond {
+  font-size: var(--fui-text-sm);
+  font-weight: 600;
+  color: var(--fui-act);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-weather-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--fui-space-1);
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-dim);
+}
+.moss-weather-strip .fui-coord {
+  max-width: 100%;
+  font-size: var(--fui-text-micro);
+  padding-inline: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left-color: var(--fui-line-hi);
+}
+.moss-geo-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.moss-geo-actions .fui-key {
+  padding: 0 3px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (pointer: coarse) {
+  .moss-geo-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .moss-geo-actions .fui-key { min-height: 44px; }
+}
+
+/* ── Center Primary Station Stage (Tag Strips + The ONE Teal Blueprint Window + Full-Width Dock) ── */
+.moss-console .fui-console__main {
+  gap: var(--fui-space-2);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(380px, 1fr) minmax(126px, 146px);
+}
+.moss-stage-shell {
+  grid-area: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.moss-stage-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 22px;
+}
+.moss-tagstrip-top {
+  gap: 4px 8px;
+}
+.moss-tagstrip-top > li {
+  gap: 4px;
+}
+.moss-tagstrip-bottom {
+  gap: 4px 16px;
+}
+.moss-tagstrip-bottom > li {
+  gap: 6px;
+}
+.moss-tagstrip-top .fui-chip,
+.moss-tagstrip-bottom .fui-chip {
+  min-width: 30px;
+  padding: 2px 4px;
+}
+.moss-tagstrip-top .fui-tagstrip__code {
+  font-size: var(--fui-text-micro);
+  letter-spacing: 0.08em;
+}
+/* Ensure 01-06 stage column ruler stays strictly above the 3D 550W WebGL canvas */
+.fui-stage__window > .fui-cols {
+  z-index: 6;
+  background: var(--fui-hud-plate);
+}
+
+/* Transparent Blueprint Technical Stamp (Zero Opaque Box · Etched Directly Over Blueprint Grid) */
+.moss-stage-ident {
+  position: absolute;
+  top: 29px;
+  left: 14px;
+  z-index: 4;
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.moss-stage-ident__top {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+}
+.moss-stage-ident__rule {
+  display: block;
+  width: 156px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--fui-intel) 0 16px, var(--fui-line-3) 16px 100%);
+}
+.moss-stage-ident__title {
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+}
+.moss-stage-ident__primary {
+  font: 600 var(--fui-text-sm) / 1 var(--fui-font-cjk);
+  letter-spacing: 0.1em;
+  color: var(--fui-text-hi);
+}
+.moss-stage-ident__secondary {
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fui-text-dim);
+}
+.moss-stage-ident .fui-chip {
+  min-width: 0;
+  padding: 2px 6px;
+}
+/* Translucent UEG Emblem Watermark Centered Behind 3D 550W Assembly */
+.moss-stage__watermark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 0;
+  width: min(320px, 56%);
+  aspect-ratio: 3000 / 3500;
+  transform: translate(-50%, -52%);
+  background-color: var(--fui-line-hi);
+  opacity: 0.08;
+  -webkit-mask: url("/vendor/logos/ueg-emblem.svg") center / contain no-repeat;
+  mask: url("/vendor/logos/ueg-emblem.svg") center / contain no-repeat;
+  pointer-events: none;
+}
+.moss-stage__canvas-wrap[data-hud-dock="left"] .moss-stage-ident,
+.moss-stage__canvas-wrap[data-hud-dock="expand"] .moss-stage-ident,
+.moss-stage__canvas-wrap[data-hud-dock="left"] .moss-stage-figure,
+.moss-stage__canvas-wrap[data-hud-dock="expand"] .moss-stage-figure {
+  display: none;
+}
+.moss-stage-figure {
+  left: 18px;
+  bottom: 58px;
+  top: auto;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--fui-space-3);
+  pointer-events: none;
+}
+.moss-stage-figure__item {
+  display: grid;
+  gap: 2px;
+}
+.moss-stage-figure .fui-figure__value {
+  font-size: var(--fui-text-lg);
+}
+@media (max-width: 820px) {
+  .moss-stage-figure { display: none; }
+}
+.moss-viewport-head {
+  height: auto;
+  min-height: var(--fui-strip);
+  padding-block: var(--fui-space-1);
+  flex-wrap: wrap;
+  gap: var(--fui-space-1) var(--fui-space-2);
+}
+
+/* Viewport Header Color-Coded HUD Switcher Tray */
+.moss-hud-tray {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--fui-space-1);
+}
+.moss-hud-chip {
+  --chip-c: var(--fui-data);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 21px;
+  padding: 0 6px;
+  border: 1px solid var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+  color: var(--fui-text-hi);
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-hud-chip[data-state="intel"] { --chip-c: var(--fui-intel); }
+.moss-hud-chip[data-state="ok"]    { --chip-c: var(--fui-ok); }
+.moss-hud-chip[data-state="data"]  { --chip-c: var(--fui-data); }
+.moss-hud-chip[data-state="warn"]  { --chip-c: var(--fui-warn); }
+.moss-hud-chip[data-state="crit"]  { --chip-c: var(--fui-crit); }
+.moss-hud-chip__dot {
+  width: 5px;
+  height: 5px;
+  background: var(--chip-c);
+  flex: none;
+}
+.moss-hud-chip:hover {
+  background: var(--fui-surface-2);
+  border-color: var(--chip-c);
+  color: var(--fui-text-hi);
+}
+.moss-hud-chip[aria-pressed="true"] {
+  background: var(--fui-lit) var(--fui-surface-2);
+  border-color: var(--fui-act);
+  color: var(--fui-act);
+}
+.moss-hud-chip[aria-pressed="true"] .moss-hud-chip__dot {
+  animation: fui-beat 1.5s linear infinite;
+}
+.moss-hud-chip--file {
+  border-style: dashed;
+  border-color: var(--fui-line-hi);
+  color: var(--fui-text-hi);
+}
+.moss-hud-chip--close {
+  border-color: var(--fui-line-2);
+  color: var(--fui-text-dim);
+}
+@media (pointer: coarse) {
+  .moss-hud-chip { min-height: 44px; padding: 0 var(--fui-space-3); }
+}
+
+/* Dock Tab Strip (v3 Orange Selection + Lit Bar, Never White Inverted Fill) */
+.moss-stage-tabs {
+  margin-left: auto;
+  display: inline-flex;
+  border: 1px solid var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  flex: none;
+}
+.moss-stage-tab {
+  min-height: 24px;
+  padding: 0 var(--fui-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--fui-text-dim);
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: var(--fui-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-stage-tab + .moss-stage-tab { border-left: 1px solid var(--fui-line-2); }
+.moss-stage-tab:hover { background: var(--fui-surface-2); color: var(--fui-text-hi); }
+.moss-stage-tab[aria-selected="true"] { background: var(--fui-lit-bar); color: var(--fui-act); }
+@media (pointer: coarse) {
+  .moss-stage-tab { min-height: 44px; padding: 0 var(--fui-space-3); }
+}
+
+/* Stage Grid & Absolute-Positioned 3D Canvas (CRITICAL: prevents Three.js canvas from inflating stage height!) */
+.moss-stage {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.moss-stage__ruler-top {
+  position: relative;
+  z-index: 3;
+  border-bottom: 1px solid var(--fui-line-1);
+}
+.moss-stage__canvas-wrap {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.moss-stage__canvas-wrap[data-drop-active="true"] {
+  outline: 2px dashed var(--fui-accent-hot);
+  outline-offset: -4px;
+}
+.moss-stage__ruler-left {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  border-right: 1px solid var(--fui-line-1);
+  pointer-events: none;
+}
+.moss-stage__canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  transition: transform var(--fui-dur-base) var(--fui-ease);
+}
+.moss-stage__canvas[hidden] { display: none; }
+.moss-stage__canvas:active { cursor: grabbing; }
+
+/* MOSS-Avoiding Smart Stage Shift: smoothly moves 550W aside when a viewer popup docks left/right! */
+@media (min-width: 1101px) {
+  .moss-stage__canvas-wrap[data-hud-dock="left"] .moss-stage__canvas {
+    transform: translateX(148px);
+  }
+  .moss-stage__canvas-wrap[data-hud-dock="right"] .moss-stage__canvas {
+    transform: translateX(-148px);
+  }
+}
+
+/* Camera Preset Optical Lock-On & Horizontal Scanner Sweep Animations */
+.moss-stage__sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  z-index: 4;
+  background: var(--fui-data);
+  opacity: 0;
+  pointer-events: none;
+}
+.moss-stage__sweep.is-sweeping {
+  animation: moss-sweep-down var(--fui-dur-base) var(--fui-ease) both;
+}
+@keyframes moss-sweep-down {
+  0%   { opacity: 0.9; transform: translateY(0); }
+  100% { opacity: 0;   transform: translateY(420px); }
+}
+.moss-stage__lock {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 96px;
+  height: 96px;
+  margin: -48px 0 0 -48px;
+  z-index: 4;
+  border: 1px solid var(--fui-crit);
+  -webkit-mask:
+    linear-gradient(#000 0 0) 0 0 / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) 100% 100% / 16px 16px no-repeat;
+  mask:
+    linear-gradient(#000 0 0) 0 0 / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 16px 16px no-repeat,
+    linear-gradient(#000 0 0) 100% 100% / 16px 16px no-repeat;
+  opacity: 0;
+  pointer-events: none;
+}
+.moss-stage__lock.is-locking {
+  animation: moss-optic-lock var(--fui-dur-base) var(--fui-ease) both;
+}
+@keyframes moss-optic-lock {
+  0%   { opacity: 0.95; transform: scale(1.4); }
+  70%  { opacity: 0.85; transform: scale(1); }
+  100% { opacity: 0;    transform: scale(0.96); }
+}
+
+/* Wandering Earth Monumental Split-Unit Chronometer Overlay inside Stage (clears .fui-cols!) */
+.moss-stage-chrono {
+  position: absolute;
+  top: 32px;
+  right: 14px;
+  z-index: 4;
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  padding: var(--fui-space-1) var(--fui-space-3);
+  border-right: 2px solid var(--fui-intel);
+  background: var(--fui-hud-plate);
+  pointer-events: none;
+}
+.moss-stage-chrono[hidden] { display: none; }
+.moss-stage__canvas-wrap[data-hud-dock="left"] .moss-stage-chrono,
+.moss-stage__canvas-wrap[data-hud-dock="right"] .moss-stage-chrono,
+.moss-stage__canvas-wrap[data-hud-dock="expand"] .moss-stage-chrono {
+  display: none;
+}
+.moss-stage-chrono__kicker {
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: 0.16em;
+  color: var(--fui-intel);
+}
+.moss-stage-chrono__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-3);
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-dim);
+}
+.moss-stage-chrono__up b {
+  font-weight: 500;
+  color: var(--fui-text-hi);
+}
+@media (max-width: 820px) {
+  .moss-stage-chrono { display: none; }
+}
+
+/* Honest Standby Plate when WebGL is disabled/unavailable */
+.moss-stage-standby {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--fui-space-2);
+  padding: var(--fui-space-4);
+  text-align: center;
+}
+.moss-stage-standby[hidden] { display: none; }
+
+/* Optical HUD overlay driven by moss-view.js (reticle box & redundant readout hidden per operator preference) */
+.moss-stage .camera-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.moss-stage .optic-target,
+.moss-stage .optic-readout {
+  display: none;
+}
+.moss-stage .optic-readout b { font-weight: 500; color: var(--fui-text-hi); }
+.moss-stage .check-indicator { color: var(--fui-data); font-weight: 600; }
+
+/* 3D Model Load Progress */
+.moss-model-loading {
+  position: absolute;
+  z-index: 4;
+  left: var(--fui-space-4);
+  bottom: var(--fui-space-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--fui-space-1) var(--fui-space-3);
+  min-width: 200px;
+  padding: var(--fui-space-2) var(--fui-space-3);
+  border: 1px solid var(--fui-line-3);
+  background: var(--fui-void);
+  pointer-events: none;
+}
+.moss-model-loading[hidden] { display: none; }
+.moss-model-loading .model-load-meter {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 4px;
+  border: 0;
+  background: var(--fui-line-2);
+  appearance: none;
+  color: var(--fui-data);
+}
+.moss-model-loading .model-load-meter::-webkit-progress-bar { background: var(--fui-line-2); }
+.moss-model-loading .model-load-meter::-webkit-progress-value { background: var(--fui-data); }
+
+/* Dynamic v3 Situation Headline Plate over Stage (centered below .fui-cols) */
+.moss-stage__plate-slot {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+}
+.moss-stage__plate-slot .fui-plate.fui-stage__plate {
+  top: 42px;
+  padding: var(--fui-space-3) var(--fui-space-6);
+  pointer-events: auto;
+}
+
+/* ── Game-FUI Universal Floating Viewer Layer (MOSS-Avoiding Smart Dock!) ── */
+.moss-hud-reminders {
+  position: absolute;
+  z-index: 9;
+  top: var(--fui-space-3);
+  right: var(--fui-space-3);
+  width: min(300px, calc(100% - 36px));
+  display: grid;
+  gap: var(--fui-space-2);
+}
+.moss-hud-reminders[hidden] { display: none; }
+.moss-hud-reminder {
+  display: grid;
+  gap: var(--fui-space-2);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  border: 1px solid var(--fui-warn);
+  border-top: 3px solid var(--fui-warn);
+  background: var(--fui-surface-1);
+}
+.moss-hud-reminder__head { display: flex; align-items: center; justify-content: space-between; gap: var(--fui-space-2); }
+.moss-hud-reminder__text { margin: 0; font-size: var(--fui-text-sm); color: var(--fui-text-hi); }
+
+.moss-hud-layer {
+  position: absolute;
+  inset: 38px 12px 56px 16px;
+  z-index: 8;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  pointer-events: none;
+}
+.moss-stage__canvas-wrap[data-hud-dock="right"] .moss-hud-layer {
+  justify-content: flex-end;
+}
+.moss-stage__canvas-wrap[data-hud-dock="expand"] .moss-hud-layer {
+  inset: 10px 12px 56px 16px;
+  align-items: stretch;
+}
+.moss-hud-layer:is([data-hud-count="2"], [data-hud-count="3"]) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 246px), 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--fui-space-2);
+}
+.moss-hud-layer:is([data-hud-count="2"], [data-hud-count="3"]) > [data-expanded="true"] {
+  grid-column: 1 / -1;
+}
+
+.moss-hud-card {
+  --hud-accent: var(--fui-data);
+  position: relative;
+  pointer-events: auto;
+  flex: 0 1 auto;
+  width: min(384px, 100%);
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--hud-accent);
+  border-top: 3px solid var(--hud-accent);
+  border-radius: var(--fui-radius);
+  background: var(--fui-surface-1);
+  overflow: hidden;
+  animation: moss-hud-enter var(--fui-dur-base) var(--fui-ease) both;
+}
+.moss-hud-card[data-expanded="true"] {
+  width: 100%;
+  height: 100%;
+}
+.moss-hud-card[data-state="intel"] { --hud-accent: var(--fui-accent-hot); }
+.moss-hud-card[data-state="ok"]    { --hud-accent: var(--fui-ok); }
+.moss-hud-card[data-state="data"]  { --hud-accent: var(--fui-data); }
+.moss-hud-card[data-state="warn"]  { --hud-accent: var(--fui-warn); }
+.moss-hud-card[data-state="crit"]  { --hud-accent: var(--fui-crit); }
+.moss-hud-card.fui-bracket::after  { border-color: var(--hud-accent); }
+
+@keyframes moss-hud-enter {
+  from { opacity: 0; transform: translateY(10px); clip-path: inset(0 0 24% 0); }
+  to   { opacity: 1; transform: translateY(0);    clip-path: inset(0 0 0 0); }
+}
+.moss-slide-anim {
+  animation: moss-slide-in var(--fui-dur-base) var(--fui-ease) both;
+}
+@keyframes moss-slide-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .moss-hud-card, .moss-slide-anim, .moss-stage__sweep, .moss-stage__lock { animation: none; }
+}
+
+.moss-hud-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 36px;
+  padding: var(--fui-space-2) var(--fui-space-4);
+  border-bottom: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-hud-card__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 600 var(--fui-text-sm) / 1.25 var(--fui-font-sans);
+  color: var(--fui-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-hud-card__ctrls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.moss-hud-ctrl {
+  min-height: 22px;
+  min-width: 24px;
+  padding: 0 5px;
+  border: 1px solid var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  background: transparent;
+  color: var(--fui-text);
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-hud-ctrl:hover:not(:disabled) {
+  background: var(--fui-surface-2);
+  border-color: var(--fui-line-hi);
+  color: var(--fui-text-hi);
+}
+.moss-hud-ctrl[aria-pressed="true"] {
+  background: var(--fui-text-hi);
+  border-color: var(--fui-text-hi);
+  color: var(--fui-on-signal);
+}
+.moss-hud-ctrl:disabled { opacity: 0.4; cursor: default; }
+
+.moss-hud-card__body {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--fui-space-2);
+  align-content: start;
+  padding: var(--fui-space-3) var(--fui-space-4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--fui-line-3) transparent;
+}
+.moss-hud-card__body > * { min-width: 0; max-width: 100%; }
+.moss-hud-kicker { color: var(--fui-accent-hot); }
+.moss-hud-hazard { height: 6px; }
+
+/* Intel Visual Plate */
+.moss-hud-visual {
+  display: grid;
+  place-items: center;
+  min-height: 98px;
+  padding: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-hud-visual--light {
+  background: var(--fui-text-hi);
+  border-color: var(--fui-line-hi);
+}
+.moss-hud-visual__img { display: block; max-width: 200px; max-height: 68px; object-fit: contain; }
+.moss-hud-visual__seal { display: block; width: auto; height: auto; max-width: 260px; max-height: 82px; object-fit: contain; }
+.moss-hud-visual__photo { display: block; max-width: 100%; max-height: 180px; object-fit: contain; }
+.moss-hud-visual__mask {
+  display: block;
+  width: 220px;
+  height: 82px;
+  background-color: var(--fui-text-hi);
+  -webkit-mask-image: var(--hud-mask);
+  mask-image: var(--hud-mask);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.moss-hud-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fui-space-1) var(--fui-space-2); min-width: 0; }
+.moss-hud-pager__btns { display: inline-flex; align-items: center; gap: var(--fui-space-1); flex: none; font-size: var(--fui-num-sm); color: var(--fui-text-dim); }
+.moss-hud-caption { margin: 0; min-width: 0; flex: 1 1 140px; font-size: var(--fui-text-micro); color: var(--fui-text-dim); }
+.moss-hud-summary { margin: 0; font-size: var(--fui-text-sm); line-height: 1.5; color: var(--fui-text); }
+.moss-hud-specs {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--fui-line-1);
+  border: 1px solid var(--fui-line-2);
+}
+.moss-hud-specs > div {
+  display: grid;
+  gap: 2px;
+  padding: var(--fui-space-1) var(--fui-space-2);
+  background: var(--fui-void);
+  min-width: 0;
+}
+.moss-hud-specs dd {
+  margin: 0;
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-hud-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+  flex-wrap: wrap;
+  padding-top: var(--fui-space-2);
+  border-top: 1px solid var(--fui-line-1);
+}
+.moss-hud-dossier-nav { display: inline-flex; flex-wrap: wrap; gap: var(--fui-space-1); }
+
+/* Dedicated Image Inspector Viewer */
+.moss-img-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-dim);
+}
+.moss-img-toolbar__sep {
+  width: 1px;
+  height: 14px;
+  background: var(--fui-line-2);
+  margin-inline: 2px;
+}
+.moss-img-stage {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+  padding: var(--fui-space-2);
+}
+.moss-hud-card[data-expanded="true"] .moss-img-stage {
+  max-height: 400px;
+}
+.moss-img-stage__img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  transition: transform var(--fui-dur-fast) var(--fui-ease);
+}
+
+/* Dedicated Audio / Video Player Viewer (100% FUI-themed transport, zero native pill controls) */
+.moss-hud-media-stage {
+  display: grid;
+  gap: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+  padding: var(--fui-space-2);
+}
+.moss-hud-media-stage audio[hidden] {
+  display: none;
+}
+.moss-fui-video {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  background: var(--fui-void);
+  border: 1px solid var(--fui-line-1);
+  cursor: pointer;
+}
+.moss-hud-card[data-expanded="true"] .moss-fui-video {
+  max-height: 360px;
+}
+.moss-fui-scrub {
+  position: relative;
+  height: 16px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-surface-1);
+  cursor: pointer;
+  touch-action: none;
+  overflow: hidden;
+  --scrub-c: var(--fui-ok);
+}
+.moss-fui-scrub[data-accent="data"] { --scrub-c: var(--fui-data); }
+.moss-fui-scrub[data-accent="warn"] { --scrub-c: var(--fui-warn); }
+.moss-fui-scrub[aria-disabled="true"] { cursor: default; }
+.moss-fui-scrub__ticks {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 11px, var(--fui-line-1) 11px 12px);
+  pointer-events: none;
+}
+.moss-fui-scrub__fill {
+  position: absolute;
+  inset: 2px auto 2px 0;
+  background: repeating-linear-gradient(90deg, var(--scrub-c) 0 9px, transparent 9px 12px);
+  pointer-events: none;
+}
+.moss-fui-scrub__head {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--fui-text-hi);
+  transform: translateX(-1px);
+  pointer-events: none;
+}
+.moss-fui-media-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+  flex-wrap: wrap;
+}
+.moss-fui-media-controls .fui-btn {
+  min-height: 26px;
+  padding: 0 var(--fui-space-2);
+  font-size: var(--fui-text-micro);
+}
+.moss-fui-vol-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.moss-fui-vol {
+  position: relative;
+  width: 68px;
+  height: 12px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-surface-1);
+  cursor: pointer;
+  touch-action: none;
+}
+.moss-fui-vol__fill {
+  position: absolute;
+  inset: 2px auto 2px 0;
+  background: var(--fui-data);
+  pointer-events: none;
+}
+.moss-hud-media-deck { display: grid; gap: var(--fui-space-2); }
+.moss-hud-media-meta { display: flex; align-items: center; gap: var(--fui-space-2); font-size: var(--fui-num-sm); color: var(--fui-text-dim); }
+.moss-hud-media-artist { flex: 1 1 auto; min-width: 0; color: var(--fui-text-hi); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.moss-hud-audio-viz {
+  display: block;
+  width: 100%;
+  height: clamp(34px, 4.2dvh, 54px);
+  background: transparent;
+}
+.moss-eq {
+  display: grid;
+  grid-template-columns: repeat(16, minmax(0, 1fr));
+  align-items: end;
+  gap: 2px;
+  height: 28px;
+  padding: 2px 4px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+}
+.moss-eq__bar {
+  display: block;
+  height: 100%;
+  background: var(--fui-ok);
+  transform-origin: bottom;
+  transform: scaleY(0.18);
+  transition: transform var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-seek-bar { cursor: pointer; }
+.moss-hud-media-transport { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--fui-space-1); }
+.moss-hud-media-transport .fui-btn { justify-content: center; }
+.moss-hud-tracklist { display: grid; border-top: 1px solid var(--fui-line-1); }
+.moss-hud-track {
+  display: grid;
+  grid-template-columns: 3ch minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--fui-space-2);
+  width: 100%;
+  min-height: 28px;
+  padding: 3px var(--fui-space-2);
+  border: 0;
+  border-bottom: 1px solid var(--fui-line-1);
+  background: transparent;
+  color: var(--fui-text);
+  font-size: var(--fui-text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-hud-track:hover { background: var(--fui-surface-2); }
+.moss-hud-track[aria-current="true"] {
+  background: var(--fui-surface-3);
+  color: var(--fui-text-hi);
+  border-left: 3px solid var(--fui-ok);
+}
+.moss-hud-track__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.moss-hud-track__kind { font-size: var(--fui-num-sm); color: var(--fui-text-dim); }
+
+/* Dedicated Document / PDF / Word Viewer */
+.moss-doc-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+}
+.moss-doc-meta .moss-hud-ctrl { margin-left: auto; }
+.moss-doc-pdf {
+  display: block;
+  width: 100%;
+  height: 260px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-hud-card[data-expanded="true"] .moss-doc-pdf {
+  height: 390px;
+}
+.moss-doc-sheet {
+  display: grid;
+  gap: var(--fui-space-2);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.moss-hud-card[data-expanded="true"] .moss-doc-sheet {
+  max-height: 380px;
+}
+.moss-doc-h {
+  margin: 0;
+  font: 600 var(--fui-text-sm) / 1.3 var(--fui-font-sans);
+  color: var(--fui-accent-hot);
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--fui-line-2);
+}
+.moss-doc-p {
+  margin: 0;
+  font-size: var(--fui-text-sm);
+  line-height: 1.55;
+  color: var(--fui-text);
+}
+.moss-doc-pre { max-height: 240px; }
+
+/* Behance Wandering Earth 3-Tier Bilingual KPI Cards & Split-Unit Chrono in HOST-04 */
+.moss-hud-chrono {
+  display: grid;
+  gap: 4px;
+  padding: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  border-left: 3px solid var(--fui-warn);
+  background: var(--fui-void);
+}
+.moss-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.moss-kpi {
+  --kpi-c: var(--fui-data);
+  display: grid;
+  gap: 2px;
+  padding: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  border-top: 2px solid var(--kpi-c);
+  background: var(--fui-void);
+}
+.moss-kpi[data-accent="ok"]    { --kpi-c: var(--fui-ok); }
+.moss-kpi[data-accent="warn"]  { --kpi-c: var(--fui-warn); }
+.moss-kpi[data-accent="intel"] { --kpi-c: var(--fui-accent-hot); }
+.moss-kpi__en {
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: 0.12em;
+  color: var(--fui-text-dim);
+}
+.moss-kpi__val {
+  font-size: 1.35rem;
+  line-height: 1.1;
+  color: var(--fui-text-hi);
+}
+.moss-kpi__unit {
+  font-size: var(--fui-text-micro);
+  font-weight: 500;
+  color: var(--kpi-c);
+  margin-left: 3px;
+}
+.moss-kpi__zh {
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-dim);
+}
+
+/* HUD Weather Card */
+.moss-hud-weather-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-3);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-hud-glyph {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  fill: none;
+  stroke: var(--fui-text-hi);
+  stroke-width: 1.6;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+.moss-hud-glyph [data-accent="data"] { stroke: var(--fui-data); }
+.moss-hud-glyph [data-accent="warn"] { stroke: var(--fui-warn); }
+.moss-hud-weather-main { display: grid; gap: 3px; min-width: 0; }
+.moss-hud-weather-city {
+  font-family: "Source Han Sans SC", var(--fui-font-cjk);
+  font-size: 1.38rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  color: var(--fui-text-hi);
+}
+.moss-hud-weather-temp { font-size: 1.4rem; line-height: 1.05; color: var(--fui-text-hi); }
+.moss-hud-weather-cond { font-size: var(--fui-text-sm); color: var(--fui-text); }
+.moss-hud-weather-metrics { display: grid; gap: var(--fui-space-2); }
+.moss-hud-metric { display: grid; gap: 4px; }
+.moss-hud-kv { display: flex; align-items: center; justify-content: space-between; font-size: var(--fui-num-sm); color: var(--fui-text-hi); }
+.moss-hud-days { display: grid; border-top: 1px solid var(--fui-line-1); }
+.moss-hud-day {
+  display: grid;
+  grid-template-columns: 6ch minmax(0, 1fr) auto 5ch;
+  align-items: center;
+  gap: var(--fui-space-2);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--fui-line-1);
+  font-size: var(--fui-text-sm);
+  color: var(--fui-text);
+}
+.moss-hud-day__cond { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.moss-hud-day__pop { text-align: right; color: var(--fui-data); }
+
+/* HUD Host & Action Lists */
+.moss-hud-kv-list { display: grid; gap: 4px; }
+.moss-hud-kv-row {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+  padding: 4px var(--fui-space-2);
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+}
+.moss-hud-kv-row__val { font-size: var(--fui-text-sm); color: var(--fui-text-hi); }
+.moss-hud-pre { max-height: 130px; }
+.moss-hud-pending { display: grid; gap: var(--fui-space-2); padding: var(--fui-space-2) 0; }
+
+/* Floating Transparent Bottom Audio Orbit & Live Caption Strip over 3D Blueprint Viewport */
+.moss-stage__audio {
+  position: absolute;
+  left: 20px;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: grid;
+  justify-items: center;
+  gap: var(--fui-space-1);
+  padding: 0 var(--fui-space-3) var(--fui-space-1);
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.moss-stage__caption {
+  margin: 0;
+  max-width: min(760px, 92%);
+  padding: 2px var(--fui-space-3);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-hud-plate);
+  font-size: var(--fui-text-sm);
+  line-height: 1.4;
+  color: var(--fui-text-hi);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-stage__caption[hidden] { display: none; }
+.moss-stage__orbit-bar {
+  width: 100%;
+  display: block;
+}
+.moss-stage__orbit-canvas {
+  display: block;
+  width: 100%;
+  height: 52px;
+  background: transparent;
+  border: 0;
+}
+
+/* ── Left Rail Dual Audio Channel Strips & Full-Width Bottom Runtime Log Dock ── */
+.moss-rail-audio {
+  margin-top: 0;
+}
+.moss-audio-channels {
+  display: grid;
+  gap: 6px;
+}
+.moss-audio-channels .fui-voice {
+  grid-template-columns: 108px minmax(0, 1fr) 3.6ch;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 3px 4px 3px 6px;
+  border: 0;
+  border-left: 3px solid var(--fui-line-2);
+  background: var(--fui-void);
+  transition: border-color var(--fui-dur-fast) var(--fui-ease), background-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-audio-channels .fui-tagcode {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.moss-audio-channels .fui-tagcode .fui-badge {
+  justify-content: center;
+  padding-inline: 2px;
+}
+.moss-audio-channels .fui-tagcode__code {
+  font-family: var(--fui-font-sans);
+  font-size: var(--fui-text-label);
+  font-weight: 600;
+  color: var(--fui-text-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.moss-audio-channels .fui-voice__wave--none {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+  color: var(--fui-warn);
+  font-size: var(--fui-text-micro);
+  letter-spacing: 0.14em;
+}
+.moss-audio-channels .fui-voice__wave--none::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--fui-warn);
+  opacity: 0.55;
+  pointer-events: none;
+  animation: moss-nosig-scan 2.0s linear infinite alternate; /* fui-lint-ignore: R05, R08 user-requested vertical no-signal oscilloscope scanline; pauses when frozen or reduced-motion */
+}
+.moss-voice-row[data-channel-state="muted"] .fui-voice__wave--none {
+  color: var(--fui-crit);
+}
+.moss-voice-row[data-channel-state="muted"] .fui-voice__wave--none::after {
+  background: var(--fui-crit);
+}
+@keyframes moss-nosig-scan {
+  0%   { transform: translateY(1px); }
+  100% { transform: translateY(24px); }
+}
+body[data-frozen="true"] .moss-audio-channels .fui-voice__wave--none::after {
+  animation: none;
+  transform: translateY(13px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .moss-audio-channels .fui-voice__wave--none::after {
+    animation: none;
+    transform: translateY(13px);
+  }
+}
+.moss-audio-channels .fui-voice__level {
+  text-align: right;
+  font-size: var(--fui-num-sm);
+}
+.moss-voice-row[data-channel="mic"]  { border-left-color: var(--fui-warn); }
+.moss-voice-row[data-channel="moss"] { border-left-color: var(--fui-data); }
+.moss-voice-row[data-channel-state="capturing"] { border-left-color: var(--fui-crit); background: var(--fui-surface-1); }
+.moss-voice-row[data-channel-state="capturing"] .fui-voice__level { color: var(--fui-crit); }
+.moss-voice-row[data-channel-state="speaking"]  { border-left-color: var(--fui-ok); background: var(--fui-surface-1); }
+.moss-voice-row[data-channel-state="speaking"]  .fui-voice__level { color: var(--fui-ok); }
+.moss-voice-row[data-channel-state="muted"]     { border-left-color: var(--fui-warn); }
+.moss-voice-row[data-channel-state="muted"]     .fui-voice__level { color: var(--fui-warn); }
+
+.moss-dock { display: flex; flex-direction: column; min-height: 0; }
+.moss-dock__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--fui-line-3) transparent; }
+.moss-dock__log-col { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+.moss-log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+}
+.moss-log-toolbar__src {
+  font-size: var(--fui-text-micro);
+  color: var(--fui-data);
+  letter-spacing: 0.06em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-dock__log-col .fui-table-wrap { border: 0; max-height: 120px; overflow-y: auto; scroll-behavior: auto; }
+.moss-log-table { font-family: var(--fui-font-mono); font-size: 11px; }
+.moss-log-ts { color: var(--fui-text-dim); white-space: nowrap; }
+.moss-log-src { color: var(--fui-data); white-space: nowrap; font-weight: 600; }
+.moss-log-msg { word-break: break-word; }
+
+/* ── Right Aside Rail: Asymmetric Game-FUI Authority + Tactical Comms ── */
+.moss-console .fui-console__aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fui-space-3);
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* 1. v3 Official Animated Beijing Space Center Title Card (UEG moved cleanly to top-left strip) */
+.moss-titlecard {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  justify-items: stretch;
+  gap: 0;
+  padding: 6px var(--fui-space-3);
+  text-align: left;
+}
+.moss-titlecard__body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+}
+.moss-titlecard__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+  min-width: 0;
+}
+.moss-titlecard__bsc {
+  display: block;
+  width: auto;
+  height: 36px;
+  max-width: 210px;
+  object-fit: contain;
+  flex: 0 1 auto;
+}
+.moss-titlecard__top .fui-chip {
+  min-width: 0;
+  padding: 2px 6px;
+}
+.moss-titlecard__subrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+  min-width: 0;
+}
+.moss-titlecard .fui-titlecard__title {
+  font-size: var(--fui-text-sm);
+  letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-titlecard .fui-titlecard__sub {
+  color: var(--fui-text-dim);
+  letter-spacing: 0.1em;
+  flex: none;
+}
+
+/* 2. Live Docked Front-Face BSC-IQC Badge + Standard 1-Inch ID Photo Directly on Pure Black */
+.moss-authority-badge-row {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1.59fr) minmax(0, 0.714fr) 74px;
+  align-items: stretch;
+  gap: 8px;
+  padding: 0;
+  background: var(--fui-void);
+}
+.moss-rail-badge-btn,
+.moss-rail-photo-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--fui-line-hi);
+  border-radius: var(--fui-radius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--fui-dur-fast) var(--fui-ease),
+              transform var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-rail-badge-btn {
+  background: var(--fui-badge-slate);
+  aspect-ratio: 450 / 282;
+}
+.moss-rail-photo-btn {
+  background: var(--fui-void);
+  aspect-ratio: 25 / 35;
+}
+.moss-rail-badge-btn:hover,
+.moss-rail-photo-btn:hover {
+  border-color: var(--fui-act);
+  transform: translateY(-1px);
+}
+.moss-rail-badge-btn:active,
+.moss-rail-photo-btn:active {
+  transform: translateY(0);
+}
+.moss-rail-badge-side {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  align-content: space-between;
+}
+.moss-rail-badge-side .fui-chip {
+  min-width: 0;
+  width: 100%;
+  padding: 3px 2px;
+}
+.moss-rail-badge-meta {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-hi);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-rail-badge-side .fui-key {
+  min-height: 24px;
+  padding: 0 4px;
+  width: 100%;
+}
+@media (pointer: coarse) {
+  .moss-rail-badge-side .fui-key { min-height: 44px; }
+}
+
+/* ── BSC · IQC Vector Access Badge + 1-Inch ID Photo Modal & Settings Editor ── */
+.fui-dialog.moss-badge-dialog {
+  width: min(1140px, calc(100vw - 24px));
+  max-width: 1140px;
+}
+.moss-badge-dialog__body {
+  display: grid;
+  gap: var(--fui-space-3);
+}
+.moss-id-stage {
+  display: grid;
+  grid-template-columns: 186px minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--fui-space-3);
+  align-items: start;
+}
+.moss-id-stage[data-view="front"],
+.moss-id-stage[data-view="back"] {
+  grid-template-columns: 220px minmax(0, 560px);
+  justify-content: center;
+}
+.moss-id-stage[data-view="front"] .moss-id-slot--back,
+.moss-id-stage[data-view="back"] .moss-id-slot--front {
+  display: none;
+}
+@media (max-width: 860px) {
+  .moss-id-stage,
+  .moss-id-stage[data-view="front"],
+  .moss-id-stage[data-view="back"] { grid-template-columns: 1fr; }
+  .moss-id-slot--photo { max-width: 196px; }
+}
+.moss-id-slot {
+  display: grid;
+  gap: 6px;
+}
+.moss-id-slot__tag {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-dim);
+  letter-spacing: 0.1em;
+}
+.moss-id-frame {
+  position: relative;
+  border: 1px solid var(--fui-line-hi);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-badge-slate);
+  overflow: hidden;
+}
+.moss-id-photo-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 25 / 35;
+  padding: 0;
+  border: 1px solid var(--fui-line-hi);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-id-photo-frame:hover {
+  border-color: var(--fui-data);
+}
+.moss-id-photo {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--fui-void);
+}
+.moss-id-photo__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to right, var(--fui-grid-minor) 1px, transparent 1px) 0 0 / 10px 10px,
+    linear-gradient(to bottom, var(--fui-grid-minor) 1px, transparent 1px) 0 0 / 10px 10px,
+    linear-gradient(to right, var(--fui-grid-major) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(to bottom, var(--fui-grid-major) 1px, transparent 1px) 0 0 / 40px 40px,
+    var(--fui-field);
+  pointer-events: none;
+}
+.moss-id-photo__reticle {
+  position: absolute;
+  inset: 5px;
+  border: 1px solid var(--fui-data);
+  opacity: 0.55;
+  -webkit-mask:
+    linear-gradient(#000 0 0) 0 0 / 9px 9px no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / 9px 9px no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 9px 9px no-repeat,
+    linear-gradient(#000 0 0) 100% 100% / 9px 9px no-repeat;
+  mask:
+    linear-gradient(#000 0 0) 0 0 / 9px 9px no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / 9px 9px no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 9px 9px no-repeat,
+    linear-gradient(#000 0 0) 100% 100% / 9px 9px no-repeat;
+  pointer-events: none;
+}
+.moss-id-photo__img,
+.moss-id-photo__raw,
+.moss-id-photo__placeholder {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.moss-id-photo__raw {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  clip-path: inset(0 0 0 0);
+  animation: moss-photo-raw-wipe 1.3s 220ms linear both; /* fui-lint-ignore: R08 user-requested top-to-bottom biometric scan-to-cutout reveal */
+}
+.moss-id-photo__img--cutout {
+  z-index: 2;
+  object-fit: contain;
+  object-position: center bottom;
+}
+.moss-id-photo__img--reveal {
+  clip-path: inset(0 0 100% 0);
+  animation: moss-photo-cutout-reveal 1.3s 220ms linear both; /* fui-lint-ignore: R08 user-requested top-to-bottom biometric scan-to-cutout reveal */
+}
+.moss-id-photo__scanbeam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 20%;
+  z-index: 3;
+  border-bottom: 2px solid var(--fui-text-hi);
+  background: linear-gradient(to bottom, transparent 0%, var(--fui-data) 100%);
+  opacity: 0.82;
+  pointer-events: none;
+  transform: translateY(-100%);
+  animation: moss-photo-scanbeam 1.3s 220ms linear both; /* fui-lint-ignore: R08 user-requested top-to-bottom biometric scan-to-cutout reveal */
+}
+.moss-id-photo__busy-box {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  width: 82%;
+  padding: 6px;
+  border: 1px solid var(--fui-data);
+  background: var(--fui-hud-plate);
+}
+@keyframes moss-photo-raw-wipe {
+  0%   { clip-path: inset(0% 0 0 0); opacity: 1; }
+  98%  { clip-path: inset(100% 0 0 0); opacity: 1; }
+  100% { clip-path: inset(100% 0 0 0); opacity: 0; }
+}
+@keyframes moss-photo-cutout-reveal {
+  0%   { clip-path: inset(0 0 100% 0); }
+  100% { clip-path: inset(0 0 0% 0); }
+}
+@keyframes moss-photo-scanbeam {
+  0%   { transform: translateY(-100%); opacity: 0.85; }
+  94%  { transform: translateY(400%); opacity: 0.85; }
+  100% { transform: translateY(420%); opacity: 0; }
+}
+body[data-frozen="true"] .moss-id-photo__raw,
+body[data-frozen="true"] .moss-id-photo__img--reveal,
+body[data-frozen="true"] .moss-id-photo__scanbeam {
+  animation: none;
+}
+body[data-frozen="true"] .moss-id-photo__raw { opacity: 0; }
+body[data-frozen="true"] .moss-id-photo__img--reveal { clip-path: inset(0 0 0 0); }
+@media (prefers-reduced-motion: reduce) {
+  .moss-id-photo__raw { display: none; }
+  .moss-id-photo__img--reveal { clip-path: none; animation: none; }
+  .moss-id-photo__scanbeam { display: none; }
+}
+.moss-id-photo__img--archive {
+  filter: grayscale(0.55) contrast(1.08) brightness(0.96) saturate(0.72);
+}
+.moss-id-photo--busy {
+  display: grid;
+  place-items: center;
+}
+.moss-id-photo__busy-text {
+  position: relative;
+  z-index: 2;
+  font-size: var(--fui-num-sm);
+  color: var(--fui-data);
+  text-align: center;
+  padding: 4px 6px;
+  background: var(--fui-hud-plate);
+  border: 1px solid var(--fui-data);
+}
+.moss-id-photo__stamp {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 2px 4px;
+  background: var(--fui-hud-plate);
+  border-top: 1px solid var(--fui-line-2);
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-hi);
+  text-align: center;
+  letter-spacing: 0.08em;
+}
+.moss-id-photo--compact .moss-id-photo__stamp {
+  padding: 1px 2px;
+  letter-spacing: 0.04em;
+}
+.moss-matting-bar {
+  display: grid;
+  gap: 6px;
+  padding: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-matting-slider {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 3ch;
+  align-items: center;
+  gap: var(--fui-space-2);
+}
+.moss-matting-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--fui-data);
+}
+
+/* ── F:\moss BSC · IQC Replica Credential Card Layout (staff-badge-print.svg + ZiHun ChuangCuHei & Taobao Maicai) ── */
+.credential-card {
+  --badge-paper: var(--fui-badge-slate);
+  --badge-font: "Taobao Maicai", var(--fui-font-cjk), sans-serif; /* fui-lint-ignore: R04 official F:\moss badge editable field font */
+  --badge-zh: "ZiHun ChuangCuHei", "Taobao Maicai", var(--fui-font-cjk); /* fui-lint-ignore: R04 official F:\moss Chinese badge lettering font */
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 450 / 282;
+  container-type: inline-size;
+  overflow: hidden;
+  background: var(--badge-paper);
+  color: var(--fui-badge-ink);
+  text-align: left;
+  font-synthesis: none;
+}
+.credential-card__print {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.credential-card :is(.credential-card__print, .credential-card__stripe, .credential-card__barcode,
+  .credential-card__identity, .credential-card__name, .credential-card__role, .credential-card__serial) {
+  position: absolute;
+}
+.credential-card [data-reference] {
+  font-family: var(--fui-font-cjk);
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.credential-card__stripe {
+  inset: 77.3% auto auto 6.1%;
+  max-width: 88%;
+  background: var(--badge-paper);
+  padding-inline: 0.15em;
+  font: 400 min(4.35cqw, calc(76cqw / var(--glyph-count))) / 1 var(--badge-font);
+}
+.credential-card :is(.credential-card__stripe, .credential-card__identity, .credential-card__name,
+  .credential-card__role, .credential-card__serial) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.credential-card__identity {
+  inset: 20.1% auto auto 32.1%;
+  max-width: 25%;
+  font: 400 min(4.5cqw, calc(24cqw / var(--glyph-count))) / 1.23 var(--badge-font);
+}
+.credential-card__name {
+  inset: 10% 2.5% auto 57.8%;
+  font: 400 min(14cqw, calc(34cqw / var(--glyph-count))) / 1.22 var(--badge-font);
+  letter-spacing: 0.12em;
+}
+.credential-card__name[data-glyph-count="2"] {
+  letter-spacing: 0.34em;
+}
+.credential-card__name[data-han] {
+  font-family: var(--badge-zh);
+}
+.credential-card__name[data-reference-pair] {
+  inset-block-start: calc(10% - 1.3333cqw);
+  inset-inline-start: calc(57.8% - 0.3333cqw);
+  font-size: 13.1111cqw;
+  letter-spacing: 4cqw;
+}
+.credential-card__name[data-reference-pair] > span {
+  display: inline-block;
+  transform: translateY(-0.6667cqw);
+}
+.credential-card :is(.credential-card__name, .credential-card__identity)[data-wrap] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.credential-card__name[data-wrap] {
+  font-size: min(7.4cqw, calc(63cqw / var(--glyph-count)));
+  letter-spacing: 0.05em;
+}
+.credential-card__identity[data-wrap] {
+  font-size: min(4.5cqw, calc(48cqw / var(--glyph-count)));
+}
+.credential-card__role {
+  inset: 57.2% 3.2% auto 32.2%;
+  font: 400 min(5cqw, calc(59cqw / var(--glyph-count))) / 1.5 var(--badge-font);
+  letter-spacing: 0.045em;
+  text-align: right;
+}
+.credential-card__role[data-han] {
+  font-family: var(--badge-zh);
+  font-size: min(4.9778cqw, calc(55cqw / var(--glyph-count)));
+  letter-spacing: 0.4444cqw;
+}
+.credential-card__serial {
+  inset: 76.5% 3.2% auto 32%;
+  font: 400 min(3.7cqw, calc(59cqw / var(--glyph-count))) / 1.2 var(--badge-font);
+  letter-spacing: 0.10em;
+}
+.credential-card__barcode {
+  inset: 86.5% auto auto 3.78%;
+  width: 93.78%;
+  height: 11%;
+  shape-rendering: geometricPrecision;
+}
+.credential-card[data-side="front"] .credential-card__barcode {
+  inset: 86.2% auto auto 29.11%;
+  width: 70.89%;
+  height: 9.6%;
+}
+.moss-id-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.moss-badge-greeting {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-3);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  border: 1px solid var(--fui-line-2);
+  border-left: 3px solid var(--fui-ok);
+  background: var(--fui-void);
+}
+.moss-badge-greeting__text {
+  margin: 0;
+  font-size: var(--fui-text-sm);
+  line-height: 1.5;
+  color: var(--fui-text-hi);
+}
+.moss-badge-dialog__actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.moss-badge-preview-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.59fr) minmax(0, 0.714fr);
+  gap: var(--fui-space-2);
+  max-width: 390px;
+  align-items: stretch;
+}
+.moss-badge-mini-preview {
+  min-width: 0;
+}
+.moss-badge-photo-preview {
+  display: block;
+  width: 100%;
+  aspect-ratio: 25 / 35;
+  padding: 0;
+  border: 1px dashed var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+  overflow: hidden;
+  cursor: pointer;
+}
+.moss-badge-photo-preview:hover {
+  border-color: var(--fui-data);
+}
+.moss-check--inline {
+  min-height: 28px;
+}
+.moss-badge-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--fui-space-2);
+}
+.moss-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* ── Settings Split-Pane Tactical Modal + Dot-Matrix World/China City Picker ── */
+.fui-dialog.moss-settings-modal {
+  width: min(940px, 95vw);
+  max-width: 95vw;
+  height: min(760px, 88vh);
+  max-height: 90vh;
+}
+.fui-dialog.moss-settings-modal[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.moss-settings-shell {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--fui-void);
+}
+.moss-settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--fui-space-2);
+  border-right: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+  overflow-y: auto;
+}
+.moss-settings-nav__item {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  width: 100%;
+  padding: 10px 10px 10px 8px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: var(--fui-radius-control);
+  background: transparent;
+  color: var(--fui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.moss-settings-nav__item:hover {
+  border-color: var(--fui-line-2);
+  border-left-color: var(--fui-line-3);
+  color: var(--fui-text-hi);
+}
+.moss-settings-nav__item[aria-selected="true"] {
+  border-color: var(--fui-line-2);
+  border-left-color: var(--fui-act);
+  background: var(--fui-surface-1);
+  color: var(--fui-text-hi);
+}
+.moss-settings-nav__code {
+  font-size: var(--fui-num-xs);
+  color: var(--fui-text-dim);
+  padding-top: 2px;
+}
+.moss-settings-nav__item[aria-selected="true"] .moss-settings-nav__code,
+.moss-settings-nav__item[aria-selected="true"] .moss-settings-nav__title {
+  color: var(--fui-act);
+}
+.moss-settings-nav__meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.moss-settings-nav__title {
+  font-size: var(--fui-text-sm);
+  font-weight: 600;
+  line-height: 1.25;
+}
+.moss-settings-nav__sub {
+  font-size: 11px;
+  color: var(--fui-text-dim);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-settings-content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--fui-space-3);
+}
+.moss-settings-pane {
+  display: grid;
+  gap: var(--fui-space-3);
+  align-content: start;
+}
+.moss-settings-pane[hidden] {
+  display: none;
+}
+.moss-set-card {
+  display: grid;
+  gap: var(--fui-space-2);
+  padding: var(--fui-space-3);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-surface-1);
+}
+.moss-set-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--fui-space-2);
+}
+.moss-room-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--fui-space-2);
+}
+.moss-oled-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--fui-space-2);
+}
+.moss-oled-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--fui-line-2);
+  border-radius: var(--fui-radius-key);
+  background: var(--fui-void);
+  color: var(--fui-text);
+  text-align: left;
+  cursor: pointer;
+}
+.moss-oled-card:hover {
+  border-color: var(--fui-line-3);
+  color: var(--fui-text-hi);
+}
+.moss-oled-card[aria-checked="true"] {
+  border-color: var(--fui-act);
+  color: var(--fui-text-hi);
+}
+.moss-oled-card__name {
+  font-size: var(--fui-text-sm);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.moss-oled-card[aria-checked="true"] .moss-oled-card__name {
+  color: var(--fui-act);
+}
+.moss-oled-card__code {
+  font-size: 11px;
+  color: var(--fui-text-dim);
+  letter-spacing: 0.08em;
+}
+.moss-oled-swatch {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  padding: 5px 6px;
+  border: 1px solid var(--fui-line-1);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+}
+.moss-oled-swatch i {
+  display: block;
+  height: 5px;
+  border-radius: 1px;
+}
+.moss-oled-swatch[data-swatch="mono-white"] i { background: var(--fui-text-hi); }
+.moss-oled-swatch[data-swatch="ssd-dual"] i:nth-child(1),
+.moss-oled-swatch[data-swatch="ssd-dual"] i:nth-child(2) { background: var(--fui-warn); }
+.moss-oled-swatch[data-swatch="ssd-dual"] i:nth-child(3),
+.moss-oled-swatch[data-swatch="ssd-dual"] i:nth-child(4) { background: var(--fui-data); }
+.moss-oled-swatch[data-swatch="ice-cyan"] i { background: var(--fui-data); }
+.moss-oled-swatch[data-swatch="amber"] i { background: var(--fui-act); }
+.moss-oled-swatch[data-swatch="phosphor-green"] i { background: var(--fui-ok); }
+.moss-oled-swatch[data-swatch="moss-red"] i { background: var(--fui-crit); }
+@media (max-width: 780px) {
+  .moss-settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .moss-settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--fui-line-2);
+    padding: 6px;
+  }
+  .moss-settings-nav__item {
+    flex: 0 0 auto;
+    width: auto;
+    grid-template-columns: auto auto;
+    padding: 6px 10px;
+    border-left: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+  }
+  .moss-settings-nav__item[aria-selected="true"] {
+    border-left-color: var(--fui-line-2);
+    border-bottom-color: var(--fui-act);
+  }
+  .moss-settings-nav__sub { display: none; }
+  .moss-set-grid-2,
+  .moss-oled-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.moss-city-current {
+  display: grid;
+  gap: 4px;
+  padding: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  border-left: 3px solid var(--fui-ok);
+  background: var(--fui-void);
+}
+.moss-city-current__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+}
+.moss-city-current__name {
+  font-family: "Source Han Sans SC", var(--fui-font-cjk);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--fui-text-hi);
+}
+.moss-city-map-wrap {
+  display: grid;
+  gap: 4px;
+  padding: var(--fui-space-1);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-city-map-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fui-space-2);
+  flex-wrap: wrap;
+}
+.moss-city-map-bar .fui-btn {
+  min-height: 24px;
+  padding: 0 var(--fui-space-2);
+  font-size: var(--fui-text-micro);
+}
+.moss-city-hover {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-data);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-city-map-canvas {
+  display: block;
+  width: 100%;
+  height: 224px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+  cursor: crosshair;
+}
+.moss-city-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.moss-city-chip {
+  min-height: 26px;
+  padding: 0 var(--fui-space-2);
+  font-size: var(--fui-text-micro);
+  text-transform: none;
+  gap: 6px;
+}
+.moss-city-chip__reg {
+  color: var(--fui-text-dim);
+}
+
+/* ── Tactile FUI Matrix & Segmented Controls (Replaces Clunky Native <select> Dropdowns) ── */
+.moss-city-picker-tabs,
+.moss-seg-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-line-2);
+  overflow: hidden;
+}
+.moss-seg-group--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.moss-seg-btn {
+  min-height: 28px;
+  padding: 0 var(--fui-space-2);
+  border: 0;
+  background: var(--fui-void);
+  color: var(--fui-text-dim);
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-seg-btn:hover { background: var(--fui-surface-2); color: var(--fui-text-hi); }
+.moss-seg-btn[aria-selected="true"],
+.moss-seg-btn[aria-checked="true"] {
+  background: var(--fui-lit-bar) var(--fui-surface-2);
+  color: var(--fui-act);
+}
+.moss-city-matrix-block {
+  display: grid;
+  gap: 4px;
+}
+.moss-choice-grid {
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-line-2);
+}
+.moss-choice-grid--regions {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  max-height: 136px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fui-line-3) transparent;
+}
+.moss-choice-grid--cities {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-height: 118px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fui-line-3) transparent;
+}
+.moss-choice-grid--models {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.moss-choice-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 4px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: var(--fui-void);
+  color: var(--fui-text);
+  font: 500 var(--fui-text-micro) / 1.1 var(--fui-font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-choice-key:hover:not(:disabled) {
+  background: var(--fui-surface-2);
+  color: var(--fui-text-hi);
+}
+.moss-choice-key[aria-checked="true"] {
+  border-left-color: var(--fui-act);
+  background: var(--fui-surface-3);
+  color: var(--fui-act);
+  font-weight: 600;
+}
+.moss-choice-key:disabled {
+  color: var(--fui-text-faint);
+  cursor: not-allowed;
+}
+.moss-choice-key--model {
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 var(--fui-space-2);
+}
+.moss-choice-key__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.moss-choice-key__tag {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-dim);
+  flex: none;
+}
+.moss-choice-key--model[aria-checked="true"] .moss-choice-key__tag {
+  color: var(--fui-ok);
+}
+.moss-choice-list {
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-line-2);
+}
+.moss-choice-row {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+  min-height: 30px;
+  padding: 0 var(--fui-space-2);
+  border: 0;
+  border-left: 2px solid transparent;
+  background: var(--fui-void);
+  color: var(--fui-text);
+  font: 500 var(--fui-text-sm) / 1.2 var(--fui-font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-choice-row:hover { background: var(--fui-surface-2); color: var(--fui-text-hi); }
+.moss-choice-row[aria-checked="true"] {
+  border-left-color: var(--fui-act);
+  background: var(--fui-surface-3);
+  color: var(--fui-act);
+}
+.moss-choice-row__code {
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-dim);
+  flex: none;
+}
+.moss-choice-row[aria-checked="true"] .moss-choice-row__code {
+  color: var(--fui-act);
+}
+.moss-choice-row__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (pointer: coarse) {
+  .moss-seg-btn, .moss-choice-key, .moss-choice-row { min-height: 44px; }
+  .moss-choice-grid--regions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .moss-choice-grid--cities  { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* 3. Authentic v3 Bordered Mode Tiles Directly on Pure Black (Corner Marker + Orange In-Force Option) */
+.moss-mode-deck {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.moss-mode-tile {
+  padding: 6px 6px 7px;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease),
+              transform var(--fui-dur-press) var(--fui-ease);
+}
+.moss-mode-tile:hover  { background: var(--fui-surface-2); }
+.moss-mode-tile:active { transform: translateY(1px); }
+.moss-mode-tile > .fui-label {
+  font-size: var(--fui-text-micro);
+  letter-spacing: 0.08em;
+}
+.moss-mode-tile .fui-mode__opt {
+  min-height: 20px;
+  font-size: var(--fui-text-label);
+}
+.moss-mode-tile .fui-mode__value {
+  font-size: var(--fui-num-sm);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 4. Main Scrollable Tactical Comms Panel */
+.moss-comms-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.moss-comms-head { flex-wrap: nowrap; gap: var(--fui-space-2); }
+.moss-comms-new-btn { margin-left: auto; }
+
+/* Edge-to-edge 4-column Utility Key Deck */
+.moss-comms-deck {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--fui-line-2);
+  border-bottom: 1px solid var(--fui-line-2);
+}
+.moss-deck-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 4px;
+  border: 0;
+  background: var(--fui-void);
+  color: var(--fui-text);
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-deck-key:hover { background: var(--fui-surface-2); color: var(--fui-text-hi); }
+.moss-deck-key__code { color: var(--fui-text-dim); }
+.moss-deck-key__count { color: var(--fui-data); }
+@media (pointer: coarse) { .moss-deck-key { min-height: 44px; } }
+
+/* Turn sequence index & color-coded HUD recall triggers inside chat log */
+.moss-comms-panel .fui-chat__item {
+  animation: moss-turn-in var(--fui-dur-fast) var(--fui-ease) both;
+}
+@keyframes moss-turn-in {
+  from { opacity: 0; transform: translateX(6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.moss-turn-seq {
+  color: var(--fui-accent-hot);
+  padding-right: 4px;
+  border-right: 1px solid var(--fui-line-2);
+}
+.moss-hud-trigger {
+  min-height: 24px;
+  padding: 0 var(--fui-space-2);
+  font-size: var(--fui-text-micro);
+  border-left: 3px solid var(--fui-data);
+}
+.moss-hud-trigger[data-hud-kind="intel"] { border-left-color: var(--fui-accent-hot); }
+.moss-hud-trigger[data-hud-kind="ok"]    { border-left-color: var(--fui-ok); }
+.moss-hud-trigger[data-hud-kind="warn"]  { border-left-color: var(--fui-warn); }
+.moss-hud-trigger[data-hud-kind="data"]  { border-left-color: var(--fui-data); }
+
+/* 1-Row Quick Directive Strip above Composer (restrained aerospace steel, hover accent only) */
+.moss-quick-bar {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--fui-line-2);
+  border-top: 1px solid var(--fui-line-2);
+}
+.moss-quick-key {
+  min-height: 28px;
+  padding: 0 2px;
+  border: 0;
+  border-top: 1px solid transparent;
+  background: var(--fui-void);
+  color: var(--fui-text);
+  font: 600 var(--fui-text-micro) / 1 var(--fui-font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease),
+              color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-quick-key:hover {
+  background: var(--fui-surface-2);
+  border-top-color: var(--fui-data);
+  color: var(--fui-text-hi);
+}
+@media (pointer: coarse) {
+  .moss-quick-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .moss-quick-key { min-height: 44px; }
+}
+
+/* Structured Turn Cards inside Chat Log (no nested .fui-panel!) */
+.moss-card {
+  --s: var(--fui-line-3);
+  display: grid;
+  gap: var(--fui-space-1);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  border: 1px solid var(--s);
+  background: var(--fui-void);
+}
+.moss-card[data-state="warn"] { --s: var(--fui-warn); }
+.moss-card[data-state="ok"]   { --s: var(--fui-ok); }
+.moss-card[data-state="crit"] { --s: var(--fui-crit); }
+.moss-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--fui-space-2); }
+.moss-card__title {
+  font: 600 var(--fui-text-micro) / 1.2 var(--fui-font-sans);
+  letter-spacing: var(--fui-track-label);
+  text-transform: uppercase;
+  color: var(--fui-text-hi);
+}
+.moss-card__body { margin: 0; font-size: var(--fui-text-sm); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fui-text); }
+.moss-card__meta { font-size: var(--fui-num-sm); color: var(--fui-text-dim); }
+.moss-chat-error { margin: 0; padding: var(--fui-space-1) var(--fui-space-2); border-left: 2px solid var(--fui-crit); color: var(--fui-crit); font-size: var(--fui-text-sm); }
+
+/* Voice Bar inside Composer (Mic armed turns crisp 550W vermilion red!) */
+.moss-voice-bar { display: flex; align-items: center; gap: var(--fui-space-2); flex-wrap: wrap; }
+#comms-mic[aria-pressed="true"] {
+  border-color: var(--fui-crit);
+  background: var(--fui-crit-fill);
+  color: var(--fui-text-hi);
+}
+.moss-voice-status {
+  flex: 1 1 120px;
+  min-width: 0;
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-starters { display: grid; gap: var(--fui-space-2); padding: var(--fui-space-4) var(--fui-space-2); }
+.moss-starters__list { display: grid; gap: var(--fui-space-2); }
+.moss-starters__btn {
+  justify-content: flex-start;
+  text-align: left;
+  height: auto;
+  min-height: var(--fui-control);
+  padding: var(--fui-space-2) var(--fui-space-3);
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+/* ── Modal Forms & Lists ── */
+/* Comfortable symmetric horizontal breathing room across all FUI modal info dialogs */
+.fui-dialog > .fui-dialog__head,
+.fui-dialog > .fui-dialog__body,
+.fui-dialog > .fui-dialog__actions {
+  padding-inline: clamp(16px, 2.5vw, 24px);
+}
+
+.moss-modal-list { display: grid; border-top: 1px solid var(--fui-line-1); }
+.moss-modal-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--fui-space-3); padding: var(--fui-space-2) 0; border-bottom: 1px solid var(--fui-line-1); }
+.moss-modal-row__main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.moss-modal-row__text { margin: 0; color: var(--fui-text-hi); font-size: var(--fui-text-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.moss-modal-row__meta { font-size: var(--fui-num-sm); color: var(--fui-text-dim); }
+.moss-setting-group { display: grid; gap: var(--fui-space-2); padding-bottom: var(--fui-space-3); border-bottom: 1px solid var(--fui-line-1); }
+.moss-setting-group:last-child { border-bottom: 0; padding-bottom: 0; }
+.moss-check { display: flex; align-items: center; gap: var(--fui-space-2); min-height: var(--fui-row); cursor: pointer; color: var(--fui-text); font-size: var(--fui-text-sm); }
+.moss-check input { width: 16px; height: 16px; accent-color: var(--fui-data); }
+.moss-tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--fui-space-2); }
+.moss-tools-grid .fui-btn { justify-content: flex-start; text-align: left; text-transform: none; letter-spacing: 0.02em; }
+.moss-pre {
+  margin: 0;
+  padding: var(--fui-space-3);
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+  color: var(--fui-text-hi);
+  font: 400 var(--fui-num) / 1.5 var(--fui-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* ── Preserved 550W Opening Animation Overlay ── */
+.moss-opening { position: fixed; inset: 0; z-index: var(--fui-z-toast); overflow: hidden; background: var(--fui-open-bg); transition: opacity var(--fui-dur-base) var(--fui-ease); }
+.moss-opening[hidden] { display: none; }
+.moss-opening[data-leaving="true"] { opacity: 0; }
+.moss-opening__identity { position: absolute; inset: 0; display: grid; place-items: center; background: var(--fui-open-bg); }
+.moss-opening__identity[hidden] { display: none; }
+.moss-opening__mark { display: block; width: clamp(160px, 22vw, 420px); height: auto; overflow: visible; }
+.moss-opening__mark path {
+  --mark-color: var(--fui-open-mark);
+  fill: var(--mark-color);
+  fill-opacity: 0.04;
+  stroke: var(--mark-color);
+  stroke-width: 10;
+  stroke-dasharray: 3000;
+  stroke-dashoffset: 3000;
+  animation: moss-identity-trace 960ms linear both, moss-identity-fill 480ms 540ms var(--fui-ease) forwards; /* fui-lint-ignore: R08 preserved 550W opening splash logo entrance per logos.md and user request */
+}
+.moss-opening__mark .cls-1,
+.moss-opening__mark .st0 { --mark-color: var(--fui-open-red); }
+.moss-opening__mark path:last-child { --mark-color: var(--fui-open-slate); }
+@keyframes moss-identity-trace { to { stroke-dashoffset: 0; } }
+@keyframes moss-identity-fill  { to { fill-opacity: 1; stroke-width: 0; } }
+.moss-opening__caption {
+  position: absolute;
+  inset-inline: 0;
+  bottom: max(4%, env(safe-area-inset-bottom));
+  display: grid;
+  justify-items: center;
+  row-gap: var(--fui-space-1);
+  text-align: center;
+  color: var(--fui-open-caption);
+}
+.moss-opening__caption-zh { font: 600 clamp(16px, 1.25vw, 24px) / 1.25 var(--fui-font-cjk); letter-spacing: 0.06em; }
+.moss-opening__caption-en { font: 600 clamp(12px, 0.8vw, 16px) / 1.15 var(--fui-font-sans); letter-spacing: 0.12em; color: var(--fui-open-caption-dim); }
+.moss-opening__film { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scale(var(--opening-zoom, 1)); transform-origin: 50% 48%; }
+.moss-opening__film[hidden] { display: none; }
+.moss-opening__skip { position: absolute; top: var(--fui-space-4); right: var(--fui-space-4); z-index: 3; }
+.moss-opening__wait {
+  position: absolute;
+  inset-inline-start: var(--fui-space-4);
+  bottom: max(var(--fui-space-4), env(safe-area-inset-bottom));
+  z-index: 3;
+  padding: var(--fui-space-1) var(--fui-space-2);
+  color: var(--fui-text-hi);
+  background: var(--fui-void);
+  font: 600 var(--fui-text-sm) / 1.3 var(--fui-font-cjk);
+}
+.moss-opening__progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; width: 100%; height: 3px; border: 0; appearance: none; background: var(--fui-line-1); color: var(--fui-text-hi); }
+.moss-opening__progress::-webkit-progress-bar { background: var(--fui-line-1); }
+.moss-opening__progress::-webkit-progress-value { background: var(--fui-text-hi); }
+
+@media (prefers-reduced-motion: reduce) {
+  .moss-opening { transition: none; }
+  .moss-opening__mark path { fill-opacity: 1; stroke: none; animation: none; }
+  .moss-comms-panel .fui-chat__item { animation: none; }
+}
+
+/* ── Standalone Device Status Pop-out Page (/status) ── */
+.moss-status-page { min-height: 100dvh; padding: var(--fui-space-2); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--fui-space-2); }
+.moss-status-page > .fui-console__footer { grid-area: auto; }
+.moss-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: var(--fui-space-2); align-content: start; }
+.moss-status-sensor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--fui-space-1) var(--fui-space-2);
+}
+.moss-status-sensor .fui-num { white-space: nowrap; }
+.moss-status-device {
+  margin: 0;
+  color: var(--fui-text-dim);
+  overflow-wrap: anywhere;
+}
+.moss-status-page[data-stale] #st-word { color: var(--fui-warn); }
+.moss-status-log-panel { grid-column: 1 / -1; }
+.moss-status-log-panel .fui-panel__head { flex-wrap: nowrap; gap: 6px; }
+.moss-status-log-src {
+  margin-left: auto;
+  margin-right: 2px;
+  font-size: 11px;
+  color: var(--fui-data);
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-status-log {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px;
+  height: 168px;
+  overflow-y: auto;
+  background: var(--fui-void);
+  font-family: var(--fui-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fui-line-3) transparent;
+}
+.moss-status-log__line {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 6px;
+  padding: 1px 0;
+  color: var(--fui-text);
+  border-bottom: 1px solid var(--fui-line-1);
+}
+.moss-status-log__ts { color: var(--fui-text-dim); white-space: nowrap; }
+.moss-status-log__tag { color: var(--fui-data); font-weight: 600; white-space: nowrap; }
+.moss-status-log__msg { overflow-wrap: anywhere; }
+.moss-status-log__line[data-level="ok"] .moss-status-log__tag { color: var(--fui-ok); }
+.moss-status-log__line[data-level="warn"] .moss-status-log__msg,
+.moss-status-log__line[data-level="warn"] .moss-status-log__tag { color: var(--fui-warn); }
+.moss-status-log__line[data-level="crit"] .moss-status-log__msg,
+.moss-status-log__line[data-level="crit"] .moss-status-log__tag { color: var(--fui-crit); }
+.moss-status-auth {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: var(--fui-space-3);
+  background: var(--fui-bg);
+}
+.moss-status-auth[hidden] { display: none; }
+.moss-status-auth__card {
+  width: min(360px, 100%);
+  border: 1px solid var(--fui-line-hi);
+  background: var(--fui-surface-1);
+  padding: var(--fui-space-3);
+  display: grid;
+  gap: var(--fui-space-2);
+}
+.moss-status-auth__input {
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  text-align: center;
+}
+.moss-status-auth__err { margin: 0; font-size: 0.78rem; color: var(--fui-crit); }
+.moss-status-auth__err[hidden] { display: none; }
+
+/* ── Brain Control Deck, Proactive Pulse Toast & Generative FUI Widgets ── */
+.moss-strip__brain-btn { display: inline-flex; align-items: center; gap: 5px; }
+.moss-strip__brain-badge { font-size: 11px; padding: 0 4px; min-width: 16px; }
+
+.moss-pulse-toast {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--fui-space-4);
+  border-top: 1px solid var(--fui-line-2);
+  border-left: 3px solid var(--fui-data);
+  background: var(--fui-surface-1);
+  font-size: var(--fui-text-sm);
+}
+.moss-pulse-toast[data-state="ok"] { border-left-color: var(--fui-ok); }
+.moss-pulse-toast[data-state="warn"] { border-left-color: var(--fui-warn); }
+.moss-pulse-toast[data-state="crit"] { border-left-color: var(--fui-crit); }
+.moss-pulse-toast__title { color: var(--fui-text-hi); font-weight: 600; }
+.moss-pulse-toast__body { color: var(--fui-text-dim); flex: 1 1 200px; min-width: 0; }
+
+.moss-brain-dlg { max-width: min(820px, 94vw); }
+.moss-brain-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .moss-brain-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.moss-brain-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--fui-void);
+  border: 1px solid var(--fui-line-1);
+  font-family: var(--fui-font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+  color: var(--fui-text);
+}
+.moss-brain-briefing {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--fui-data);
+  background: var(--fui-surface-1);
+  color: var(--fui-text-hi);
+  line-height: 1.55;
+}
+.moss-brain-briefing:empty { display: none; }
+.moss-brain-kv {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+  font-size: var(--fui-text-sm);
+}
+.moss-brain-kv > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.moss-brain-conflicts {
+  padding: 8px 10px;
+  border: 1px solid var(--fui-warn);
+  background: var(--fui-surface-1);
+  color: var(--fui-warn);
+  font-size: var(--fui-text-sm);
+}
+.moss-brain-conflicts ul { margin: 4px 0 0 18px; padding: 0; }
+.moss-brain-hw-box {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-surface-1);
+}
+
+/* Declarative Generative FUI Widget inside Chat Stream */
+.moss-gen-widget {
+  margin-top: 8px;
+  border: 1px solid var(--fui-line-2);
+  border-left: 3px solid var(--fui-data);
+  background: var(--fui-surface-1);
+  padding: 8px 10px;
+  display: grid;
+  gap: 8px;
+}
+.moss-gen-widget__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.moss-gen-widget__title { color: var(--fui-text-hi); font-size: var(--fui-text-sm); }
+.moss-gen-widget__sub { color: var(--fui-text-dim); font-size: var(--fui-text-micro); }
+.moss-gen-calc__inputs { display: grid; gap: 6px; }
+.moss-gen-slider { display: grid; gap: 2px; font-size: var(--fui-text-micro); color: var(--fui-text); }
+.moss-gen-slider__meta { display: flex; justify-content: space-between; align-items: baseline; }
+.moss-gen-slider input[type="range"] { width: 100%; accent-color: var(--fui-act); }
+.moss-gen-calc__outputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 6px;
+}
+.moss-gen-kpi {
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+  padding: 6px 8px;
+  display: grid;
+  gap: 2px;
+}
+.moss-gen-kpi[data-state="ok"] { border-left: 2px solid var(--fui-ok); }
+.moss-gen-kpi[data-state="warn"] { border-left: 2px solid var(--fui-warn); }
+.moss-gen-kpi[data-state="crit"] { border-left: 2px solid var(--fui-crit); }
+.moss-gen-kpi__label { font-size: var(--fui-text-micro); color: var(--fui-text-dim); }
+.moss-gen-kpi__val { font-size: 1rem; font-weight: 700; color: var(--fui-text-hi); }
+.moss-gen-kpi__unit { font-size: var(--fui-text-micro); color: var(--fui-data); }
+.moss-gen-checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.moss-gen-table-wrap { max-height: 220px; overflow: auto; }
+
+/* ── Draggable Left-Rail Station Cards ── */
+.moss-rail-card {
+  position: relative;
+  transition: opacity var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-rail-card__head {
+  cursor: grab;
+  user-select: none;
+}
+.moss-rail-card__head:active {
+  cursor: grabbing;
+}
+.moss-rail-grip {
+  display: inline-block;
+  margin-right: 4px;
+  color: var(--fui-text-dim);
+  font-family: var(--fui-font-mono);
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -2px;
+  opacity: 0.72;
+}
+.moss-rail-card__head:hover .moss-rail-grip {
+  color: var(--fui-act);
+  opacity: 1;
+}
+.moss-rail-card[data-dragging="true"] {
+  opacity: 0.36;
+}
+.moss-rail-card[data-drop="before"]::before,
+.moss-rail-card[data-drop="after"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--fui-act);
+  z-index: 6;
+  pointer-events: none;
+}
+.moss-rail-card[data-drop="before"]::before { top: -4px; }
+.moss-rail-card[data-drop="after"]::after   { bottom: -4px; }
+
+/* ── 550W H50 Chassis Small Screen Preset Selector + Crisp Normal Dock Log Arrival ── */
+.moss-log-toolbar__tag {
+  font-size: var(--fui-text-micro);
+  color: var(--fui-text-dim);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.moss-oled-select {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+  color: var(--fui-text-hi);
+  font: 600 11px / 1 var(--fui-font-sans);
+  cursor: pointer;
+}
+.moss-oled-select:hover {
+  border-color: var(--fui-act);
+}
+.moss-oled-rx {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border: 1px solid var(--fui-line-2);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+  color: var(--fui-text-dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  transition: border-color var(--fui-dur-fast) var(--fui-ease), color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-oled-rx__dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--fui-ok);
+  opacity: 0.45;
+  transition: opacity var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-oled-rx[data-pulse="true"] {
+  border-color: var(--fui-data);
+  color: var(--fui-text-hi);
+}
+.moss-oled-rx[data-pulse="true"] .moss-oled-rx__dot {
+  opacity: 1;
+}
+.moss-log-scroll {
+  height: 100%;
+  max-height: 128px;
+}
+@keyframes moss-log-arrive {
+  0% { background-color: var(--fui-surface-2); }
+  100% { background-color: transparent; }
+}
+.moss-log-row--fresh {
+  animation: moss-log-arrive 220ms var(--fui-ease) 1;
+}
+body[data-frozen="true"] .moss-log-row--fresh {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .moss-log-row--fresh { animation: none; }
+}
+
+/* ── OLED Palette Tokens for BenBen Dot-Matrix Unit (Subtle Screen Glow, Crisp Non-Glowing Text) ── */
+.moss-oled-screen {
+  --fui-oled-bg: #070a0e;
+  --fui-oled-fg: #f4f8fc;
+  --fui-oled-dim: #9aa8b8;
+  --fui-oled-tag: #eef4fa;
+  --fui-oled-top: #eef4fa;
+  --fui-oled-glow: rgba(215, 232, 255, 0.14);
+  --fui-oled-border: rgba(220, 235, 255, 0.28);
+  position: relative;
+  background: var(--fui-oled-bg);
+  color: var(--fui-oled-fg);
+  border: 1px solid var(--fui-oled-border);
+  box-shadow: 0 0 10px var(--fui-oled-glow), inset 0 0 14px var(--fui-oled-glow); /* fui-lint-ignore: R01 user-requested subtle OLED screen panel luminescence (screen glow, not text glow) */
+}
+.moss-oled-screen[data-oled="ssd-dual"] {
+  --fui-oled-bg: #041018;
+  --fui-oled-fg: #6be9ff;
+  --fui-oled-dim: #399cb3;
+  --fui-oled-tag: #ffd857;
+  --fui-oled-top: #ffd857;
+  --fui-oled-glow: rgba(92, 230, 255, 0.16);
+  --fui-oled-border: rgba(92, 230, 255, 0.34);
+}
+.moss-oled-screen[data-oled="ice-cyan"] {
+  --fui-oled-bg: #041219;
+  --fui-oled-fg: #74eeff;
+  --fui-oled-dim: #3ca0b5;
+  --fui-oled-tag: #c4f8ff;
+  --fui-oled-top: #c4f8ff;
+  --fui-oled-glow: rgba(107, 235, 255, 0.16);
+  --fui-oled-border: rgba(107, 235, 255, 0.34);
+}
+.moss-oled-screen[data-oled="amber"] {
+  --fui-oled-bg: #120b03;
+  --fui-oled-fg: #ffc352;
+  --fui-oled-dim: #b47c24;
+  --fui-oled-tag: #ffe08a;
+  --fui-oled-top: #ffe08a;
+  --fui-oled-glow: rgba(255, 190, 79, 0.16);
+  --fui-oled-border: rgba(255, 190, 79, 0.34);
+}
+.moss-oled-screen[data-oled="phosphor-green"] {
+  --fui-oled-bg: #031109;
+  --fui-oled-fg: #6effa6;
+  --fui-oled-dim: #349e5e;
+  --fui-oled-tag: #b6ffd2;
+  --fui-oled-top: #b6ffd2;
+  --fui-oled-glow: rgba(100, 255, 158, 0.16);
+  --fui-oled-border: rgba(100, 255, 158, 0.34);
+}
+.moss-oled-screen[data-oled="moss-red"] {
+  --fui-oled-bg: #140504;
+  --fui-oled-fg: #ff6657;
+  --fui-oled-dim: #b04238;
+  --fui-oled-tag: #ffa398;
+  --fui-oled-top: #ffa398;
+  --fui-oled-glow: rgba(255, 92, 77, 0.18);
+  --fui-oled-border: rgba(255, 92, 77, 0.36);
+}
+
+/* ── Left Rail BenBen (笨笨) Smart Context-Aware Animated OLED Dot-Matrix Faceplate ── */
+.moss-benben-box {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--fui-radius-control);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-benben-box:hover {
+  border-color: var(--fui-act);
+}
+.moss-benben-box__head,
+.moss-benben-box__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 7px;
+  background: var(--fui-oled-bg);
+  color: var(--fui-oled-top);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--fui-oled-border);
+}
+.moss-benben-box__foot {
+  border-bottom: 0;
+  border-top: 1px solid var(--fui-oled-border);
+  color: var(--fui-oled-fg);
+}
+.moss-benben-box__mode {
+  color: var(--fui-oled-dim);
+}
+.moss-benben-box__quote {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.moss-benben-box__code {
+  flex: none;
+  color: var(--fui-oled-dim);
+}
+.moss-benben-canvas {
+  display: block;
+  width: 100%;
+  height: 102px;
+  background: var(--fui-oled-bg);
+  image-rendering: pixelated;
+}
+
+/* ── v5.2 MOSS Personality 3-Card Preset Picker (Settings Tab 01) ── */
+.moss-personality-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.moss-personality-card {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: var(--fui-space-2);
+  border: 1px solid var(--fui-line-2);
+  border-left: 3px solid var(--fui-line-3);
+  border-radius: var(--fui-radius-control);
+  background: var(--fui-void);
+  color: var(--fui-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--fui-dur-fast) var(--fui-ease),
+              border-color var(--fui-dur-fast) var(--fui-ease);
+}
+.moss-personality-card:hover:not(:disabled) {
+  background: var(--fui-surface-2);
+  border-color: var(--fui-line-hi);
+}
+.moss-personality-card[aria-checked="true"] {
+  border-color: var(--fui-act);
+  border-left-color: var(--fui-act);
+  background: var(--fui-surface-3);
+}
+.moss-personality-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.moss-personality-card__code {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid var(--fui-line-3);
+  font-size: var(--fui-num-sm);
+  color: var(--fui-data);
+}
+.moss-personality-card[aria-checked="true"] .moss-personality-card__code {
+  border-color: var(--fui-act);
+  color: var(--fui-act);
+}
+.moss-personality-card__title {
+  font: 600 var(--fui-text-sm) / 1.2 var(--fui-font-sans);
+  color: var(--fui-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-personality-card__desc {
+  font-size: var(--fui-text-micro);
+  line-height: 1.4;
+  color: var(--fui-text-dim);
+}
+.moss-personality-card__sample {
+  font-size: var(--fui-text-micro);
+  line-height: 1.35;
+  color: var(--fui-text);
+  border-top: 1px solid var(--fui-line-1);
+  padding-top: 4px;
+}
+@media (max-width: 680px) {
+  .moss-personality-grid { grid-template-columns: 1fr; }
+}
+
+/* ── v5.2 Interactive Hand-Gesture Deck (Camera Bar Toggle + Live Optical PiP Skeleton) ── */
+.moss-cam-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+#stage-gesture-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.moss-gesture-kbd {
+  height: 16px;
+  padding: 0 4px;
+  border-color: var(--fui-line-2);
+  color: inherit;
+}
+#stage-gesture-btn[aria-pressed="true"],
+#rail-cam-gesture[aria-pressed="true"] {
+  border-color: var(--fui-ok);
+  background: var(--fui-surface-3);
+  color: var(--fui-ok);
+}
+.moss-gesture-hud {
+  position: absolute;
+  right: 14px;
+  bottom: 58px;
+  z-index: 7;
+  width: 318px;
+  display: grid;
+  border: 1px solid var(--fui-data);
+  border-top: 2px solid var(--fui-data);
+  border-radius: var(--fui-radius);
+  background: var(--fui-surface-1);
+  overflow: hidden;
+  pointer-events: auto;
+}
+.moss-gesture-hud[hidden] { display: none; }
+.moss-stage__canvas-wrap[data-hud-dock="right"] .moss-gesture-hud {
+  right: auto;
+  left: 16px;
+}
+.moss-gesture-hud__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--fui-line-2);
+  background: var(--fui-void);
+}
+.moss-gesture-hud__badge {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fui-num-sm);
+  color: var(--fui-text-hi);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.moss-gesture-hud__badge[data-state="ok"]   { color: var(--fui-ok); }
+.moss-gesture-hud__badge[data-state="warn"] { color: var(--fui-act); }
+.moss-gesture-hud__badge[data-state="crit"] { color: var(--fui-crit); }
+.moss-gesture-hud__view {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--fui-void);
+  overflow: hidden;
+}
+.moss-gesture-hud__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+.moss-gesture-hud__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.moss-gesture-hud[data-mode="notice"] {
+  border-color: var(--fui-crit);
+  border-top-color: var(--fui-crit);
+}
+.moss-gesture-hud[data-mode="notice"] .moss-gesture-hud__view {
+  display: none;
+}
+.moss-gesture-hud__notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--fui-crit);
+  background: var(--fui-void);
+  font-size: var(--fui-text-sm);
+  line-height: 1.4;
+  color: var(--fui-text-hi);
+}
+.moss-gesture-hud__notice[hidden] { display: none; }
+.moss-gesture-hud__legend {
+  margin: 0;
+  padding: 5px 6px;
+  border-top: 1px solid var(--fui-line-1);
+  background: var(--fui-void);
+  font-size: var(--fui-text-micro);
+  line-height: 1.35;
+  color: var(--fui-text-dim);
+  text-align: center;
+}
+
+/* ── v5.2/v5.3 HUD Media Player Mini / Collapsed Mode (Track Info + Prev/Play/Next + Live Spectrum) ── */
+.moss-hud-media-mini-nav {
+  display: none;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.moss-hud-media-mini-btn {
+  min-width: 20px;
+  padding: 0 4px;
+}
+.moss-hud-media-mini-play {
+  display: none;
+  flex: none;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] {
+  width: min(344px, 100%);
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-card__head {
+  min-height: 30px;
+  padding: 4px var(--fui-space-2);
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-card__body {
+  padding: var(--fui-space-2);
+  gap: 0;
+  overflow: hidden;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-media-stage {
+  padding: 6px 8px;
+  gap: 6px;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-media-deck {
+  gap: 6px;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-media-mini-nav {
+  display: inline-flex;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-media-mini-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-audio-viz {
+  height: 38px;
+}
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-fui-scrub,
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-fui-media-controls,
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-seek-bar,
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-media-transport,
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-tracklist {
+  display: none;
+}
+
+/* ── v5.4 History Full-Text Search & Markdown Export Row ── */
+.moss-history-search {
+  display: flex;
+  align-items: center;
+  gap: var(--fui-space-2);
+}
+.moss-history-row {
+  align-items: center;
+  gap: var(--fui-space-2);
+}
+.moss-history-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: space-between;
+  text-align: left;
+}
+.moss-history-row__exp {
+  flex: none;
+  white-space: nowrap;
+}
+.moss-history-hit {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  min-height: var(--fui-control);
+  padding: var(--fui-space-2);
+  justify-content: flex-start;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+}
+
+/* ── v5.5 Slide-Out Tactical Comms Drawer & Detachable Floating Window ── */
+.moss-comms-tab {
+  position: fixed;
+  right: 0;
+  bottom: 44px;
+  z-index: 27;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 12px 6px;
+  border: 1px solid var(--fui-line-hi);
+  border-right: none;
+  background: var(--fui-surface-2);
+  color: var(--fui-text-hi);
+  cursor: pointer;
+  letter-spacing: 0.14em;
+  font-size: 0.74rem;
+  transition: border-color 140ms var(--fui-ease), background 140ms var(--fui-ease), opacity 160ms var(--fui-ease);
+}
+.moss-comms-tab:hover {
+  border-color: var(--fui-info);
+  background: var(--fui-surface-3);
+}
+.moss-comms-tab[data-drawer-open="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.moss-comms-tab__code {
+  color: var(--fui-act);
+  font-size: 0.72rem;
+}
+.moss-comms-tab__dot {
+  width: 7px;
+  height: 7px;
+  background: var(--fui-act);
+}
+
+.moss-comms-drawer {
+  position: fixed;
+  z-index: 28;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.moss-comms-drawer[data-mode="drawer"] {
+  top: 48px;
+  right: 0;
+  bottom: 32px;
+  width: min(412px, calc(100vw - 16px));
+  transition: transform 200ms var(--fui-ease);
+  border-left: 2px solid var(--fui-info);
+  background: var(--fui-bg);
+}
+.moss-comms-drawer[data-mode="drawer"][data-open="false"] {
+  transform: translateX(calc(100% + 16px));
+  pointer-events: none;
+}
+.moss-comms-drawer[data-mode="drawer"][data-open="true"] {
+  transform: translateX(0);
+}
+.moss-comms-drawer[data-mode="float"] {
+  z-index: 36;
+  border: 1px solid var(--fui-info);
+  background: var(--fui-bg);
+}
+.moss-comms-drawer[data-mode="float"][data-open="false"] {
+  display: none;
+}
+.moss-comms-drawer[data-mode="float"] .moss-comms-head {
+  cursor: grab;
+  user-select: none;
+}
+.moss-comms-drawer[data-dragging="true"] .moss-comms-head {
+  cursor: grabbing;
+}
+.moss-comms-drawer .moss-comms-panel {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+}
+.moss-comms-drawer .moss-comms-panel[data-file-drag="true"] {
+  outline: 2px dashed var(--fui-info);
+  outline-offset: -4px;
+}
+.moss-comms-head__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.moss-comms-resize {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  border-right: 2px solid var(--fui-info);
+  border-bottom: 2px solid var(--fui-info);
+}
+.moss-comms-drawer[data-mode="float"] .moss-comms-resize {
+  display: block;
+}
+
+/* ── v5.5 Cross-Rail Droppable Zone & Swap Button ── */
+.moss-rail-dropzone {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--fui-line-2) transparent;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fui-space-3);
+  padding: var(--fui-space-2) 2px;
+  border: 1px dashed transparent;
+  transition: border-color 140ms var(--fui-ease), background 140ms var(--fui-ease);
+}
+.moss-rail-dropzone::-webkit-scrollbar {
+  width: 4px;
+}
+.moss-rail-dropzone::-webkit-scrollbar-track {
+  background: transparent;
+}
+.moss-rail-dropzone::-webkit-scrollbar-thumb {
+  background: var(--fui-line-2);
+}
+.moss-rail-dropzone[data-empty="true"] {
+  min-height: 96px;
+  border-color: var(--fui-line-1);
+  align-items: center;
+  justify-content: center;
+}
+.moss-rail-dropzone[data-empty="false"] .moss-rail-dropzone__hint {
+  display: none;
+}
+.moss-rail-dropzone__hint {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--fui-text-dim);
+  text-align: center;
+  padding: var(--fui-space-2);
+}
+body[data-rail-dragging="true"] .moss-rail-dropzone,
+.moss-rail-dropzone[data-drop-active="true"],
+#left-rail[data-drop-active="true"] {
+  border-color: var(--fui-info);
+  background: var(--fui-surface-1);
+}
+.moss-rail-swap-btn {
+  margin-left: 6px;
+  padding: 0 5px;
+  min-height: 20px;
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-surface-1);
+  color: var(--fui-text-dim);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.moss-rail-swap-btn:hover {
+  border-color: var(--fui-info);
+  color: var(--fui-text-hi);
+}
+
+/* ── v5.5 Rich Safe Markdown, Tool Trace & Per-Turn Utility Row ── */
+.moss-tool-trace {
+  margin: 0 0 6px;
+  border: 1px solid var(--fui-line-1);
+  border-left: 2px solid var(--fui-info);
+  background: var(--fui-surface-1);
+  padding: 3px 7px;
+}
+.moss-tool-trace__sum {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--fui-info);
+  letter-spacing: 0.04em;
+}
+.moss-tool-trace__list {
+  list-style: none;
+  margin: 5px 0 2px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.moss-tool-trace__item {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border: 1px solid var(--fui-line-2);
+  color: var(--fui-text-dim);
+}
+.moss-tool-trace__item[data-state="ok"] { border-color: var(--fui-ok); color: var(--fui-ok); }
+.moss-tool-trace__item[data-state="warn"] { border-color: var(--fui-warn); color: var(--fui-warn); }
+.moss-tool-trace__item[data-state="crit"] { border-color: var(--fui-crit); color: var(--fui-crit); }
+
+.moss-md {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.moss-md > p { margin: 0; line-height: 1.55; overflow-wrap: anywhere; }
+.moss-md-heading {
+  margin: 4px 0 0;
+  font-weight: 600;
+  color: var(--fui-text-hi);
+  letter-spacing: 0.03em;
+}
+.moss-md-inline-code {
+  font-family: var(--fui-font-mono);
+  font-size: 0.84em;
+  padding: 1px 4px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-2);
+  color: var(--fui-info);
+}
+.moss-md-link {
+  color: var(--fui-info);
+  text-decoration: underline;
+  word-break: break-all;
+}
+.moss-md-code {
+  border: 1px solid var(--fui-line-2);
+  background: var(--fui-bg);
+  overflow: hidden;
+}
+.moss-md-code__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+}
+.moss-md-code__lang { font-size: 0.72rem; color: var(--fui-text-dim); }
+.moss-md-code pre {
+  margin: 0;
+  padding: 8px;
+  overflow-x: auto;
+  font-family: var(--fui-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--fui-text-hi);
+}
+.moss-md-quote {
+  margin: 0;
+  padding: 4px 8px;
+  border-left: 2px solid var(--fui-line-hi);
+  background: var(--fui-surface-1);
+  color: var(--fui-text-dim);
+  font-size: 0.86rem;
+}
+.moss-md-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 3px;
+}
+.moss-md-table-wrap { overflow-x: auto; }
+.moss-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.moss-md-table th,
+.moss-md-table td {
+  border: 1px solid var(--fui-line-1);
+  padding: 4px 6px;
+  text-align: left;
+}
+.moss-md-table th {
+  background: var(--fui-surface-2);
+  color: var(--fui-text-hi);
+}
+
+.moss-turn-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.moss-turn-tool-btn {
+  padding: 2px 6px;
+  border: 1px solid var(--fui-line-1);
+  background: transparent;
+  color: var(--fui-text-dim);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.moss-turn-tool-btn:hover {
+  border-color: var(--fui-info);
+  color: var(--fui-text-hi);
+}
+
+/* ── v5.5 Composer Attachment Pill, Slash Menu, Command Palette & Auth Gate ── */
+.moss-attach-btn {
+  flex: none;
+  min-width: 28px;
+  padding: 0 6px;
+  font-weight: 700;
+}
+.moss-attach-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--fui-info);
+  background: var(--fui-surface-2);
+  font-size: 0.76rem;
+}
+.moss-attach-pill[hidden] { display: none; }
+.moss-attach-pill__thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border: 1px solid var(--fui-line-2);
+}
+.moss-attach-pill__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fui-text-hi);
+}
+.moss-attach-pill__meta { color: var(--fui-text-dim); font-size: 0.7rem; }
+
+.moss-slash-menu {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding: 4px;
+  border: 1px solid var(--fui-info);
+  background: var(--fui-surface-1);
+  max-height: 180px;
+  overflow-y: auto;
+}
+.moss-slash-menu[hidden] { display: none; }
+.moss-slash-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fui-text-hi);
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.moss-slash-item:hover {
+  border-color: var(--fui-info);
+  background: var(--fui-surface-2);
+}
+.moss-slash-item__cmd { color: var(--fui-act); min-width: 72px; }
+
+.moss-strip__mute-btn[aria-pressed="true"] {
+  border-color: var(--fui-warn);
+  color: var(--fui-warn);
+}
+.moss-strip__auth-chip[data-state="intel"] {
+  border-color: var(--fui-act);
+  color: var(--fui-act);
+}
+.moss-strip__auth-chip[data-state="data"] {
+  border-color: var(--fui-info);
+  color: var(--fui-info);
+}
+
+.moss-cmdk { width: min(560px, calc(100vw - 32px)); }
+.moss-cmdk__body { display: grid; gap: 10px; }
+.moss-cmdk__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+}
+.moss-cmdk__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+  cursor: pointer;
+  font-size: 0.84rem;
+  color: var(--fui-text-hi);
+}
+.moss-cmdk__item[data-active="true"],
+.moss-cmdk__item:hover {
+  border-color: var(--fui-info);
+  background: var(--fui-surface-2);
+}
+
+/* ── v5.5 4-Char CS/C Auth Gate & CS-Only Settings Guard ── */
+body[data-auth-role="C"] [data-cs-only="true"] {
+  display: none !important;
+}
+.moss-role-banner {
+  margin: 0 0 var(--fui-space-3);
+  padding: 8px 10px;
+  border: 1px solid var(--fui-info);
+  border-left: 3px solid var(--fui-info);
+  background: var(--fui-surface-1);
+  font-size: 0.78rem;
+  color: var(--fui-text-hi);
+}
+.moss-role-banner[hidden] { display: none; }
+.moss-auth-gate { width: min(440px, calc(100vw - 32px)); }
+.moss-auth-gate__body { display: grid; gap: 12px; }
+.moss-auth-gate__input {
+  text-transform: uppercase;
+  text-align: center;
+  letter-spacing: 0.35em;
+  font-size: 1.35rem;
+  min-height: 48px;
+}
+.moss-auth-user-row {
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--fui-space-2);
+}
+
+/* ── v5.5 HUD Media Lyrics Ticker & Active Fav/Sleep Controls ── */
+.moss-hud-lyrics {
+  display: grid;
+  gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+  text-align: center;
+}
+.moss-hud-lyrics[hidden] { display: none; }
+.moss-hud-lyrics__cur {
+  font-size: 0.8rem;
+  color: var(--fui-text-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.moss-hud-lyrics__nxt {
+  font-size: 0.72rem;
+  color: var(--fui-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.moss-hud-ctrl[data-active="true"] {
+  border-color: var(--fui-act);
+  color: var(--fui-act);
+}

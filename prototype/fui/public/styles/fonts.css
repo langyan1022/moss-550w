@@ -1,0 +1,50 @@
+/* Local font faces served read-only from F:\moss conversation-assets, with token fallbacks. */
+@font-face {
+  font-family: "Rajdhani";
+  src: url("/conversation-assets/fonts/rajdhani-medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Rajdhani";
+  src: url("/conversation-assets/fonts/rajdhani-semibold.ttf") format("truetype");
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Han Sans SC";
+  src: url("/conversation-assets/fonts/source-han-sans-cn-vf.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "思源黑体";
+  src: url("/conversation-assets/fonts/source-han-sans-cn-vf.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Official BSC · IQC Staff Badge editable fonts served read-only from F:\moss */
+@font-face {
+  font-family: "Taobao Maicai"; /* fui-lint-ignore: R04 User-selected type for editable badge fields from F:\moss */
+  src: url("/conversation-assets/fonts/TaoBaoMaiCaiTi-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "ZiHun ChuangCuHei"; /* fui-lint-ignore: R04 Official Chinese lettering font for BSC badge labels from F:\moss */
+  src: url("/conversation-assets/fonts/ZiHunChuangCuHei-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  unicode-range: U+3007, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+20000-323AF;
+}

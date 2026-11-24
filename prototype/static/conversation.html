@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+  <meta name="theme-color" content="#061622">
+  <title>550W · MOSS</title>
+  <link rel="icon" href="/conversation-assets/550w.svg" type="image/svg+xml">
+  <link rel="preload" as="image" href="/conversation-assets/moss-opening.webp" media="(prefers-reduced-motion: no-preference)">
+  <link rel="stylesheet" href="/conversation-assets/terminal-fonts.css">
+  <link rel="stylesheet" href="/conversation-assets/terminal.css?v=operator-workspace">
+  <link rel="stylesheet" href="/conversation-assets/opening-identity.css">
+  <link rel="stylesheet" href="/conversation-assets/terminal-panels.css">
+  <link rel="stylesheet" href="/conversation-assets/mission-tools.css?v=audio-overlay">
+  <link rel="stylesheet" href="/conversation-assets/reference-projection.css?v=music-transparent">
+  <link rel="stylesheet" href="/conversation-assets/observation-layout.css?v=fui-signal">
+  <link rel="stylesheet" href="/static/agent-terminal.css?v=status-window">
+  <link rel="stylesheet" href="/static/assistant-timers.css?v=calendar-reminders">
+  <link rel="stylesheet" href="/conversation-assets/fui-console.css?v=compound-mcp">
+  <link rel="stylesheet" href="/conversation-assets/mobile-workspace.css?v=operator-workspace-3">
+  <link rel="stylesheet" href="/conversation-assets/inspection-console.css?v=location-weather-main">
+  <link rel="stylesheet" href="/static/credential-card.css?v=staff-stripe-fit">
+  <link rel="stylesheet" href="/static/staff-console.css?v=staff-reference-type">
+  <link rel="stylesheet" href="/static/city-settings.css?v=city-settings">
+  <link rel="stylesheet" href="/static/speech-space.css?v=speech-space">
+</head>
+<body class="fui">
+  <main data-opening="identity" data-console-phase="standby" data-console-link="connecting">
+    <div class="model-viewport">
+      <canvas id="moss-model" aria-label="可旋转的 550W 三维模型"></canvas>
+      <div class="view-frame" aria-hidden="true"></div>
+      <div class="aperture-title" id="aperture-title"><span lang="en">OPTICAL INSPECTION</span><h1>光学观察台</h1></div>
+      <div class="camera-overlay" aria-hidden="true" hidden>
+        <i class="optic-scale horizontal"></i><i class="optic-scale vertical"></i>
+        <i class="optic-target"></i>
+        <div class="optic-readout"><span class="check-indicator" hidden>机构自检</span><span>方位 <b data-angle="yaw">0°</b></span><span>俯仰 <b data-angle="pitch">0°</b></span></div>
+      </div>
+    </div>
+    <div class="model-loading">
+      <span id="model-load-stage" role="status">载入 550W 三维模型</span>
+      <output class="model-load-reading" aria-hidden="true" hidden></output>
+      <progress class="model-load-meter" aria-labelledby="model-load-stage"></progress>
+    </div>
+    <div id="opening-identity" aria-label="550W 启动画面">
+      <svg class="identity-mark" viewBox="0 0 3568.58 1153.02" role="img" aria-label="550W"></svg>
+      <div class="identity-caption">
+        <span lang="zh-CN">智能量子计算机 550W</span>
+        <span lang="en">INTELLIGENT QUANTUM COMPUTER MOSS</span>
+      </div>
+    </div>
+    <video id="opening-film" hidden muted playsinline disablepictureinpicture preload="none" poster="/conversation-assets/moss-opening.webp" data-src="/conversation-assets/moss-opening.mp4" aria-hidden="true"></video>
+    <progress id="opening-position" aria-label="开场影片播放进度" max="1" value="0"></progress>
+    <div class="shade" aria-hidden="true"></div>
+    <div class="screen-edge" aria-hidden="true"><b></b><i></i></div>
+    <header class="top">
+      <button type="button" class="brand-field" aria-label="550W · 重播开场" title="重播开场"><img class="brand-mark" src="/conversation-assets/550w.svg" alt=""></button>
+      <p id="console-phase"><span class="phase-lamp" aria-hidden="true"></span><span id="console-phase-label">正在连接</span></p>
+      <section id="device-strip" aria-label="本机实时状态" data-phase="loading">
+        <dl>
+          <div data-main-metric="clock"><dt>本机时间</dt><dd>—</dd></div>
+          <div data-main-metric="cpu"><dt>CPU</dt><dd>—</dd></div>
+          <div data-main-metric="memory"><dt>内存可用</dt><dd>—</dd></div>
+          <div data-main-metric="battery"><dt>电量</dt><dd>—</dd></div>
+          <div data-main-metric="disk"><dt>系统盘可用</dt><dd>—</dd></div>
+        </dl>
+        <p id="device-strip-state" role="status">读取中</p>
+        <section id="location-weather" aria-label="当前位置与天气" data-phase="idle">
+          <div class="location-position-reading">
+            <p id="location-weather-place">当前位置</p>
+            <p id="location-weather-coordinate" title="经纬度保留两位小数" hidden></p>
+          </div>
+          <div class="location-weather-reading">
+            <div id="location-weather-value" aria-live="polite">天气待定位</div>
+            <div class="location-weather-meta">
+              <time id="location-weather-stamp" hidden></time>
+              <button id="location-weather-details-toggle" type="button" popovertarget="location-weather-details" aria-label="天气详情" hidden>详情</button>
+            </div>
+          </div>
+          <button id="location-weather-control" type="button" aria-label="为天气开启定位">开启定位</button>
+          <aside id="location-weather-details" popover aria-labelledby="location-weather-details-title">
+            <header><h2 id="location-weather-details-title">当前位置天气</h2><span id="location-weather-freshness" hidden>旧读数</span></header>
+            <dl>
+              <div><dt>定位点</dt><dd id="location-weather-point">—</dd></div>
+              <div><dt>体感</dt><dd id="location-weather-feels-like">—</dd></div>
+              <div><dt>湿度</dt><dd id="location-weather-humidity">—</dd></div>
+              <div><dt>风速</dt><dd id="location-weather-wind">—</dd></div>
+              <div><dt>数据时间</dt><dd><time id="location-weather-sampled">—</time></dd></div>
+              <div><dt>数据来源</dt><dd>Open-Meteo</dd></div>
+            </dl>
+          </aside>
+        </section>
+      </section>
+      <div class="top-actions">
+        <button type="button" id="skip-opening" hidden>跳过开场</button>
+        <button type="button" id="quick-local-status" aria-haspopup="dialog" aria-controls="local-status-panel" disabled>本机状态</button>
+        <button type="button" id="open-status-window" aria-label="状态小窗"><span>状态小窗</span><span class="status-window-short" aria-hidden="true">小窗</span></button>
+        <details class="preferences"><summary class="chip">设置</summary><div class="preference-panel">
+          <div class="theme-name"><span>显示配色</span><span id="theme-name"></span></div>
+          <div id="theme" role="group" aria-label="界面配色"></div>
+          <div class="custom-color"><button type="button" id="use-custom" aria-pressed="false">自选颜色</button><input type="color" id="accent" value="#ff3b30" aria-label="自定义主题色"></div>
+          <fieldset class="monitor-mode"><legend>音频监测样式</legend><div>
+            <label><input type="radio" name="monitor-mode" value="spectrum" checked>实时频谱</label>
+            <label><input type="radio" name="monitor-mode" value="waveform">通信波形</label>
+          </div></fieldset>
+          <div class="mic-input-setting">
+            <label for="mic-device">麦克风输入</label>
+            <select id="mic-device"><option value="">跟随系统默认</option></select>
+            <small id="mic-device-status" role="status"></small>
+            <label><input type="checkbox" id="wake-listen" autocomplete="off">本地语音唤醒</label>
+            <small id="wake-status" role="status">开启后说“你好，莫斯”，可接着说指令。</small>
+            <label><input type="checkbox" id="wake-interrupt" autocomplete="off" disabled>播报时允许语音打断</label>
+            <small>开启后，说“等一下”可停止播报，再接着说。</small>
+            <label><input type="checkbox" id="native-wake-next" autocomplete="off" aria-describedby="native-wake-note">桌面唤醒后接着听</label>
+            <small id="native-wake-note">先用网页麦克风授权。托盘唤醒后，前台页面接着听一条指令。</small>
+          </div>
+          <button type="button" id="replay-opening">重播开场</button>
+          <button type="button" id="staff-configure" aria-haspopup="dialog" aria-controls="staff-settings">工牌设置</button>
+          <button type="button" id="city-configure" aria-haspopup="dialog" aria-controls="city-settings">城市设定</button>
+          <button type="button" id="speech-space-configure" aria-haspopup="dialog" aria-controls="speech-space-settings">语音空间感</button>
+          <button type="button" id="weather-use-location">天气定位</button>
+          <small id="weather-location-feedback" role="status" hidden></small>
+          <a id="scene-mode-link" href="/?chat=1&amp;scene=off">打开轻量对话</a>
+          <div class="mic-input-setting">
+            <label><input type="checkbox" id="hand-gesture" autocomplete="off" aria-describedby="hand-gesture-status" disabled>手势切换机位</label>
+            <small id="hand-gesture-status" role="status">开启后用本机摄像头识别手势。</small>
+            <video id="hand-gesture-input" hidden muted playsinline></video>
+          </div>
+          <div class="mic-input-setting"><label for="agent-model">对话模型</label><select id="agent-model" data-testid="model-select" disabled><option>读取模型…</option></select><small id="agent-model-note" role="status"></small><small id="cloud-context-note" data-testid="cloud-context" hidden>云模型会收到本轮消息、对话上下文及随请求提供的记忆。SQLite 记忆较少时，会包含全部条目。</small></div>
+          <div class="mic-input-setting">
+            <label><input type="checkbox" id="show-cloud-requests" aria-describedby="cloud-requests-note">显示云模型请求次数</label>
+            <small id="cloud-requests-note" hidden>含发送失败和重试。费用以供应商账单为准。</small>
+          </div>
+        </div></details>
+        <button type="button" id="fullscreen" aria-pressed="false">全屏</button>
+      </div>
+    </header>
+    <nav class="camera-rail" aria-labelledby="camera-name">
+      <div class="camera-options" role="radiogroup" aria-label="机位选择">
+        <label data-code="MAIN"><input type="radio" name="camera-view" value="interview" checked><span>主视</span></label>
+        <label data-code="FRONT"><input type="radio" name="camera-view" value="front"><span>正面</span></label>
+        <label data-code="OPTICS"><input type="radio" name="camera-view" value="optics"><span>镜头</span></label>
+        <label data-code="PANEL"><input type="radio" name="camera-view" value="instruments"><span>仪表</span></label>
+        <label data-code="ARRAY"><input type="radio" name="camera-view" value="right"><span>六灯</span></label>
+        <label data-code="ASSEMBLY"><input type="radio" name="camera-view" value="whole"><span>整机</span></label>
+      </div>
+      <div class="view-controls" aria-label="机位控制">
+      <div class="view-heading"><div class="dial-well"><button type="button" id="camera-dial" role="slider" aria-label="机位旋钮" title="单击或滚动切换机位，拖动可旋转" aria-valuemin="1" aria-valuemax="6" aria-valuenow="1" aria-valuetext="主视"></button></div>
+        <div><span class="camera-name" id="camera-name">观察机位</span><output id="camera-index" aria-hidden="true">01<span> / 06</span></output></div></div>
+      <button type="button" id="reset-view" aria-label="视角复位">↺ 复位</button>
+      </div>
+    </nav>
+    <aside class="telemetry" aria-label="观察信息">
+      <section id="staff-instrument" class="telemetry-section" aria-labelledby="staff-heading" hidden>
+        <h2 id="staff-heading">工牌 <span lang="en">PERSONNEL ID</span></h2>
+        <div class="staff-preview-frame">
+          <div id="staff-preview"></div>
+          <button id="staff-open" type="button" aria-label="查看工牌正面" aria-haspopup="dialog" aria-controls="staff-view"></button>
+        </div>
+        <button id="staff-landing-welcome" type="button" hidden>播放欢迎语</button>
+      </section>
+      <div class="telemetry-section geo-module">
+        <h2>地球定位 <span lang="en">EARTH TRACK</span></h2>
+        <figure id="earth-view" hidden>
+          <div class="earth-field"><div class="earth-sphere" role="img" aria-label="地球与定位标记"><canvas class="earth-overlay" aria-hidden="true"></canvas></div></div>
+          <figcaption><div><span>东八区参考视角</span><small></small></div><button id="earth-locate" type="button" aria-label="使用浏览器定位" title="使用浏览器定位"><span aria-hidden="true">⌖</span></button><button id="earth-motion" type="button" aria-pressed="true" aria-label="继续地球自转" title="继续地球自转">▷</button></figcaption>
+        </figure>
+      </div>
+      <div class="telemetry-section audio-module">
+        <h2>音频监测 <span lang="en">AUDIO MONITOR</span></h2>
+      <div class="spectra">
+        <figure><figcaption><span>麦克风</span><span class="track-state" id="mic-state">未开启</span><span class="db-reading" id="input-db" title="麦克风平均电平" aria-hidden="true" hidden></span></figcaption><div class="track"><canvas id="input-fft" aria-label="麦克风实时频谱"></canvas></div></figure>
+        <figure><figcaption><span id="output-label" lang="en">MOSS</span><span class="track-state" id="speaker-state">待机</span><span class="db-reading" id="output-db" title="播报平均电平" aria-hidden="true" hidden></span></figcaption><div class="track"><canvas id="output-fft" aria-label="MOSS 实时频谱"></canvas></div></figure>
+      </div>
+      <button type="button" id="music-now" aria-controls="tools-panel" hidden></button>
+      </div>
+      <div class="telemetry-section log-module"><h2>运行日志 <span lang="en">RUNTIME LOG</span></h2>
+        <ol id="runtime-lines" aria-live="off"></ol>
+      </div>
+    </aside>
+    <span class="scene-gesture"><span class="gesture">拖动顶座可左右滑动 · 拖动机身可转动或俯仰 · 右键平移视角</span><span class="gesture touch-gesture">拖动顶座可左右滑动 · 拖动机身可转动或俯仰 · 双指平移视角</span></span>
+    <div class="stage-audio-lane" data-signal="idle">
+      <p id="caption" class="caption" hidden></p>
+      <svg width="0" height="0" class="wait-geometry" aria-hidden="true" focusable="false">
+        <defs>
+          <path id="wait-front" d="M0 16 C18 16 29 14 44 16 S61 25 74 19 S91 3 105 12 S124 26 140 17 S158 9 171 16 S193 30 212 16 S230 3 244 13 S264 24 278 18 S300 15 320 16"/>
+          <path id="wait-back" d="M0 16 C16 15 29 18 43 16 S64 9 78 15 S94 25 110 18 S129 7 145 15 S162 23 178 16 S196 5 211 13 S231 26 248 18 S270 12 283 16 S302 18 320 16"/>
+        </defs>
+      </svg>
+      <div class="stage-processing" aria-hidden="true">
+        <svg class="wait-wave" viewBox="0 0 320 32" preserveAspectRatio="none" fill="none" aria-hidden="true" focusable="false">
+          <use class="wave-echo" href="#wait-front" y="2"/>
+          <g class="wave-soft">
+            <use class="wave-back" href="#wait-back"/>
+            <use class="wave-sparks distant" href="#wait-back"/>
+          </g>
+          <use class="wave-front" href="#wait-front"/>
+          <use class="wave-sparks" href="#wait-front"/>
+        </svg>
+      </div>
+      <svg class="standby-wave" viewBox="0 0 320 36" preserveAspectRatio="none" fill="none" aria-hidden="true" focusable="false">
+        <defs>
+          <path id="standby-sine" d="M0 18C11 18 15 14 27 14S42 23 54 23S69 12 81 12S96 26 108 26S123 9 135 9S150 28 162 28S177 9 189 9S204 26 216 26S231 12 243 12S258 23 270 23S285 14 297 14S311 18 320 18"/>
+        </defs>
+        <use class="standby-echo" href="#standby-sine" transform="translate(0 36) scale(1 -1)"/>
+        <use class="standby-trace" href="#standby-sine"/>
+        <g class="standby-flow">
+          <use class="standby-particle-halo" href="#standby-sine"/>
+          <use class="standby-particle" href="#standby-sine"/>
+        </g>
+      </svg>
+      <figure class="stage-signal" aria-labelledby="stage-signal-mode stage-signal-source">
+        <figcaption><span id="stage-signal-mode">实时频谱</span><span id="stage-signal-source">待机</span></figcaption>
+        <canvas id="stage-audio" aria-hidden="true"></canvas>
+      </figure>
+    </div>
+    <section class="dock" aria-label="通话控制">
+      <div class="buttons"><button type="button" id="mic" aria-pressed="false"><i class="mic-icon" aria-hidden="true"></i><span>开启麦克风</span></button>
+        <button type="button" id="interrupt" disabled><i class="stop-icon" aria-hidden="true"></i>打断</button>
+        <button type="button" id="history-toggle" aria-expanded="false" aria-controls="dialogue"><i class="chat-icon" aria-hidden="true"></i>文字对话</button></div>
+      <p id="status" role="status">开启麦克风即可连续对话。</p><p id="preparation" hidden></p>
+    </section>
+    <section id="lore-panel" aria-labelledby="lore-title" hidden>
+      <header class="projection-heading">
+        <span class="projection-label">设定档案</span>
+        <div class="projection-actions">
+          <button type="button" class="lore-pin" aria-label="固定资料投影" aria-pressed="false">固定</button>
+          <button type="button" class="lore-close" aria-label="收起设定资料">收起</button>
+        </div>
+        <h2 id="lore-title"></h2>
+      </header>
+      <div class="projection-body">
+        <figure hidden>
+          <div class="lore-frame"></div>
+          <figcaption></figcaption>
+          <div class="lore-paging" hidden><button type="button" data-step="-1" aria-label="上一份媒体">‹</button><span class="lore-count"></span><button type="button" data-step="1" aria-label="下一份媒体">›</button></div>
+        </figure>
+        <p class="lore-fact"></p>
+        <a class="lore-source" target="_blank" rel="noopener noreferrer"></a>
+      </div>
+    </section>
+    <aside class="dialogue" id="dialogue" aria-labelledby="log-title" hidden>
+      <header class="panel"><h2 id="log-title">对话记录</h2><div class="chat-actions"><button type="button" data-panel="history-panel" data-testid="history">历史</button><button type="button" data-panel="memory-panel" data-testid="memories">记忆</button><button type="button" data-panel="notes-panel" aria-haspopup="dialog">便签</button><button type="button" id="new-chat" data-testid="new-chat">新对话</button><button type="button" id="close-chat" aria-label="收起文字对话">收起</button></div></header>
+      <div id="history-state" class="connection"><small role="status"><span id="connection-label">正在连接</span><span id="kernel-label" hidden></span></small><button class="tool-catalog-open" type="button" data-panel="tool-catalog" data-testid="tool-catalog-open">工具示例</button></div>
+      <div id="log" role="log" aria-label="对话记录" aria-live="off"><div id="welcome"><div id="starters" aria-label="开始话题"><p>开始对话</p><button type="button" data-example="我想听刀郎的歌">找一首本机音乐</button><button type="button" data-example="帮我保存一份本地草稿，内容逐字写：明天核对清单">试写一份草稿</button></div></div><div id="turns"></div></div>
+      <div id="error" role="alert" hidden></div>
+      <form id="composer"><textarea id="message" data-testid="composer" rows="1" maxlength="1200" aria-label="文字消息" placeholder="输入消息…" enterkeyhint="send" required></textarea><button type="submit" id="send" data-testid="send" disabled>发送</button></form>
+      <small id="input-hint">Enter 发送 · Shift + Enter 换行</small>
+    </aside>
+    <aside id="tools-panel" role="dialog" aria-labelledby="tool-title" data-testid="media-projection" hidden>
+      <header class="projection-heading">
+        <span class="projection-label">MOSS 资料投影</span>
+        <div class="projection-actions">
+          <button type="button" id="tools-pin" aria-pressed="false">固定</button>
+          <button type="button" id="tools-close" aria-label="收起资料">收起</button>
+        </div>
+        <h2 id="tool-title"></h2>
+        <p id="projection-transport" aria-live="polite" hidden></p>
+        <small id="projection-speech" hidden></small>
+      </header>
+      <div class="projection-body">
+        <p id="tool-note" role="status"></p>
+        <div id="tool-results"></div>
+      </div>
+      <div id="tool-player" class="projection-media"></div>
+    </aside>
+  </main>
+  <dialog class="agent-panel" id="history-panel" aria-labelledby="history-title"><header><h2 id="history-title">对话历史</h2><form method="dialog"><button data-testid="history-close" aria-label="关闭对话记录">关闭</button></form></header><p class="panel-error" role="alert" hidden></p><ul id="history-list"></ul></dialog>
+  <dialog class="agent-panel" id="local-status-panel" aria-labelledby="local-status-title" data-testid="local-status-panel">
+    <header class="local-status-heading">
+      <h2 id="local-status-title">本机状态</h2>
+      <div class="local-status-actions">
+        <button id="local-status-cancel" type="button" hidden>取消读取</button>
+        <button type="button" data-stop-information-speech hidden>停止播报</button>
+        <form method="dialog"><button type="submit" autofocus>关闭</button></form>
+      </div>
+    </header>
+    <p id="local-status-progress" role="status" hidden></p>
+    <dl id="local-status-readings"></dl>
+    <footer id="local-status-footer" hidden><span>记录于</span><time id="local-status-time"></time></footer>
+  </dialog>
+  <dialog class="agent-panel" id="weather-panel" aria-labelledby="weather-title" data-testid="weather-panel">
+    <header class="weather-panel-heading">
+      <div>
+        <h2 id="weather-title">天气</h2>
+        <p id="weather-voice-status" role="status" hidden></p>
+      </div>
+      <div class="weather-panel-actions">
+        <button type="button" data-stop-information-speech hidden>停止播报</button>
+        <form method="dialog"><button id="weather-close" type="submit" autofocus>关闭</button></form>
+      </div>
+    </header>
+    <div id="weather-content"></div>
+  </dialog>
+  <dialog class="agent-panel" id="jev-handoff-panel" aria-labelledby="jev-handoff-title" aria-describedby="jev-handoff-destination" data-testid="jev-handoff-panel">
+    <header>
+      <h2 id="jev-handoff-title">填入本机草稿窗</h2>
+      <form method="dialog"><button type="submit" id="jev-handoff-close" data-testid="jev-handoff-close" autofocus>取消</button></form>
+    </header>
+    <p id="jev-handoff-destination">目标 <strong>MOSS 本机草稿窗</strong></p>
+    <pre id="jev-handoff-preview" data-testid="jev-handoff-preview" aria-label="拟回复原文" dir="auto" tabindex="0"></pre>
+    <p id="jev-handoff-status" data-testid="jev-handoff-status" role="status" tabindex="-1" hidden></p>
+    <p id="jev-handoff-error" data-testid="jev-handoff-error" role="alert" hidden></p>
+    <footer><button type="button" id="jev-handoff-confirm" data-testid="jev-handoff-confirm">确认填入</button></footer>
+  </dialog>
+  <dialog class="agent-panel" id="memory-panel" aria-labelledby="memory-title"><header><h2 id="memory-title">长期记忆</h2><form method="dialog"><button data-testid="memory-close" aria-label="关闭长期记忆">关闭</button></form></header><p>对话中可输入“记住：…”、“修改记忆：原文 → 新内容”或“撤回记忆：原文”。临时记忆可在末尾加“（有效至 2026-12-31）”。</p><p id="memory-backend" hidden></p><p class="panel-error" role="alert" hidden></p><form id="memory-form"><label for="memory-input">添加记忆</label><textarea id="memory-input" data-testid="memory-input" rows="3"></textarea><button data-testid="memory-add" type="submit" disabled>保存记忆</button></form><ul id="memory-list"></ul></dialog>
+  <dialog class="agent-panel" id="notes-panel" aria-labelledby="notes-title">
+    <header><h2 id="notes-title">便签</h2><form method="dialog"><button aria-label="关闭便签">关闭</button></form></header>
+    <form id="notes-editor">
+      <label id="notes-label" for="notes-body">新便签</label>
+      <textarea id="notes-body" rows="3" maxlength="1200" required></textarea>
+      <button type="submit">保存</button>
+      <button type="button" id="notes-cancel" hidden>取消编辑</button>
+    </form>
+    <form id="notes-filter">
+      <label for="notes-query">搜索便签</label>
+      <div class="notes-filter-row"><input type="search" id="notes-query" maxlength="1200"><button type="submit">搜索</button></div>
+      <label><input type="checkbox" id="notes-archive"> 显示已归档</label>
+    </form>
+    <p id="notes-status" role="status"></p>
+    <ul id="notes-list"></ul>
+    <button type="button" id="notes-more" hidden>再看一些</button>
+  </dialog>
+  <dialog class="agent-panel" id="tool-catalog" aria-labelledby="catalog-title">
+    <header><h2 id="catalog-title">工具示例</h2><form method="dialog"><button aria-label="关闭工具示例">关闭</button></form></header>
+    <div class="tool-examples">
+      <button type="button" data-example="刘德华的冰雨">点歌 · 刘德华的冰雨</button>
+      <button type="button" data-example="现在几点了？">查询本机时间</button>
+      <button type="button" data-example="现在几点、电脑还有多少电、音量多大？">时间、电量与音量</button>
+      <button type="button" data-example="20分钟后提醒我休息">设一个休息提醒</button>
+      <button type="button" data-example="我明天有什么提醒？">查询明天的提醒</button>
+      <button type="button" data-example="明天上午10点到11点安排日程：产品评审">新建本机日程</button>
+      <button type="button" data-example="查看明天的日程">查询明天的日程</button>
+      <button type="button" data-example="明天上海的天气怎么样？">查城市天气</button>
+      <button type="button" data-example="读取剪贴板">查看剪贴板文字</button>
+      <button type="button" data-example="识别当前窗口的文字">识别窗口文字</button>
+      <button type="button" data-example="看一下这个窗口的画面" data-vision-example hidden>窗口画面提问</button>
+      <button type="button" data-example="帮我回同事：明天几点开会？我的意思是下午三点。">帮我拟一条回复</button>
+      <button type="button" data-example="锁屏">锁定 Windows</button>
+      <button type="button" data-example="让电脑进入睡眠">让电脑进入睡眠</button>
+      <button type="button" data-example="执行 PowerShell：Get-Date">执行 PowerShell</button>
+      <button type="button" data-example="列出 MCP 工具">查看 MCP 工具</button>
+    </div>
+  </dialog>
+  <dialog class="agent-panel staff-dialog" id="staff-view" aria-labelledby="staff-view-title">
+    <header><h2 id="staff-view-title">工牌</h2><form method="dialog"><button type="submit" autofocus>关闭</button></form></header>
+    <div class="staff-view-body">
+      <div class="staff-side-controls" role="group" aria-label="工牌面向">
+        <button type="button" data-staff-face="front" aria-pressed="true">正面</button>
+        <button type="button" data-staff-face="back" aria-pressed="false">背面</button>
+      </div>
+      <div id="staff-large-preview"></div>
+      <div id="staff-scan-preview" hidden></div>
+      <div class="staff-view-actions">
+        <button type="button" id="staff-view-scan" aria-controls="staff-scan-preview" aria-pressed="false">放大条码</button>
+        <button type="button" id="staff-view-welcome">播放欢迎语</button>
+        <button type="button" id="staff-view-configure" aria-haspopup="dialog" aria-controls="staff-settings">编辑工牌</button>
+      </div>
+      <p id="staff-voice-feedback" role="status" hidden></p>
+    </div>
+  </dialog>
+  <dialog class="agent-panel staff-dialog" id="staff-settings" aria-labelledby="staff-settings-title">
+    <header><h2 id="staff-settings-title">工牌设置</h2><form method="dialog"><button type="submit">关闭</button></form></header>
+    <form id="staff-profile-form" class="staff-view-body">
+      <label for="staff-name">姓名</label><input id="staff-name" required maxlength="12" autocomplete="off" autofocus>
+      <label for="staff-number">编号</label><input id="staff-number" required maxlength="24" autocomplete="off" spellcheck="false" aria-describedby="staff-number-hint">
+      <small id="staff-number-hint">使用字母、数字或 . _ / -，条形码随编号生成。</small>
+      <label for="staff-role">职务</label><input id="staff-role" required maxlength="16" autocomplete="off">
+      <label class="staff-welcome-option"><input id="staff-auto-welcome" type="checkbox"> 开场后播放欢迎语</label>
+      <div class="staff-view-actions"><button type="submit">保存工牌</button></div>
+      <p id="staff-save-feedback" role="status" hidden></p>
+    </form>
+  </dialog>
+  <dialog class="agent-panel" id="city-settings" aria-labelledby="city-settings-title"></dialog>
+  <dialog class="agent-panel" id="speech-space-settings" aria-labelledby="speech-space-title"></dialog>
+  <script defer src="/static/assistant-timers.js?v=reminder-order"></script>
+  <script defer src="/static/jev-handoff.js?v=jev-native-draft"></script>
+  <script type="module" src="/static/agent-transport.js"></script>
+  <script defer src="/static/app.js?v=compound-mcp"></script>
+  <script type="module" src="/static/assistant-notes.js"></script>
+  <p id="status-window-notice" role="status" hidden></p>
+  <script type="module" src="/static/device-status.js?v=device-strip"></script>
+  <script type="module" src="/static/agent-terminal.js?v=staff-editable-english"></script>
+</body>
+</html>

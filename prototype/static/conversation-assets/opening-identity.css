@@ -1,0 +1,126 @@
+#opening-identity {
+  position: absolute;
+  z-index: 7;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #0a1515;
+}
+
+#opening-identity .identity-mark {
+  display: block;
+  position: absolute;
+  width: clamp(132px, 19.2vw, 410px);
+  height: auto;
+  left: 49.65%;
+  top: 47.7%;
+  overflow: visible;
+  transform: translate(-50%,-50%);
+}
+
+.identity-mark path {
+  --mark-color: #f0f3f2;
+  fill: var(--mark-color);
+  fill-opacity: .04;
+  stroke: var(--mark-color);
+  stroke-width: 10;
+  stroke-dasharray: 3000;
+  stroke-dashoffset: 3000;
+  animation: identity-trace 960ms linear both, identity-fill 480ms 540ms ease-out forwards;
+}
+.identity-mark .cls-1 { --mark-color: #f51b19; }
+.identity-mark path:last-child { --mark-color: #566262; }
+@keyframes identity-trace { to { stroke-dashoffset: 0; } }
+@keyframes identity-fill { to { fill-opacity: 1; stroke-width: 0; } }
+
+#opening-identity .identity-caption {
+  position: absolute;
+  inset-inline: 0 .7%;
+  bottom: max(3.5%, env(safe-area-inset-bottom));
+  display: grid;
+  justify-items: center;
+  row-gap: clamp(2px, .25vw, 5px);
+  text-align: center;
+  color: #b8c7c5;
+}
+#opening-identity .identity-caption [lang="zh-CN"] {
+  font: 600 clamp(16px, 1.16vw, 25px)/1.25 var(--font-cjk);
+  letter-spacing: .04em;
+}
+#opening-identity .identity-caption [lang="en"] {
+  font: 600 clamp(12px, .78vw, 17px)/1.15 var(--font-body);
+  letter-spacing: .065em;
+  color: #a3b4b2;
+}
+main[data-opening="identity"] :is(.screen-edge,.shade,.brand-mark,#opening-position) { visibility: hidden; }
+main[data-opening="identity"] .top-actions > :not(#skip-opening) { display: none; }
+main[data-opening="identity"] .top { justify-content: flex-end; }
+main[data-opening="identity"] #skip-opening {
+  color: #99a7a7;
+  border-color: #506060;
+  background: transparent;
+}
+main[data-opening="identity"] #skip-opening:focus-visible { outline-color: #e6eeed; }
+@media (prefers-reduced-motion: reduce) {
+  .identity-mark path { fill-opacity: 1; stroke: none; animation: none; }
+}
+
+main > .model-loading {
+  position:absolute;
+  z-index:8;
+  left:calc((100% + var(--rail-size) - var(--rim)) / 2);
+  top:50%;
+  transform:translate(-50%,-50%);
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:baseline;
+  gap:6px 12px;
+  width:min(230px,70vw);
+  padding:8px 11px;
+  color:var(--ink);
+  background:color-mix(in srgb,var(--base) 92%,transparent);
+  font:500 12px/1.5 var(--font-body);
+  letter-spacing:.06em;
+  pointer-events:none;
+}
+main > .model-loading::before { content:none; }
+main[data-opening="identity"] > .model-loading {
+  left:50%;
+  top:calc(47.7% + clamp(50px,5.4vw,110px));
+  transform:translateX(-50%);
+  width:min(195px,65vw);
+  color:#a8b8b6;
+  background:transparent;
+}
+main[data-opening="film"] > .model-loading {
+  left:max(18px,env(safe-area-inset-left));
+  top:max(20px,env(safe-area-inset-top));
+  transform:none;
+}
+.model-load-reading { font:500 12px/1 var(--mono); font-variant-numeric:tabular-nums; }
+.model-load-meter {
+  grid-column:1/-1;
+  display:block;
+  width:100%;
+  height:3px;
+  border:0;
+  border-radius:0;
+  appearance:none;
+  color:inherit;
+  background:color-mix(in srgb,currentColor 25%,transparent);
+}
+.model-load-meter::-webkit-progress-bar { background:transparent; }
+.model-load-meter::-webkit-progress-value { background:currentColor; }
+.model-load-meter::-moz-progress-bar { background:currentColor; }
+.model-load-meter:indeterminate {
+  background:repeating-linear-gradient(110deg,currentColor 0 3px,transparent 3px 9px);
+  background-size:18px 100%;
+  animation:model-reading 700ms linear infinite;
+}
+@keyframes model-reading { to { background-position:18px 0; } }
+main:has(#moss-model[data-ready="true"]:not([data-error])) > .model-loading,
+main:has(#moss-model[data-error]) :is(.model-load-meter,.model-load-reading) { display:none; }
+main:has(#moss-model[data-error]) #model-load-stage { grid-column:1/-1; color:var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .model-load-meter:indeterminate { animation:none; }
+}

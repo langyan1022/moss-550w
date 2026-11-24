@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "model_registration_sha256": "897a022a788ac8f95f05c8de0817a0ddd8024603dcfbf0d421729b1a2b674b7e",
+  "omnivoice_sources": {
+    "models/omnivoice.py": "e8bd3e419c52a557014989c208217183000c99c7439047b2fff4465398a09d54",
+    "utils/audio.py": "78c83ea47030aa7aac3b7c1430bc9f96c4e53ac9c99b9d2e7f8cabe22ca3d0db"
+  },
+  "cuda_name": "NVIDIA GeForce RTX 3070 Ti Laptop GPU",
+  "styles": {
+    "neutral": {
+      "wav": "9ba324cee93840b8c68fe681939f4fd9dc83b133c589628614967c9ca2ebdfd4",
+      "transcript": "感谢您十七年来的辛苦付出，恭喜您，明天可以离港回家了。",
+      "cpu": "8673b3f0b714c7edbab01d4058cafc64a75214c233ed89dbcb869b36462675eb"
+    },
+    "warm": {
+      "wav": "9c469c71aaf4173b6fb82f29d5fcb301705d07035883ea2d8afced060bcfbb74",
+      "transcript": "恭喜您，明天可以离港回家了。",
+      "cpu": "d402f8b88241d4cde4e28b7d4109a1b275d939f9fe2acc860cd1d7f30dc46bfd",
+      "cuda": "4178a172f7b47c1a04aafa492ac0df7df5930f0093d94a9e0a314cf3e678eacc"
+    }
+  }
+}

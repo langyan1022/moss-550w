@@ -1,0 +1,54 @@
+#speech-space-settings {
+  box-sizing: border-box;
+  width: min(418px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--fui-line-3);
+  background: var(--fui-surface-1);
+  color: var(--fui-text-hi);
+}
+
+#speech-space-settings::backdrop { background: color-mix(in srgb, var(--fui-void) 82%, transparent); }
+#speech-space-settings .speech-space-header {
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-block-end: 1px solid var(--fui-line-2);
+}
+
+.speech-space-body { display: grid; gap: 8px; padding: 16px; }
+.speech-space-reading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.speech-space-reading label { color: var(--fui-text-dim); font-size: 14px; }
+#speech-space-value { color: var(--fui-text-hi); font: 600 30px/1 var(--fui-numeric); }
+#speech-space-amount { width: 100%; min-height: 32px; margin: 0; accent-color: var(--fui-data); cursor: pointer; }
+.speech-space-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.speech-space-actions { display: flex; justify-content: flex-end; }
+
+#speech-space-settings button {
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid var(--fui-line-2);
+  border-radius: 0;
+  background: var(--fui-field);
+  color: var(--fui-text-hi);
+  font-size: 14px;
+}
+
+#speech-space-settings button:hover { border-color: var(--fui-data); }
+#speech-space-settings :is(button, input):focus-visible { outline: 2px solid var(--fui-data); outline-offset: 2px; }
+#speech-space-settings button[aria-pressed="true"], #speech-space-settings #speech-space-preview {
+  background: var(--fui-text-hi);
+  border-color: var(--fui-text-hi);
+  color: var(--fui-void);
+}
+
+#speech-space-settings #speech-space-preview:hover { border-color: var(--fui-data); }
+.speech-space-presets button { display: grid; gap: 2px; justify-items: center; }
+.speech-space-presets small { font: 500 12px/1.2 var(--fui-numeric); }
+#speech-space-status { min-height: 1.5em; margin: 0; color: var(--fui-text-dim); font-size: 14px; }
+
+@media (pointer: coarse) {
+  #speech-space-settings :is(button, input) { min-height: 44px; }
+}

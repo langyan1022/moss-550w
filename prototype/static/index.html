@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#13191c">
+  <title>MOSS · 本地对话</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/agent-transport.js"></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-content">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>MOSS</div>
+      <span class="app-name">本地对话</span>
+      <nav class="tools-nav" aria-label="对话工具">
+        <button type="button" id="new-chat" data-testid="new-chat">新对话</button>
+        <button type="button" data-panel="history-panel" data-testid="history" aria-haspopup="dialog">对话记录</button>
+        <button type="button" data-panel="memory-panel" data-testid="memories" aria-haspopup="dialog">记忆</button>
+      </nav>
+      <div class="connection" role="status">
+        <span class="signal" aria-hidden="true"></span>
+        <span id="connection-label">正在连接</span><span id="kernel-label" hidden></span>
+      </div>
+    </div>
+  </header>
+  <main class="workspace">
+    <section id="conversation" class="conversation" aria-label="对话记录" tabindex="0">
+      <div class="conversation-inner">
+        <div id="welcome" class="welcome" hidden>
+          <div class="lens" aria-hidden="true"><span></span></div>
+          <div class="welcome-content">
+            <h1>和 MOSS 对话</h1>
+            <p>直接提问，或给我一段想保存的草稿。</p>
+            <div class="examples">
+              <button type="button" data-example="你好，MOSS。你能帮我做什么？">和 MOSS 打个招呼</button>
+              <button type="button" data-example="帮我保存一份本地草稿，内容逐字写：明天核对清单">试写一份草稿</button>
+            </div>
+          </div>
+        </div>
+        <div id="turns"></div>
+      </div>
+    </section>
+    <div class="composer-wrap">
+      <div id="error" class="error-banner" role="alert" hidden></div>
+      <form id="compose" class="composer">
+        <label class="sr-only" for="message">给 MOSS 发消息</label>
+        <textarea id="message" data-testid="composer" rows="2" placeholder="给 MOSS 发消息…" aria-describedby="input-hint"></textarea>
+        <div class="compose-controls">
+          <span id="input-hint" class="hint">Enter 发送 · Shift + Enter 换行</span>
+          <button class="send" data-testid="send" type="submit" disabled>发送<span aria-hidden="true" class="send-arrow">↑</span></button>
+        </div>
+      </form>
+    </div>
+  </main>
+  <dialog class="side-panel" id="history-panel" aria-labelledby="history-title">
+    <div class="panel-heading">
+      <h2 id="history-title">对话记录</h2>
+      <form method="dialog"><button class="panel-close" data-testid="history-close" type="submit" aria-label="关闭对话记录">关闭</button></form>
+    </div>
+    <p class="panel-error" role="alert" hidden></p>
+    <ul class="panel-list" id="history-list"></ul>
+  </dialog>
+  <dialog class="side-panel" id="memory-panel" aria-labelledby="memory-title">
+    <div class="panel-heading">
+      <h2 id="memory-title">长期记忆</h2>
+      <form method="dialog"><button class="panel-close" data-testid="memory-close" type="submit" aria-label="关闭长期记忆">关闭</button></form>
+    </div>
+    <p class="panel-description">这些记忆可以跨对话使用。MOSS 回答时会参考相关条目。也可以在聊天中输入“记住：…”来添加。</p>
+    <p id="memory-backend" class="panel-description" hidden></p>
+    <p class="panel-error" role="alert" hidden></p>
+    <form id="memory-form">
+      <label for="memory-input">添加一条记忆</label>
+      <textarea id="memory-input" data-testid="memory-input" rows="3" placeholder="例如：我喜欢简短的回答"></textarea>
+      <button class="action-primary" data-testid="memory-add" type="submit" disabled>保存记忆</button>
+    </form>
+    <ul class="panel-list" id="memory-list"></ul>
+  </dialog>
+  <noscript>请启用 JavaScript 以连接本地 MOSS。</noscript>
+</body>
+</html>

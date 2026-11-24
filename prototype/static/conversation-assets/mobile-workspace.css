@@ -1,0 +1,56 @@
+#workspace-media-return { display:none; }
+
+@media (max-width:900px) and (orientation:portrait) {
+  main[data-mobile-workspace="media"] > #dialogue,
+  main:is([data-mobile-workspace="chat"],[data-mobile-workspace="stage"]) > #tools-panel {
+    display:none !important;
+  }
+  main[data-mobile-workspace="chat"] > #dialogue[data-open],
+  main[data-mobile-workspace="chat"]:has(> #tools-panel:not([hidden])) > #dialogue[data-open] {
+    inset:var(--header-size) var(--rim) calc(var(--footer-size) + var(--stage-signal-space)) var(--rim);
+    width:auto;
+    height:auto;
+    max-width:none;
+    max-height:none;
+  }
+  main[data-mobile-workspace="media"] > #tools-panel:not([hidden]),
+  main[data-mobile-workspace="media"] > #tools-panel[data-media-list]:has(#tool-player:not(:empty)) {
+    inset:var(--header-size) var(--rim) auto;
+    width:auto;
+    height:auto;
+    max-height:calc(100% - var(--header-size) - var(--footer-size) - var(--stage-signal-space));
+  }
+  main[data-mobile-workspace="media"] > #tools-panel[data-resource-kind="music"] {
+    animation:none;
+  }
+  main[data-mobile-workspace="media"]:has(> #tools-panel[data-resource-kind="music"]:not([hidden])) #moss-model {
+    opacity:.18;
+  }
+  main[data-mobile-workspace="media"] #tool-player :is(.projection-player:not(:fullscreen) > video,.player-window) {
+    max-height:min(26dvh,260px);
+  }
+  main[data-mobile-workspace] #workspace-media-return:not([hidden]) {
+    display:block;
+    min-height:44px;
+    padding:0 8px;
+    color:var(--paper);
+    background:transparent;
+    border:0;
+    font:600 .85rem/1.25 var(--font-body);
+    cursor:pointer;
+  }
+  main[data-mobile-workspace="stage"] > #workspace-media-return {
+    position:absolute;
+    z-index:4;
+    inset:var(--header-size) var(--rim) auto auto;
+  }
+  main[data-mobile-workspace] #workspace-media-return:focus-visible {
+    outline:2px solid var(--tick);
+    outline-offset:-2px;
+  }
+  @media (pointer:coarse) {
+    main[data-mobile-workspace] :is(#tools-close,#tools-pin,#history-toggle) { min-height:44px; }
+    main[data-mobile-workspace="media"] #tools-panel .player-controls :is(button,input) { min-height:44px; }
+    main[data-mobile-workspace="media"] #tools-panel .player-controls button { min-width:44px; }
+  }
+}

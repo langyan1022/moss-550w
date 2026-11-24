@@ -1,0 +1,18 @@
+{
+  "source": "550W-MOSS-全息转实体.blend",
+  "sourceSha256": "ba3b0de2fb4e6dbd207bbfe013739afc40478c24e4495fe374e0461ee4898c53",
+  "upstreamReport": "moss/qa/blender-delivery/moss-blueprint/hologram/final.json",
+  "assets": {
+    "moss-exterior.glb": "b95cf88a7664f7c9f023625869311d0a32b28d63d1945a2b5dab10d100b56cd5",
+    "moss-exterior.json": "025773e1bac691c4499c25f3b87a8460102a098231db33b458fd76efd26fb447",
+    "moss-render.js": "893c7be92be4abf10e76ece0633c27b396bf34a04c78b3aa5416466d475f57d8",
+    "moss-view.js": "973154c5c0fbdf810a101bb9146a34b3216c8e92acab01efd9e0b3add757c133"
+  },
+  "browser": {
+    "groups": 4,
+    "visibleMeshes": 218,
+    "visibleTriangles": 1147596
+  },
+  "qaReport": "runs/550w-release-20261123-233946-757570/result.json",
+  "qaSha256": "9040fd67814b385d3add89a0819a8fe957c0fb53d14bb0555effe221e22531d7"
+}

@@ -1,0 +1,62 @@
+# Python / Node / IDE
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+node_modules/
+.pytest_cache/
+.ruff_cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Unadopted experimental frameworks, comparisons, and upstream clones
+alternatives/
+langgraph/
+nanobot/
+pydantic/
+architecture/.research/
+
+# Ephemeral benchmark outputs, QA artifacts, logs, and lock files
+runs/
+validation/
+prototype/runs/
+prototype/logs/
+*.partial
+*.log
+*.err
+*.out
+*.tmp
+*.bak
+*.orig
+*.swp
+
+# Private user data, chat databases, media index, profile backups, and runtime caches
+prototype/data/
+prototype/profile-backups/
+prototype/local_media/data/
+prototype/local_media/sources.json
+prototype/drafts/
+prototype/backups/
+prototype/voice-prompts/
+prototype/voice-announcements/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+
+# Secrets, keys, TLS certificates, and runtime provider configs
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.crt
+online-music.json
+chat-providers.json
+mcp-servers.json
+iot-config.json
+instance.json
+auth-config.json

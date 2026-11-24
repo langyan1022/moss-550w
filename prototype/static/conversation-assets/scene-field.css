@@ -1,0 +1,78 @@
+.scene-field {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--tick);
+  --scan-cycle: 24s;
+  --scan-brightness: .28;
+  --scan-pattern: field-inward;
+  --scan-play: running;
+}
+
+/* 两段测线沿底图边缘扫过，中央留给机械臂和镜头。 */
+@media (prefers-reduced-motion: no-preference) {
+  .scene-field::before, .scene-field::after {
+    content: "";
+    position: absolute;
+    width: clamp(44px, 8cqw, 118px);
+    height: 5px;
+    background:
+      linear-gradient(90deg, transparent, currentColor) left center / calc(100% - 4px) 1px no-repeat,
+      linear-gradient(currentColor, currentColor) right center / 3px 3px no-repeat,
+      repeating-linear-gradient(90deg, transparent 0 15px, currentColor 15px 16px) left bottom / 100% 2px no-repeat;
+    opacity: 0;
+    --scan-x: 16cqw;
+    animation: var(--scan-pattern) var(--scan-cycle) linear infinite;
+    animation-play-state: var(--scan-play);
+  }
+  .scene-field::before {
+    top: 23%;
+    top: round(nearest, 23%, 16px);
+    left: 4%;
+  }
+  .scene-field::after {
+    top: 74%;
+    top: round(nearest, 74%, 16px);
+    right: 4%;
+    --scan-x: -16cqw;
+    scale: -1 1;
+    animation-delay: calc(var(--scan-cycle) * -.46);
+  }
+  main[data-phase="listen"] .scene-field {
+    --scan-cycle: 9s;
+    --scan-brightness: .57;
+  }
+  main:is([data-phase="think"],[data-phase="lookup"],[data-phase="synthesis"]) .scene-field {
+    color: var(--signal);
+    --scan-pattern: field-rows;
+    --scan-cycle: 5.8s;
+    --scan-brightness: .56;
+  }
+  main[data-phase="speak"] .scene-field {
+    color: var(--accent2);
+    --scan-pattern: field-outward;
+    --scan-cycle: 6.8s;
+    --scan-brightness: .62;
+  }
+  main[data-opening] .scene-field, .scene-field[data-paused] { --scan-play: paused; }
+}
+
+@keyframes field-inward {
+  0% { opacity: 0; translate: 0; }
+  14%, 45% { opacity: var(--scan-brightness); }
+  64%, 100% { opacity: 0; translate: var(--scan-x) 0; }
+}
+@keyframes field-outward {
+  0% { opacity: 0; translate: var(--scan-x) 0; }
+  12%, 48% { opacity: var(--scan-brightness); }
+  72%, 100% { opacity: 0; translate: 0; }
+}
+@keyframes field-rows {
+  0% { opacity: 0; translate: 0 0; }
+  12%, 34% { opacity: var(--scan-brightness); }
+  46% { opacity: 0; translate: var(--scan-x) 0; }
+  47% { opacity: 0; translate: var(--scan-x) 16px; }
+  61%, 80% { opacity: var(--scan-brightness); }
+  96%, 100% { opacity: 0; translate: 0 16px; }
+}

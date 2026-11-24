@@ -1,0 +1,43 @@
+.assistant-reminder {
+  position: fixed;
+  z-index: 100;
+  top: max(1rem, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(24rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .4rem 1rem;
+  align-items: center;
+  padding: .85rem 1rem;
+  color: var(--dsc-text, #e4edf0);
+  background: var(--base, #091e29);
+  border: 1px solid var(--signal, #79cbd3);
+  box-shadow: 0 .4rem 1.5rem #0007;
+  font: .9rem/1.4 var(--font-body, sans-serif);
+}
+.assistant-reminder[hidden], .assistant-reminder small:empty { display: none; }
+.assistant-reminder strong { color: var(--signal, #79cbd3); font-size: .75rem; }
+.assistant-reminder p { grid-column: 1; margin: 0; overflow-wrap: anywhere; }
+.assistant-reminder time { grid-column: 1; color: var(--muted, #b5c2c9); font-size: .8rem; }
+.assistant-reminder button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  padding: .4rem .65rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--signal, #79cbd3);
+  cursor: pointer;
+}
+.assistant-reminder small { grid-column: 1 / -1; color: #ffb19c; }
+.assistant-reminder[data-in-dialog] {
+  position: sticky;
+  z-index: 1;
+  inset: 0 auto auto;
+  transform: none;
+  width: 100%;
+  margin-block: .6rem;
+  box-shadow: none;
+}
+.assistant-reminder[data-in-dialog] .assistant-reminder-source { display: none; }

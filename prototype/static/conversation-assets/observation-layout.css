@@ -1,0 +1,334 @@
+:root {
+  --rim:clamp(10px,1.15vw,22px);
+  --rail-size:clamp(222px,17.5vw,282px);
+  --header-size:clamp(70px,7.8vh,86px);
+  --footer-size:clamp(76px,8.7vh,100px);
+  --chat-width:clamp(320px,27vw,418px);
+  --chat-right:var(--rim);
+  --panel-top:calc(var(--header-size) + 12px);
+  --grid-minor:color-mix(in srgb,var(--signal) 5%,transparent);
+  --grid-major:color-mix(in srgb,var(--signal) 11%,transparent);
+  --strip:color-mix(in srgb,var(--signal) 22%,var(--base));
+}
+main { background:color-mix(in srgb,var(--base) 82%,#03090c) }
+:root[data-palette] main { background-color:var(--base); background-image:none }
+.screen-edge { inset:var(--rim); clip-path:none; border:1px solid var(--line) }
+.screen-edge::before,.screen-edge::after { width:32px; height:11px }
+.model-viewport,.shade { inset:var(--header-size) var(--rim) var(--footer-size) var(--rail-size); }
+.model-viewport {
+  overflow:hidden; container-type:size; isolation:isolate;
+  background:linear-gradient(var(--grid-major) 1px,transparent 1px) center top / 96px 96px,
+    linear-gradient(90deg,var(--grid-major) 1px,transparent 1px) center top / 96px 96px,
+    linear-gradient(var(--grid-minor) 1px,transparent 1px) center top / 16px 16px,
+    linear-gradient(90deg,var(--grid-minor) 1px,transparent 1px) center top / 16px 16px,
+    radial-gradient(ellipse at 52% 36%,color-mix(in srgb,var(--base) 84%,var(--tick)),var(--base) 66%,#050b10);
+}
+.stage-emblem { position:absolute; top:50%; left:50%; width:min(78cqw,72cqh); aspect-ratio:6 / 7; transform:translate(-50%,-50%);
+  mask:url('/conversation-assets/ueg.svg') center / contain no-repeat; background:var(--tick); opacity:.09; pointer-events:none; }
+#moss-model { position:relative; z-index:1 } .model-viewport > span { z-index:2; }
+.camera-overlay { position:absolute; inset:0; z-index:2; pointer-events:none; overflow:hidden; color:var(--tick); }
+.camera-overlay[hidden],.check-indicator[hidden] { display:none; }
+.optic-scale { position:absolute; display:block; opacity:.66; }
+.optic-scale.horizontal { top:3px; left:0; width:100%; height:5px;
+  background:repeating-linear-gradient(90deg,var(--edge) 0 1px,transparent 1px 16px) left top / 100% 2px no-repeat,
+    repeating-linear-gradient(90deg,var(--edge) 0 1px,transparent 1px 80px) left top / 100% 5px no-repeat; }
+.optic-scale.vertical { top:0; left:4px; width:5px; height:100%;
+  background:repeating-linear-gradient(0deg,var(--edge) 0 1px,transparent 1px 16px) left bottom / 2px 100% no-repeat,
+    repeating-linear-gradient(0deg,var(--edge) 0 1px,transparent 1px 80px) left bottom / 5px 100% no-repeat; }
+.camera-overlay[data-on-screen] .optic-scale::after { content:''; position:absolute; background:var(--tick); }
+.optic-scale.horizontal::after { left:var(--optic-x); top:0; width:9px; height:6px; transform:translateX(-50%); clip-path:polygon(0 0,100% 0,50% 100%); }
+.optic-scale.vertical::after { top:var(--optic-y); left:0; width:6px; height:9px; transform:translateY(-50%); clip-path:polygon(0 0,100% 50%,0 100%); }
+.optic-readout { position:absolute; left:clamp(14px,1.45vw,28px); bottom:13px; display:flex; align-items:baseline; gap:12px;
+  color:var(--ink); font:500 11px/1.1 var(--font-body); }
+.optic-readout span { display:inline-flex; gap:4px; align-items:baseline; }
+.optic-readout b { min-width:3.6ch; color:var(--tick); font:600 14px/1 "MOSS Condensed",var(--mono); font-variant-numeric:tabular-nums; }
+.optic-readout .check-indicator { padding-left:8px; border-left:2px solid var(--tick); color:var(--paper); }
+@media (max-width:900px) {
+  .optic-readout { bottom:8px; left:13px; font-size:10px; gap:7px; }
+  .optic-readout b { font-size:12px; }
+}
+@media (max-width:520px) {
+  .optic-scale.vertical { display:none; }
+  .optic-readout span:not(.check-indicator) { display:none; }
+}
+.shade { background:linear-gradient(0deg,color-mix(in srgb,var(--base) 62%,transparent),transparent 15%) }
+.top {
+  inset:var(--rim) var(--rim) auto; height:calc(var(--header-size) - var(--rim)); display:grid;
+  grid-template-columns:calc(var(--rail-size) - var(--rim)) minmax(0,1fr) auto; align-items:center;
+  border-block:1px solid var(--line); background:var(--base); padding-right:12px;
+}
+.brand-field { justify-self:start; margin-left:16px; padding:3px 9px; min-height:0 }
+.brand-mark { width:clamp(86px,5.3vw,110px) }
+.top .camera-options {
+  display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:3px;
+  container:camera-switcher / inline-size;
+  border:0; background:none; margin-right:clamp(12px,3.3vw,64px); pointer-events:auto;
+}
+.top .camera-options label {
+  --band:color-mix(in srgb,var(--signal) 18%,var(--base));
+  --band-height:28px;
+  display:flex; align-items:center; justify-content:flex-start; gap:clamp(5px,.6vw,12px);
+  height:44px; padding:0 20px 0 clamp(7px,.85vw,17px); border:0;
+  background:linear-gradient(var(--band),var(--band)) center / 100% var(--band-height) no-repeat;
+  font:600 clamp(13px,.91vw,16px)/1 var(--font-body); color:var(--ink);
+  white-space:nowrap; letter-spacing:.065em; text-shadow:none; clip-path:none;
+}
+.top .camera-options label::before {
+  content:""; display:block; position:absolute; top:50%; right:7px; width:3px; height:7px;
+  transform:translateY(-50%); background:var(--edge); box-shadow:none; pointer-events:none;
+}
+.top .camera-options label::after { content:attr(data-code); font:10px/1 var(--mono); color:var(--muted); pointer-events:none; }
+.top .camera-options label:hover { --band:color-mix(in srgb,var(--signal) 26%,var(--base)); }
+.top .camera-options label:has(:checked) {
+  --band:color-mix(in srgb,var(--signal) 32%,var(--base));
+  color:var(--paper); box-shadow:none; clip-path:none;
+}
+.top .camera-options label:has(:checked)::before { display:block; width:10px; height:10px; background:var(--signal); }
+.top .camera-options label:has(:checked)::after { color:var(--ink); }
+@container camera-switcher (max-width:650px) {
+  .top .camera-options label::after { display:none; }
+}
+@container camera-switcher (max-width:410px) {
+  .top .camera-options label { padding-inline:5px 12px; }
+  .top .camera-options label::before { right:4px; width:2px; }
+  .top .camera-options label:has(:checked)::before { width:6px; height:9px; }
+}
+.top .camera-options label:has(:focus-visible) { outline:2px solid var(--paper); outline-offset:1px; }
+.top-actions { align-items:center; justify-content:end; }
+.top-actions > button,.preferences > summary { min-height:34px; font:600 14px/1 var(--font-body); }
+main[data-opening] .top { border:0; background:transparent }
+main[data-opening] .top-actions { grid-column:3 }
+main[data-opening] :is(.telemetry,.camera-options,.scene-gesture,.caption,.audio-module,.geo-module,.insignia) { visibility:hidden; pointer-events:none }
+main[data-opening] .model-viewport { visibility:hidden }
+.telemetry {
+  position:absolute; z-index:2; inset:var(--header-size) auto var(--footer-size) var(--rim); width:calc(var(--rail-size) - var(--rim));
+  display:flex; flex-direction:column; gap:clamp(12px,2.1vh,24px); padding:clamp(10px,1.2vw,22px) clamp(12px,1.05vw,20px);
+  border-right:1px solid var(--edge); background:linear-gradient(105deg,color-mix(in srgb,var(--base) 96%,var(--ink)),var(--base));
+}
+.telemetry-section { min-width:0; }
+.telemetry-section h2 {
+  display:flex; align-items:baseline; justify-content:space-between; gap:5px; margin:0 0 8px; padding:1px 0 7px;
+  color:var(--paper); font:600 14px/1.25 var(--font-body); letter-spacing:.1em;
+}
+.telemetry-section:where(:not(.audio-module)) h2 {
+  background:linear-gradient(90deg,var(--tick) 0 23px,var(--line) 23px) left bottom / 100% 1px no-repeat;
+}
+.telemetry-section h2 span { font:10px/1 var(--mono); color:var(--muted); }
+.telemetry #earth-view { display:block; position:static; width:auto; pointer-events:none; }
+.telemetry .earth-field {
+  border:0; padding:clamp(5px,1vh,12px) 0;
+  background:linear-gradient(90deg,transparent calc(50% - .5px),var(--line) 50%,transparent calc(50% + .5px)),
+    linear-gradient(transparent calc(50% - .5px),var(--line) 50%,transparent calc(50% + .5px)),
+    repeating-linear-gradient(90deg,var(--grid-minor) 0 1px,transparent 1px 16px),
+    repeating-linear-gradient(var(--grid-minor) 0 1px,transparent 1px 16px);
+}
+.telemetry #earth-view figcaption { margin:4px 0 0; padding:6px 3px; border-block:1px solid var(--line); }
+.telemetry #earth-view figcaption small { color:var(--tick); font:12px/1.5 Consolas,monospace; }
+.telemetry .spectra { width:100%; margin:0; display:grid; grid-template-columns:1fr; gap:12px; }
+.telemetry .spectra figure { min-width:0; }
+.telemetry .spectra figcaption { align-items:baseline; }
+.telemetry .spectra .track { height:clamp(21px,3.5vh,40px); }
+.telemetry .spectra figcaption > :first-child { font:600 14px/1.2 var(--font-body) }
+.telemetry #output-label { font:16px/1 "MOSS Condensed",var(--mono) }
+.telemetry .track-state { font-size:12px }
+.log-module { min-height:0; overflow:hidden; }
+#runtime-lines { list-style:none; display:flex; flex-direction:column; margin:0; padding:0; }
+#runtime-lines li { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:baseline; gap:6px; padding:4px 0; font:11px/1.35 Consolas,var(--font-body); color:var(--ink); border-bottom:1px solid var(--line); }
+#runtime-lines time { color:var(--muted); font-size:10px }
+#runtime-lines span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#runtime-lines li:last-child { color:var(--tick); }
+.insignia { display:flex; align-items:center; gap:16px; margin-top:auto; padding-top:6px; }
+.insignia .emblem { position:static; opacity:.85; }
+.insignia .bsc { width:clamp(80px,6.7vw,125px) }
+.view-controls { inset:auto auto var(--rim) var(--rim); height:calc(var(--footer-size) - var(--rim)); width:calc(var(--rail-size) - var(--rim));
+  display:flex; align-items:center; justify-content:space-between; padding:0 clamp(12px,1.15vw,22px); border-top:1px solid var(--edge); border-right:1px solid var(--edge); background:var(--base); }
+.view-heading { display:flex; gap:10px; align-items:center; }
+.scene-gesture { position:absolute; z-index:2; bottom:calc(var(--footer-size) + 12px); right:calc(var(--rim) + 15px); pointer-events:none }
+.gesture { color:var(--ink); font:11px/1.4 var(--font-body); }
+.dock { inset:auto var(--rim) var(--rim) var(--rail-size); transform:none; width:auto; height:calc(var(--footer-size) - var(--rim)); padding:6px clamp(12px,1.2vw,24px);
+  display:grid; align-content:center; align-items:center; gap:2px 12px; grid-template-columns:minmax(0,1fr) auto; background:var(--base); border-top:1px solid var(--edge); text-align:left; }
+.dock .buttons { grid-column:2; grid-row:1/3; padding:0; gap:4px; }
+.dock #status,.dock #preparation { grid-column:1; grid-row:1/3; margin:0; color:var(--ink); font:13px/1.4 var(--font-body); }
+.dock #preparation:not([hidden]) { grid-row:2; font-size:11px; color:var(--muted) }
+.dock:has(#preparation:not([hidden])) #status { grid-row:1; }
+.dock #status::before { width:6px; height:10px; margin:0 8px -1px 0; background:var(--edge); border:0; }
+.dock #status:is([data-busy],[data-live])::before { background:var(--accent2); }
+.dock #status:empty { visibility:hidden; }
+.dock .buttons button { min-width:80px; height:42px; font:600 15px/1 var(--font-body); padding:0 clamp(10px,1.1vw,22px); }
+.stage-audio-lane {
+  position:absolute; z-index:3; display:grid; justify-items:center; gap:5px; pointer-events:none;
+  left:calc(max(var(--rail-size),var(--rim)) + var(--audio-left,0px));
+  right:calc(var(--rim) + var(--audio-right,0px));
+  bottom:calc(var(--footer-size) + var(--audio-gap,32px) + var(--audio-rise,0px));
+}
+main[data-opening] .stage-audio-lane { visibility:hidden; }
+.stage-audio-lane > .caption { position:static; width:90%; margin:0; text-align:center; }
+.stage-signal,.stage-processing { grid-area:2 / 1; }
+.stage-signal {
+  position:relative; margin:0; width:min(72%,620px); min-width:0;
+}
+.stage-signal figcaption {
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:2px .6em; margin:0 0 2px; color:var(--tick);
+  font:600 12px/1.25 var(--font-body);
+}
+#stage-signal-source { color:var(--muted) }
+.stage-audio-lane:is([data-signal="mic"],[data-signal="voice"],[data-signal="music"],[data-signal="video"]) #stage-signal-source { color:var(--signal); }
+.stage-audio-lane > .caption { grid-area:1 / 1; }
+.stage-processing {
+  display:none; align-items:center; justify-content:center; align-self:center;
+  width:min(78%,460px); color:var(--particle-ink);
+}
+.stage-processing .wait-wave { flex:1; height:clamp(24px,3.6vh,42px); min-width:0; }
+main[data-wait] { --particle-ink:var(--signal); --wave-period:1.8s; }
+main[data-wait="recognize"] { --particle-ink:var(--accent2); --wave-period:1.3s; }
+main[data-wait="lookup"] { --particle-ink:var(--tick); --wave-period:1.05s; }
+main:is([data-wait="first-voice"],[data-wait="next-voice"]) { --particle-ink:color-mix(in srgb,var(--signal) 62%,var(--accent2)); --wave-period:1.5s; }
+main[data-wait] .stage-audio-lane[data-signal="idle"] .stage-processing { display:flex; z-index:1; }
+main[data-wait] .stage-audio-lane[data-compact] .stage-processing { display:none; }
+.wait-geometry { position:absolute; pointer-events:none; }
+.wait-geometry path { vector-effect:non-scaling-stroke; }
+.wait-wave {
+  display:block; overflow:visible; color:var(--particle-ink);
+  stroke:currentColor; stroke-linecap:round;
+  mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);
+}
+.wave-front { stroke-width:1px; opacity:.77; }
+.wave-back { stroke-width:.8px; opacity:.49; }
+.wave-echo { stroke-width:.7px; opacity:.24; }
+.wave-sparks { stroke-width:2.2px; stroke-dasharray:.15 43 .45 61 .1 48; opacity:.95; }
+.wave-sparks.distant { stroke-width:1.6px; stroke-dasharray:.1 35 .4 57; opacity:.66; }
+#log .entry.assistant > .wait-wave { display:none; width:103px; height:22px; }
+#log .lookup-activity { color:var(--tick); border-inline-start:2px solid currentColor; padding-inline-start:6px; font:500 11px/1.4 var(--font-body); }
+main[data-wait] #log .entry.assistant:last-child > p:empty { display:none; }
+main[data-wait] #log .entry.assistant:last-child > p:empty + .wait-wave {
+  display:block; margin-top:5px; padding-inline-start:9px; border-inline-start:2px solid var(--panel-light);
+}
+main[data-wait] .dock #status::before {
+  width:17px; height:7px; background:repeating-linear-gradient(90deg,var(--particle-ink) 0 3px,transparent 3px 6px);
+}
+@media (prefers-reduced-motion:no-preference) {
+  main[data-wait] .wave-sparks { animation:wait-particle-travel calc(var(--wave-period) * 2) linear infinite; }
+  main[data-wait] .wave-sparks.distant { animation:wait-distant-travel calc(var(--wave-period) * 2.8) linear reverse infinite; }
+  main[data-wait] .wave-soft, main[data-wait] .wave-echo { transform-origin:center; animation:wait-filament-breathe var(--wave-period) ease-in-out alternate infinite; }
+  main[data-wait] .wave-echo { animation-direction:alternate-reverse; }
+  @keyframes wait-particle-travel { to { stroke-dashoffset:-152.7; } }
+  @keyframes wait-distant-travel { to { stroke-dashoffset:-92.5; } }
+  @keyframes wait-filament-breathe { from { transform:scaleY(.78); } to { transform:scaleY(1.13); } }
+}
+#stage-audio {
+  --audio-height:clamp(22px,3.5vh,42px);
+  display:block; width:100%; height:var(--audio-height);
+}
+#stage-audio[data-mode="spectrum"] { height:calc(var(--audio-height) + 22px); }
+.stage-audio-lane[data-compact] .stage-signal { width:88%; }
+@media (min-width:701px) {
+  #dialogue { inset:var(--header-size) var(--chat-right) var(--footer-size) auto; width:var(--chat-width); height:auto; border-left-color:var(--edge); }
+}
+@media (min-width:901px) and (max-height:720px) {
+  .telemetry { gap:11px; padding-block:10px } .telemetry .earth-field { padding:2px 0 } .telemetry-section h2 { margin-bottom:5px; }
+  .telemetry .spectra { gap:7px } #runtime-lines li { padding:2px 0 }
+}
+@media (max-width:900px) {
+  :root { --rim:8px; --rail-size:0px; --header-size:100px; --footer-size:108px; --chat-width:min(356px,calc(100vw - 24px)); }
+  .top { grid-template-columns:1fr auto; grid-template-rows:43px 41px; gap:1px 0; align-content:start; padding:0 5px; }
+  .brand-field { margin-left:0; } .brand-mark { width:72px; }
+  .top-actions { grid-row:1; grid-column:2; }
+  .top .camera-options { grid-row:2; grid-column:1/-1; width:100%; margin:0; }
+  .top .camera-options label { --band-height:26px; height:41px; padding-left:8px; font-size:13px; }
+  main[data-opening] .top-actions { grid-column:2 }
+  .model-viewport,.shade { left:var(--rim); } .telemetry { display:contents; }
+  .telemetry .log-module { display:none }
+  .geo-module { position:absolute; z-index:2; left:calc(var(--rim) + 8px); top:calc(var(--header-size) + 10px); width:clamp(60px,12vw,95px); pointer-events:none; }
+  .geo-module h2,.audio-module h2 { display:none; }
+  .telemetry .earth-field { padding:2px 0; }
+  .telemetry #earth-view figcaption { padding:0; margin:2px 0 0; border-bottom:0; font-size:9px }
+  .telemetry #earth-view figcaption small { display:none; }
+  .telemetry .audio-module { position:absolute; z-index:4; bottom:calc(var(--rim) + 58px); left:calc(var(--rim) + 10px); right:calc(var(--rim) + 10px); pointer-events:none }
+  .telemetry .spectra { grid-template-columns:1fr 1fr; gap:20px; }
+  .telemetry .spectra .track { height:14px; } .telemetry .track-state { font-size:10px; } .telemetry .spectra figcaption > :first-child { font-size:12px }
+  .telemetry .insignia { position:absolute; right:calc(var(--rim) + 10px); top:calc(var(--header-size) + 12px); padding:0; gap:7px; flex-direction:column; }
+  .insignia .bsc { width:45px; }
+  .view-controls { z-index:8; inset:calc(var(--rim) + 2px) auto auto calc(var(--rim) + 95px); width:auto; height:38px; gap:5px; padding:0; border:0; }
+  .view-heading > div:last-child {display:none} .view-heading .dial-well { width:28px;height:28px } .view-heading #camera-dial { width:23px;height:23px }
+  .dock { left:var(--rim); padding:0 8px 3px; align-content:end; grid-template-columns:1fr; gap:0; }
+  .dock .buttons { grid-column:1; grid-row:1; justify-content:center; }
+  .dock .buttons button { min-width:0; height:33px; font-size:13px; }
+  .dock #status,.dock #preparation { grid-row:2; text-align:center; font-size:10px; margin-top:3px; }
+  .dock:has(#preparation:not([hidden])) #status { display:none; }
+  .dock .buttons button:focus-visible { outline-offset:-3px; }
+  .scene-gesture { bottom:calc(var(--footer-size) + 6px); right:14px; } .scene-gesture .gesture { font-size:9px }
+  .stage-audio-lane { gap:3px; }
+  #stage-audio { --audio-height:clamp(18px,3.2vh,30px); }
+  main:has(#dialogue:not([hidden])) :is(.geo-module,.insignia) { visibility:hidden; }
+}
+@media (max-width:620px) and (min-height:541px) {
+  :root { --footer-size:137px }
+  .telemetry .geo-module { inset:auto auto calc(var(--rim) + 52px) 17px; width:55px; z-index:4; }
+  .telemetry #earth-view figcaption { margin-top:0; }
+  .telemetry .audio-module { left:86px; right:18px; bottom:calc(var(--rim) + 65px); }
+  .telemetry .spectra { gap:14px; }
+  .telemetry .spectra .track { height:23px }
+  .telemetry #earth-motion { min-width:22px; min-height:21px; }
+  .telemetry .insignia { top:calc(var(--header-size) + 7px); right:14px; }
+  main:has(#dialogue:not([hidden])) .telemetry .geo-module { visibility:visible; }
+}
+@media (max-width:700px) and (min-height:491px), (max-width:900px) and (orientation:portrait) {
+  main { --stage-signal-space:clamp(105px,16vh,142px); }
+  main #dialogue, main[data-lore-chat-open]:has(> :is(#lore-panel,#tools-panel):not([hidden])) #dialogue {
+    inset:auto var(--rim) calc(var(--footer-size) + var(--stage-signal-space)); width:auto;
+    max-height:calc(100% - var(--header-size) - var(--footer-size) - var(--stage-signal-space) - 8px);
+    border-top-color:var(--edge);
+  }
+  main #dialogue { height:var(--drawer-mobile-size,min(470px,55dvh)); }
+  main[data-projection-dock="bottom"] > :is(#tools-panel,#lore-panel) {
+    --projection-bottom:calc(var(--footer-size) + var(--stage-signal-space));
+  }
+}
+@media (max-width:700px) and (max-height:490px) and (orientation:landscape) {
+  #dialogue { inset:var(--header-size) var(--rim) var(--footer-size) auto; width:min(54%,var(--chat-width)); height:auto; }
+}
+@media (max-height:540px) {
+  .telemetry .log-module,.insignia {display:none}
+}
+@media (max-width:900px) and (max-height:540px) {
+  :root { --header-size:56px; --footer-size:58px; }
+  .top { display:flex; align-items:center; gap:8px; } .brand-mark { width:45px; }
+  .top .camera-options { flex:1; } .top .camera-options label { height:40px }
+  .view-controls,.geo-module,.telemetry .insignia { display:none }
+  .telemetry .audio-module {left:16px;right:auto;width:26%;bottom:18px}
+  .dock { grid-template-columns:1fr auto; } .dock .buttons { grid-column:2; } .dock #status,.dock #preparation { grid-column:2; }
+}
+.telemetry .earth-sphere {
+  position:relative; width:min(100%,clamp(135px,20vh,224px)); margin:0 auto; aspect-ratio:1;
+  overflow:hidden; clip-path:circle(calc(var(--earth-radius,44%) + 1px)); contain:layout paint;
+  color:var(--tick); border:0 solid color-mix(in srgb,var(--signal) 40%,var(--paper));
+  background:color-mix(in srgb,var(--base) 89%,var(--signal));
+}
+.telemetry .earth-sphere canvas { position:absolute; display:block; inset:0; width:100%; height:100%; pointer-events:none; }
+.telemetry .earth-sphere .earth-overlay { z-index:1; }
+.telemetry #earth-view figcaption > div { flex:1; min-width:0 }
+.telemetry #earth-locate {
+  min-width:26px; min-height:24px; padding:0 3px; border:0; color:var(--ink); background:transparent;
+  font:18px/1 "Segoe UI Symbol",sans-serif; pointer-events:auto;
+}
+.telemetry #earth-locate:focus-visible,.telemetry #earth-motion:focus-visible { outline:1px solid var(--signal) }
+@media (max-width:900px) {
+  .telemetry #earth-view figcaption > div { display:none }
+  .telemetry #earth-view figcaption { justify-content:space-between; }
+}
+@media (max-width:620px) and (min-height:541px) {
+  .telemetry #earth-locate { min-height:21px; min-width:24px; }
+}
+
+.top .camera-options label::after,
+.telemetry-section h2 span,
+#camera-index,
+.weather-reading strong,
+#runtime-lines time {
+  font-family:var(--mono);
+  font-variant-numeric:tabular-nums;
+}
+.top .camera-options label::after,.telemetry-section h2 span { font-weight:600; letter-spacing:.065em }
+#camera-index,.weather-reading strong { font-weight:600 }
+#dialogue #log-title { font-weight:550; letter-spacing:.07em }
+#log .entry p,#message,.caption { font-weight:400; letter-spacing:.015em }

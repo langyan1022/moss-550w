@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>550W · 本机遥测小窗</title>
+  <link rel="icon" href="/vendor/logos/550w.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles/fonts.css">
+  <link rel="stylesheet" href="/vendor/fui.css">
+  <link rel="stylesheet" href="/styles/console.css">
+</head>
+<body class="fui">
+  <div class="moss-status-page">
+    <header class="fui-strip">
+      <h1 class="fui-console__title" id="st-title" data-i18n="hw.status_title">550W 硬件遥测</h1>
+      <span class="moss-strip__spacer"></span>
+      <span class="fui-live" id="st-live" data-live="false">
+        <i class="fui-live__dot" aria-hidden="true"></i>
+        <span class="fui-live__word" id="st-word" role="status" data-i18n="strip.connecting">连接中</span>
+        <time class="fui-num" id="st-clock">--:--:--</time>
+      </span>
+    </header>
+
+    <main class="moss-status-grid">
+      <section class="fui-panel" aria-labelledby="s-cpu">
+        <header class="fui-panel__head"><h2 class="fui-panel__title" id="s-cpu" data-i18n="hw.cpu">处理器负载</h2></header>
+        <div class="fui-panel__body moss-stack">
+          <div class="fui-readout fui-readout--hero"><span class="fui-readout__value"><span class="fui-num" id="v-cpu">—</span><span class="fui-readout__unit" hidden>%</span></span></div>
+          <div class="fui-gauge" id="g-cpu" data-state="data" style="--fui-value: 0" role="meter" aria-label="处理器负载" data-i18n-label="hw.cpu" aria-valuemin="0" aria-valuemax="100"></div>
+          <div class="moss-status-sensor"><span class="fui-label" data-i18n="hw.cpu_temperature">处理器温度</span><span class="fui-num" id="v-cpu-temp">—</span></div>
+          <p class="moss-status-device" id="cpu-sensor-source" hidden></p>
+        </div>
+      </section>
+      <section class="fui-panel" aria-labelledby="s-gpu">
+        <header class="fui-panel__head"><h2 class="fui-panel__title" id="s-gpu" data-i18n="hw.gpu">GPU 负载</h2></header>
+        <div class="fui-panel__body moss-stack">
+          <div class="fui-readout fui-readout--hero"><span class="fui-readout__value"><span class="fui-num" id="v-gpu">—</span><span class="fui-readout__unit" hidden>%</span></span></div>
+          <div class="fui-gauge" id="g-gpu" data-state="data" style="--fui-value: 0" role="meter" aria-label="GPU 负载" data-i18n-label="hw.gpu" aria-valuemin="0" aria-valuemax="100"></div>
+          <div class="moss-status-sensor"><span class="fui-label" data-i18n="hw.gpu_temperature">GPU 温度</span><span class="fui-num" id="v-gpu-temp">—</span></div>
+          <p class="moss-status-device" id="gpu-device-name" hidden></p>
+        </div>
+      </section>
+      <section class="fui-panel" aria-labelledby="s-ram">
+        <header class="fui-panel__head"><h2 class="fui-panel__title" id="s-ram" data-i18n="hw.ram">可用内存</h2></header>
+        <div class="fui-panel__body moss-stack">
+          <div class="fui-readout fui-readout--hero"><span class="fui-readout__value"><span class="fui-num" id="v-ram">—</span><span class="fui-readout__unit">GiB</span></span></div>
+          <div class="fui-gauge" id="g-ram" data-state="data" style="--fui-value: 0" role="meter" aria-label="可用内存" data-i18n-label="hw.ram" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+        </div>
+      </section>
+      <section class="fui-panel" aria-labelledby="s-bat">
+        <header class="fui-panel__head"><h2 class="fui-panel__title" id="s-bat" data-i18n="hw.battery">电池电量</h2></header>
+        <div class="fui-panel__body moss-stack">
+          <div class="fui-readout fui-readout--hero"><span class="fui-readout__value"><span class="fui-num" id="v-bat">—</span><span class="fui-readout__unit">%</span></span></div>
+          <div class="fui-gauge" id="g-bat" data-state="data" style="--fui-value: 0" role="meter" aria-label="电池电量" data-i18n-label="hw.battery" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+        </div>
+      </section>
+      <section class="fui-panel" aria-labelledby="s-disk">
+        <header class="fui-panel__head"><h2 class="fui-panel__title" id="s-disk" data-i18n="hw.disk">系统盘余量</h2></header>
+        <div class="fui-panel__body moss-stack">
+          <div class="fui-readout fui-readout--hero"><span class="fui-readout__value"><span class="fui-num" id="v-disk">—</span><span class="fui-readout__unit">GiB</span></span></div>
+          <div class="fui-gauge" id="g-disk" data-state="data" style="--fui-value: 0" role="meter" aria-label="系统盘余量" data-i18n-label="hw.disk" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+        </div>
+      </section>
+      <section class="fui-panel moss-status-log-panel" aria-labelledby="s-log">
+        <header class="fui-panel__head">
+          <h2 class="fui-panel__title" id="s-log" data-i18n="log.status_title">实时后台日志流</h2>
+          <span class="fui-num moss-status-log-src" id="st-log-src">moss-runtime.log</span>
+          <button class="fui-key fui-key--sm" id="st-log-follow" type="button" aria-pressed="true" data-state="ok" data-i18n="log.follow_on">实时刷屏</button>
+        </header>
+        <div class="fui-panel__body fui-panel__body--flush">
+          <ol class="moss-status-log" id="st-log-list" role="log" aria-live="polite" aria-label="实时后台日志流"></ol>
+        </div>
+      </section>
+    </main>
+
+    <footer class="fui-strip fui-console__footer">
+      <span class="fui-label" data-i18n="hw.updated">采样时间</span>
+      <span class="fui-num" id="st-sample">—</span>
+    </footer>
+  </div>
+
+  <div class="moss-status-auth" id="st-auth" hidden>
+    <form class="moss-status-auth__card" id="st-auth-form">
+      <header class="fui-panel__head">
+        <span class="fui-badge" data-state="warn">AUTH</span>
+        <strong class="fui-panel__title">550W · 4 位授权码验证</strong>
+      </header>
+      <label class="fui-label" for="st-auth-input">请输入 4 位操作员授权码</label>
+      <input class="fui-input moss-status-auth__input" id="st-auth-input" type="text" maxlength="4" placeholder="MOSS" autocomplete="off">
+      <p class="moss-status-auth__err" id="st-auth-err" hidden></p>
+      <button class="fui-btn fui-btn--primary" type="submit">验证并接入</button>
+    </form>
+  </div>
+
+  <script type="module">
+    import { fixed, formatClock, initialLocale, setLocale, t } from '/js/i18n.js';
+
+    const GIB = 1024 ** 3;
+    const $ = id => document.getElementById(id);
+    setLocale(initialLocale(), {persist:false});
+    document.title = t('hw.status_title');
+    let last = null;
+    let polling = false;
+    let pollTimer = 0;
+    let logStream = null;
+    const authOverlay = $('st-auth');
+    const authForm = $('st-auth-form');
+    const authInput = $('st-auth-input');
+    const authErr = $('st-auth-err');
+
+    function snapGauge(el, value, stale) {
+      const known = Number.isFinite(value);
+      const ratio = known ? Math.min(1, Math.max(0, value)) : 0;
+      el.style.setProperty('--fui-value', (Math.round(ratio * 20) / 20).toFixed(3));
+      if (known) el.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+      else el.removeAttribute('aria-valuenow');
+      if (!known || stale) {
+        el.setAttribute('aria-valuetext', known
+          ? t('hw.last_reading') + ' · ' + fixed(ratio * 100, 0) + ' %'
+          : t('hw.no_signal'));
+      } else el.removeAttribute('aria-valuetext');
+      el.dataset.state = known && stale ? 'warn' : 'data';
+      el.setAttribute('data-ready', '');
+    }
+
+    function setReading(id, value, ratio, stale, digits = 0) {
+      const el = $('v-' + id);
+      const known = Number.isFinite(value);
+      el.textContent = known ? fixed(value, digits) : typeof value === 'string' ? value : '—';
+      el.nextElementSibling.hidden = !known;
+      snapGauge($('g-' + id), ratio, stale);
+    }
+
+    function setText(id, value, optional = false) {
+      const el = $(id);
+      el.textContent = value || '—';
+      if (optional) el.hidden = !value;
+    }
+
+    function render(data, stale = false) {
+      const delayed = Boolean(data && stale);
+      document.querySelector('.moss-status-page').toggleAttribute('data-stale', delayed);
+      $('st-live').dataset.live = String(Boolean(data && !stale));
+      const label = data ? (stale ? 'hw.last_reading' : 'strip.live') : 'hw.no_signal';
+      setText('st-word', t(label));
+      const cpu = data?.cpu_percent;
+      const gpu = data?.gpu?.percent;
+      setReading('cpu', cpu, Number.isFinite(cpu) ? cpu / 100 : null, delayed);
+      setReading('gpu', gpu, Number.isFinite(gpu) ? gpu / 100 : null, delayed);
+      const temperature = value => Number.isFinite(value) ? fixed(value, 1) + ' °C' : '—';
+      setText('v-cpu-temp', temperature(data?.cpu?.temperature_c));
+      setText('v-gpu-temp', temperature(data?.gpu?.temperature_c));
+      setText('cpu-sensor-source', data?.cpu?.source ? t('hw.sensor_source') + ' · ' + data.cpu.source : '', true);
+      setText('gpu-device-name', data?.gpu?.name, true);
+
+      const memory = data?.memory;
+      const ram = Number.isFinite(memory?.available) ? memory.available / GIB : null;
+      const ramUsed = Number.isFinite(ram) && memory.total ? 1 - memory.available / memory.total : null;
+      setReading('ram', ram, ramUsed, delayed, 1);
+      const battery = data?.battery;
+      const power = battery?.present === false;
+      const charge = Number.isFinite(battery?.percent) ? battery.percent : null;
+      setReading('bat', power ? 'AC' : charge, power ? 1 : charge === null ? null : charge / 100, delayed);
+      const disk = data?.disk;
+      const free = Number.isFinite(disk?.free) ? disk.free / GIB : null;
+      const diskUsed = Number.isFinite(free) && disk.total ? 1 - disk.free / disk.total : null;
+      setReading('disk', free, diskUsed, delayed, 1);
+      setText('st-sample', data?.sampled_at ? formatClock(data.sampled_at) : '');
+    }
+
+    function lockForAuth(msg) {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = 0; }
+      if (logStream) { logStream.close(); logStream = null; }
+      if (authErr) {
+        authErr.textContent = msg || '请先输入 4 位 550W 授权码';
+        authErr.hidden = !msg;
+      }
+      if (authOverlay) authOverlay.hidden = false;
+      authInput?.focus();
+    }
+
+    async function poll() {
+      if (document.hidden || polling || (authOverlay && !authOverlay.hidden)) return;
+      $('st-clock').textContent = formatClock();
+      polling = true;
+      try {
+        const response = await fetch('/api/device-status', {cache:'no-store'});
+        if (response.status === 401) {
+          lockForAuth('授权已失效，请重新验证');
+          return;
+        }
+        if (!response.ok) throw new Error();
+        last = await response.json();
+        render(last);
+      } catch {
+        render(last, true);
+      } finally { polling = false; }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && (!authOverlay || authOverlay.hidden)) {
+        void poll();
+        if (!logStream) connectLogStream();
+      }
+    });
+
+    /* ── Live Real-Time Backend Log Tail (/api/runtime-log/stream) ── */
+    const logList = $('st-log-list');
+    const logFollowBtn = $('st-log-follow');
+    const logSrcEl = $('st-log-src');
+    let logFollow = true;
+    const pad2 = n => String(n).padStart(2, '0');
+    const pad3 = n => String(n).padStart(3, '0');
+    function stamp(ts) {
+      const d = new Date(ts || Date.now());
+      return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
+    }
+    function syncFollow() {
+      if (!logFollowBtn) return;
+      logFollowBtn.setAttribute('aria-pressed', String(logFollow));
+      logFollowBtn.dataset.state = logFollow ? 'ok' : 'warn';
+      logFollowBtn.textContent = t(logFollow ? 'log.follow_on' : 'log.follow_off');
+    }
+    logFollowBtn?.addEventListener('click', () => {
+      logFollow = !logFollow;
+      syncFollow();
+      if (logFollow && logList) logList.scrollTop = logList.scrollHeight;
+    });
+    logList?.addEventListener('scroll', () => {
+      const near = logList.scrollHeight - logList.scrollTop - logList.clientHeight <= 20;
+      if (near !== logFollow) { logFollow = near; syncFollow(); }
+    });
+
+    function connectLogStream() {
+      if (logStream) logStream.close();
+      fetch('/api/runtime-log/source', { cache: 'no-store' })
+        .then(r => {
+          if (r.status === 401) { lockForAuth('需要验证 4 位授权码'); return null; }
+          return r.ok ? r.json() : null;
+        })
+        .then(info => {
+          if (!info || !logSrcEl) return;
+          const p = info.extra_path || info.runtime_log || 'moss-runtime.log';
+          logSrcEl.textContent = p.split(/[\\/]/).at(-1);
+          logSrcEl.title = p;
+        }).catch(() => {});
+      logStream = new EventSource('/api/runtime-log/stream');
+      logStream.onmessage = ev => {
+        if (!logList) return;
+        try {
+          const entry = JSON.parse(ev.data);
+          if (typeof entry.text !== 'string') return;
+          const li = document.createElement('li');
+          li.className = 'moss-status-log__line';
+          if (entry.error || entry.level === 'crit') li.dataset.level = 'crit';
+          else if (entry.level === 'warn') li.dataset.level = 'warn';
+          else if (entry.level === 'ok') li.dataset.level = 'ok';
+          const tsEl = document.createElement('span');
+          tsEl.className = 'moss-status-log__ts fui-num';
+          tsEl.textContent = stamp(entry.time);
+          const srcEl = document.createElement('span');
+          srcEl.className = 'moss-status-log__tag fui-num';
+          srcEl.textContent = entry.file ? `${entry.source}:${entry.file}` : (entry.source || 'SYS');
+          const msgEl = document.createElement('span');
+          msgEl.className = 'moss-status-log__msg';
+          msgEl.textContent = entry.text;
+          li.append(tsEl, srcEl, msgEl);
+          logList.append(li);
+          while (logList.children.length > 140) logList.firstElementChild.remove();
+          if (logFollow) logList.scrollTop = logList.scrollHeight;
+        } catch { /* ignore malformed SSE line */ }
+      };
+      logStream.onerror = async () => {
+        try {
+          const r = await fetch('/api/auth/status', { cache: 'no-store' });
+          if (r.ok) {
+            const info = await r.json();
+            if (info.enabled && !info.authorized) lockForAuth('需要验证 4 位授权码');
+          }
+        } catch { /* ignore */ }
+      };
+    }
+
+    function startStatusLive() {
+      if (authOverlay) authOverlay.hidden = true;
+      void poll();
+      if (!pollTimer) pollTimer = setInterval(poll, 5000); // fui-lint-ignore: R15 5s hardware telemetry poll; skips when tab hidden
+      connectLogStream();
+    }
+
+    authForm?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (authErr) authErr.hidden = true;
+      const resp = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: authInput?.value || '' }),
+      });
+      if (resp.ok) {
+        if (authInput) authInput.value = '';
+        startStatusLive();
+      } else {
+        const d = await resp.json().catch(() => ({}));
+        if (authErr) {
+          authErr.textContent = d.error || '授权码错误';
+          authErr.hidden = false;
+        }
+      }
+    });
+
+    window.addEventListener('pagehide', () => {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = 0; }
+      if (logStream) { logStream.close(); logStream = null; }
+    });
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted && (!authOverlay || authOverlay.hidden)) startStatusLive();
+    });
+
+    (async () => {
+      try {
+        const r = await fetch('/api/auth/status', { cache: 'no-store' });
+        if (r.ok) {
+          const info = await r.json();
+          if (info.enabled && !info.authorized) {
+            lockForAuth('');
+            return;
+          }
+        }
+      } catch { /* ignore */ }
+      startStatusLive();
+    })();
+  </script>
+</body>
+</html>

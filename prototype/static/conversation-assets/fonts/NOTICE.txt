@@ -1,0 +1,33 @@
+Source Han Sans CN（思源黑体）
+Adobe Source Han Sans 官方简体中文区域版可变字体，保留发行版字形与度量。
+https://github.com/adobe-fonts/source-han-sans/tree/release/Variable/WOFF2/TTF/Subset
+许可证全文见 SourceHanSans-OFL.txt。
+
+Rajdhani
+取自 Google Fonts 官方分发的 Rajdhani Medium 和 SemiBold。
+https://github.com/google/fonts/tree/main/ofl/rajdhani
+许可证全文见 Rajdhani-OFL.txt。
+
+优设标题黑
+版权所有 © YouShe Network Technology Co., Ltd。
+优设网发布的免费商用字体，发布说明见 https://www.uisdc.com/uisdc-first-free-font 。
+youshe-biaotihei.woff2 取自本机 dsh-startup-theme 的 YouSheBiaoTiHei.ttf，
+完整保留原字体的字符映射、字形和度量，以 WOFF2 压缩供本地网页载入。
+
+Anton
+Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)
+anton.woff2 来自同一启动页使用的 Anton-Regular.ttf，以 WOFF2 压缩，保留原字符集。
+SIL Open Font License 1.1 全文随附于 Anton-OFL.txt。
+
+淘宝买菜体 Regular
+版权所有 © 淘宝（中国）软件有限公司。
+TaoBaoMaiCaiTi-Regular.woff2 为阿里巴巴官方分发包原件，用于本机应用工牌的可编辑文字。
+https://fonts.alibabadesign.com/TaoBaoMaiCaiTi.zip
+授权声明 https://note.youdao.com/s/5POpkbef
+应用嵌入说明 https://note.youdao.com/s/Wg8v4gWC
+
+字魂创粗黑 Regular
+版权所有 © 上海字魂网络科技有限公司。
+ZiHunChuangCuHei-Regular.ttf 为字魂官网原样下载的个人非商用试用字库，在本机 MOSS 工牌中渲染可编辑中文。
+官方字体 https://zihunziku.com/font/221336.html
+使用范围与授权 https://zihunziku.com/auth

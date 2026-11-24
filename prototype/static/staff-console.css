@@ -1,0 +1,33 @@
+.fui main[data-opening] #staff-instrument { display:none; }
+.fui .telemetry #staff-instrument { order:-2; }
+.staff-preview-frame { position:relative; max-width:304px; margin:8px auto 0; }
+#staff-open { position:absolute; inset:0; padding:0; border:1px solid transparent; background:transparent; cursor:pointer; }
+#staff-open:hover { border-color:var(--fui-line-hi); }
+#staff-open:focus-visible { outline:2px solid var(--fui-data); outline-offset:3px; }
+#staff-landing-welcome { display:block; margin:8px auto 0; }
+
+.fui .staff-dialog { box-sizing:border-box; width:min(476px,calc(100% - 16px)); max-height:calc(100dvh - 16px); padding:0; }
+.staff-dialog > header { padding:12px;border-bottom:1px solid var(--fui-line-2); }
+.staff-view-body { display:grid; gap:8px; padding:12px; }
+.staff-view-actions,.staff-side-controls { display:flex; flex-wrap:wrap; gap:8px; }
+.staff-side-controls button[aria-pressed="true"] { background:var(--fui-text-hi); color:var(--fui-void); }
+.staff-view-body small, #staff-voice-feedback, #staff-save-feedback { margin:0; color:var(--fui-text-dim); }
+#staff-profile-form input:not([type="checkbox"]) { min-height:32px; padding:4px 8px; }
+.staff-welcome-option { display:flex; align-items:center; gap:4px; margin-block:4px; }
+.staff-view-body :is(button,input):focus-visible { outline:2px solid var(--fui-data); outline-offset:2px; }
+
+@media (max-width:1100px) {
+  .fui .telemetry #staff-instrument {
+    position:absolute; z-index:5; top:calc(var(--header-size) + 54px); right:calc(var(--rim) + 12px);
+    width:min(30vw,138px); padding:0; border:0; background:none;
+  }
+  .fui .telemetry #staff-heading { display:none; }
+  .staff-preview-frame { margin:0; }
+  .fui main[data-mobile-workspace]:not([data-mobile-workspace="stage"]) #staff-instrument { display:none; }
+}
+@media (max-width:1100px) and (max-height:540px) {
+  .fui .telemetry #staff-instrument { top:calc(var(--header-size) + 14px); width:min(24vw,124px); }
+}
+@media (pointer:coarse) {
+  .staff-dialog button,#staff-landing-welcome { min-height:44px; }
+}

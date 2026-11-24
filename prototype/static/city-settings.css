@@ -1,0 +1,98 @@
+#city-settings {
+  box-sizing:border-box;
+  width:min(760px, calc(100vw - 16px));
+  max-height:calc(100dvh - 16px);
+  margin:auto;
+  padding:0;
+  border:1px solid var(--fui-line-3);
+  background:var(--fui-surface-1);
+  color:var(--fui-text-hi);
+}
+#city-settings::backdrop { background:color-mix(in srgb,var(--fui-void) 82%,transparent); }
+#city-settings .city-settings-header {
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px 16px;
+  border-block-end:1px solid var(--fui-line-2);
+}
+#city-settings .city-settings-header span {
+  color:var(--fui-text-dim);
+  font:600 11px/1.2 var(--fui-numeric);
+  letter-spacing:.12em;
+}
+.city-settings-body { display:grid; gap:8px; padding:12px 16px 16px; }
+.city-settings-source { display:flex; align-items:baseline; gap:8px; min-width:0; margin:0 0 4px; }
+.city-settings-source dt { flex:none; color:var(--fui-text-dim); font-size:12px; }
+.city-settings-source dd { min-width:0; margin:0; overflow-wrap:anywhere; font-weight:650; }
+.city-map-selector,.city-settings-actions { display:flex; flex-wrap:wrap; gap:8px; }
+#city-settings :is(button, select) {
+  min-height:36px;
+  border:1px solid var(--fui-line-2);
+  border-radius:0;
+  background:var(--fui-field);
+  color:var(--fui-text-hi);
+  font-size:14px;
+}
+#city-settings :is(button, select):focus-visible { outline:2px solid var(--fui-data); outline-offset:2px; }
+#city-settings button:enabled:hover { border-color:var(--fui-data); }
+#city-settings .city-map-selector button[aria-pressed="true"],#city-save:not(:disabled) {
+  background:var(--fui-text-hi);
+  color:var(--fui-void);
+}
+#city-world-map {
+  display:block;
+  box-sizing:border-box;
+  width:100%;
+  aspect-ratio:2 / 1;
+  max-height:42dvh;
+  border:1px solid var(--fui-line-2);
+  background:var(--fui-field);
+  touch-action:manipulation;
+}
+#city-world-map.city-map-hit { cursor:pointer; }
+.city-map-grid { fill:none; stroke:var(--fui-line-2); stroke-width:.6; opacity:.6; vector-effect:non-scaling-stroke; }
+.city-map-land { fill:var(--fui-text-dim); opacity:.55; }
+#city-map-markers circle { fill:var(--fui-text-hi); }
+#city-map-markers .city-map-selected { fill:var(--fui-data); }
+#city-map-markers .city-map-ring { fill:none; stroke:var(--fui-data); stroke-width:1.25; vector-effect:non-scaling-stroke; }
+.city-map-reading {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  gap:4px 12px;
+  min-height:20px;
+  color:var(--fui-text-dim);
+  font-size:12px;
+}
+#city-map-coordinates { color:var(--fui-data); font-family:var(--fui-numeric); }
+#city-location-fields {
+  min-inline-size:0;
+  margin:4px 0 0;
+  padding:8px 0 0;
+  border:0;
+  border-block-start:1px solid var(--fui-line-2);
+}
+.city-form-legend { padding:0 8px 0 0; color:var(--fui-text-dim); font-size:12px; }
+.city-location-columns { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; }
+.city-location-columns:has(.city-international-field:not([hidden])) { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+.city-location-columns label { display:grid; gap:4px; min-width:0; color:var(--fui-text-dim); font-size:12px; }
+.city-location-columns label[hidden] { display:none; }
+#city-settings select { box-sizing:border-box; width:100%; padding:4px 6px; }
+#city-settings select:disabled { color:var(--fui-text-dim); }
+.city-settings-actions { justify-content:flex-end; margin-top:10px; }
+.city-settings-actions #city-clear { margin-inline-end:auto; }
+.city-settings-actions button[hidden] { display:none; }
+#city-selection { display:block; min-height:18px; margin-top:8px; color:var(--fui-text); font-size:13px; }
+#city-settings #city-settings-feedback { margin:0; color:var(--fui-warn); }
+#location-weather[data-city-configured] .location-position-reading { max-width:121px; }
+#location-weather[data-city-configured] #location-weather-place { overflow:hidden; text-overflow:ellipsis; }
+@media (max-width:560px) {
+  .city-settings-body { padding:8px 12px 12px; }
+  .city-location-columns,.city-location-columns:has(.city-international-field:not([hidden])) {
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+  }
+}
+@media (pointer:coarse) {
+  #city-settings :is(button, select) { min-height:44px; }
+}

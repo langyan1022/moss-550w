@@ -1,0 +1,129 @@
+{
+  "sha256": "897a022a788ac8f95f05c8de0817a0ddd8024603dcfbf0d421729b1a2b674b7e",
+  "record": {
+    "format": 1,
+    "source": {
+      "path": "E:\\VoiceStudio\\models\\models--k2-fsa--OmniVoice\\snapshots\\c5fdb5ccb189668d56333f77ba2629f4cd7535f4",
+      "files": {
+        "model.safetensors": [
+          2450344112,
+          1794202826586949600,
+          216277027,
+          2533274790578155
+        ],
+        "config.json": [
+          2238,
+          1794202595148061700,
+          216277027,
+          19140298416506854
+        ],
+        "tokenizer_config.json": [
+          533,
+          1794202841202894500,
+          216277027,
+          45035996273887238
+        ],
+        "tokenizer.json": [
+          11423986,
+          1794202839272952800,
+          216277027,
+          23362423067166697
+        ],
+        "chat_template.jinja": [
+          4168,
+          1794202592339581600,
+          216277027,
+          35184372089014244
+        ],
+        "audio_tokenizer/config.json": [
+          2531,
+          1794202397206321800,
+          216277027,
+          844424930310936
+        ],
+        "audio_tokenizer/preprocessor_config.json": [
+          206,
+          1794202590141841800,
+          216277027,
+          13229323905579944
+        ],
+        "audio_tokenizer/model.safetensors": [
+          805665628,
+          1794202585402812400,
+          216277027,
+          844424930310967
+        ]
+      }
+    },
+    "fp16": {
+      "path": "F:\\moss\\agent-lab\\alternatives\\omnivoice-runtime\\derived\\c5fdb5ccb189668d56333f77ba2629f4cd7535f4",
+      "files": {
+        "model.safetensors": [
+          1225189208,
+          1795219347720005800,
+          3302404323,
+          1125899908671552
+        ],
+        "config.json": [
+          2238,
+          1794202595148061700,
+          3302404323,
+          1125899908671548
+        ],
+        "tokenizer_config.json": [
+          533,
+          1794202841202894500,
+          3302404323,
+          1125899908671549
+        ],
+        "tokenizer.json": [
+          11423986,
+          1794202839272952800,
+          3302404323,
+          1125899908671550
+        ],
+        "chat_template.jinja": [
+          4168,
+          1794202592339581600,
+          3302404323,
+          1125899908671551
+        ],
+        "audio_tokenizer/config.json": [
+          2531,
+          1794202397206321800,
+          216277027,
+          844424930310936
+        ],
+        "audio_tokenizer/preprocessor_config.json": [
+          206,
+          1794202590141841800,
+          216277027,
+          13229323905579944
+        ],
+        "audio_tokenizer/model.safetensors": [
+          805665628,
+          1794202585402812400,
+          216277027,
+          844424930310967
+        ]
+      }
+    },
+    "runtime": {
+      "torch": "2.8.0+cu128",
+      "transformers": "5.15.1",
+      "omnivoice": "0.5.7",
+      "safetensors": "0.8.0"
+    },
+    "source_sha256": "730839316de585f4c8298ec0e1712efc10fb19c6fa4e36eb741cb8d51ebcf6aa",
+    "fp16_sha256": "f251010c06cec254667d8841b91c2672187d633ab373d219b1998c1bd18bd5b4",
+    "codec_sha256": {
+      "audio_tokenizer/config.json": "eefb20806f7104e77c9a5277c9df0f9bb8826b08eb1d4e8ab2b9829b6ef9fac1",
+      "audio_tokenizer/preprocessor_config.json": "ae61eea88558608ee2fa86d2aec9fce8d99a5ff75d09cb7651ccce21ae1d9084",
+      "audio_tokenizer/model.safetensors": "fe7c5e8785e0a05833e1bfc3e002ec7f55af21e306b2e7154a448c1f54ccfb0d"
+    },
+    "checked_tensor_types": {
+      "torch.float16": 312,
+      "torch.int64": 1
+    }
+  }
+}

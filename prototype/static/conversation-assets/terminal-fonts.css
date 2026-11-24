@@ -1,0 +1,30 @@
+@font-face {
+  font-family: "Source Han Sans CN";
+  src: url("./fonts/source-han-sans-cn-vf.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 250 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Rajdhani";
+  src: url("./fonts/rajdhani-medium.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Rajdhani";
+  src: url("./fonts/rajdhani-semibold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+html:root {
+  --font-cjk: "Source Han Sans CN","Noto Sans SC","Microsoft YaHei UI",sans-serif;
+  --font-body: "Rajdhani",var(--font-cjk);
+  --font-display: var(--font-body);
+  --mono: "Rajdhani","Cascadia Mono",Consolas,var(--font-cjk);
+}

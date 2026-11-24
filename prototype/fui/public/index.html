@@ -1,0 +1,1568 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#010305">
+  <title>550W · MOSS 战术控制台</title>
+  <link rel="icon" href="/vendor/logos/550w.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles/fonts.css">
+  <link rel="stylesheet" href="/vendor/fui.css">
+  <link rel="stylesheet" href="/styles/console.css">
+  <link rel="stylesheet" href="/styles/console-settings.css">
+</head>
+<body class="fui">
+  <!-- Preserved 550W Opening Animation Splash -->
+  <div class="moss-opening" id="opening-overlay" hidden>
+    <div class="moss-opening__identity" id="opening-identity" aria-label="550W 启动画面">
+      <svg class="moss-opening__mark" id="opening-mark" viewBox="0 0 3568.58 1153.02" role="img" aria-label="550W"></svg>
+      <div class="moss-opening__caption">
+        <span class="moss-opening__caption-zh" lang="zh-CN" data-i18n="opening.zh">智能量子计算机 550W</span>
+        <span class="moss-opening__caption-en" lang="en">INTELLIGENT QUANTUM COMPUTER MOSS</span>
+      </div>
+    </div>
+    <video class="moss-opening__film" id="opening-film" hidden muted playsinline disablepictureinpicture preload="none"
+           poster="/conversation-assets/moss-opening.webp" data-src="/conversation-assets/moss-opening.mp4" aria-hidden="true"></video>
+    <button class="fui-btn moss-opening__skip" id="skip-opening" type="button" data-i18n="opening.skip">跳过开场</button>
+    <span class="moss-opening__wait" id="opening-wait-model" role="status" data-i18n="stage.loading" hidden>载入 550W 三维模型</span>
+    <progress class="moss-opening__progress" id="opening-position" max="1" value="0" aria-label="开场影片进度"></progress>
+  </div>
+
+  <!-- Main Three-Column Wandering Earth Station Console Frame (Pure Black Ground + One Blueprint Stage) -->
+  <div class="fui-console moss-console">
+    <!-- Top Status Strip + Layout Alert Banner Slot -->
+    <header class="fui-console__head">
+      <div class="fui-strip moss-strip">
+        <span class="moss-strip__ueg" role="img" aria-label="UEG 地球联合政府" title="United Earth Government · 地球联合政府"></span>
+        <span class="moss-strip__sep" aria-hidden="true"></span>
+        <button class="moss-strip__brand" id="strip-brand" type="button" data-i18n-label="strip.replay" data-i18n-title="strip.replay" aria-label="550W · 重播开场动画">
+          <img class="moss-strip__logo-550w" src="/vendor/logos/550w-dark.svg" alt="550W" width="76" height="24">
+        </button>
+        <h1 class="fui-console__title" data-i18n="strip.title">MOSS 控制台</h1>
+        <span class="moss-strip__sep moss-strip__hide-sm" aria-hidden="true"></span>
+        <span class="fui-chip fui-num moss-strip__model moss-strip__hide-sm" id="strip-model" data-state="data">DEEPSEEK</span>
+        <span class="fui-chip" id="strip-sim-badge" data-state="warn" data-i18n="strip.simulated" hidden>模拟模式</span>
+
+        <span class="moss-strip__spacer"></span>
+
+        <div class="moss-strip__group">
+          <span class="fui-live moss-strip__live" id="strip-live" data-live="false">
+            <i class="fui-live__dot" aria-hidden="true"></i>
+            <span class="fui-live__word" id="strip-live-word" role="status" data-i18n="strip.connecting">连接中</span>
+            <time class="fui-num moss-chrono moss-chrono--strip" id="strip-clock">--:--:--</time>
+          </span>
+          <button class="fui-key fui-key--sm" id="strip-pause" type="button" aria-pressed="false" data-i18n="strip.pause">冻结</button>
+          <button class="fui-key fui-key--sm moss-strip__mute-btn" id="strip-mute" type="button" aria-pressed="false" data-i18n="strip.mute" data-i18n-title="strip.mute_title" title="会议静默总闸：暂停放歌并屏蔽全部语音播报（Ctrl+Shift+M）">静音</button>
+          <button class="fui-key fui-key--sm moss-strip__hide-sm" id="strip-cmdk" type="button" data-i18n="strip.cmdk" data-i18n-title="strip.cmdk_title" title="打开全局战术命令面板（Ctrl+K）">⌘K</button>
+          <div class="fui-lang" role="group" aria-label="界面语言" data-i18n-label="label.language">
+            <button class="fui-lang__opt" type="button" lang="en" aria-pressed="false">EN</button>
+            <button class="fui-lang__opt" type="button" lang="zh-CN" aria-pressed="true">中文</button>
+          </div>
+          <button class="fui-key fui-key--sm moss-strip__brain-btn" id="strip-brain-btn" type="button">
+            <span data-i18n="strip.brain">大脑</span>
+            <span class="fui-badge fui-badge--solid moss-strip__brain-badge" id="strip-brain-badge" data-state="warn" hidden>0</span>
+          </button>
+          <button class="fui-key fui-key--sm moss-strip__badge-btn" id="strip-badge-btn" type="button" data-i18n="strip.badge">工牌</button>
+          <button class="fui-key fui-key--sm moss-strip__auth-chip" id="strip-auth-chip" type="button" data-state="intel" data-i18n-title="auth.switch_title" title="点击切换 4 位身份授权码">CS / C</button>
+          <button class="fui-key fui-key--sm" id="strip-settings" type="button" data-i18n="strip.settings">设置</button>
+          <button class="fui-key fui-key--sm moss-strip__hide-sm" id="strip-fullscreen" type="button" aria-pressed="false" data-i18n="strip.fullscreen">全屏</button>
+        </div>
+      </div>
+
+      <!-- Single View-Level Alert Banner (Takeover Level 2: hidden while nominal) -->
+      <div class="fui-msg fui-msg--banner" id="alert-banner" data-state="warn" role="alert" hidden>
+        <span class="fui-badge fui-badge--solid" id="banner-badge" data-state="warn"></span>
+        <div class="fui-msg__main">
+          <p class="fui-msg__title" id="banner-title"></p>
+          <p class="fui-msg__detail" id="banner-detail"></p>
+          <div class="fui-msg__actions">
+            <button class="fui-btn fui-btn--primary" id="banner-ack" type="button" data-i18n="banner.ack">确认</button>
+            <button class="fui-btn" id="banner-retry" type="button" data-i18n="banner.retry" hidden>重新连接</button>
+          </div>
+        </div>
+        <div class="fui-msg__side"><time class="fui-msg__time fui-num" id="banner-time">--:--:--</time></div>
+      </div>
+
+      <!-- Non-Intrusive Proactive Pulse Toast Strip -->
+      <div class="moss-pulse-toast" id="pulse-toast" data-state="info" role="status" hidden>
+        <span class="fui-badge" id="pulse-toast-badge" data-state="info">PULSE</span>
+        <strong class="moss-pulse-toast__title" id="pulse-toast-title"></strong>
+        <span class="moss-pulse-toast__body" id="pulse-toast-body"></span>
+        <div class="moss-row moss-row--tight">
+          <button class="fui-key fui-key--sm" id="pulse-toast-open" type="button" data-i18n="brain.open">大脑中枢</button>
+          <button class="fui-key fui-key--sm" id="pulse-toast-dismiss" type="button" data-i18n="banner.ack">确认</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Left Rail: Unboxed Station Groups Directly on Pure Black (Draggable Vertical Order + BenBen Matrix) -->
+    <nav class="fui-console__nav fui-rail moss-rail-black" id="left-rail" aria-label="机位视角与系统遥测" data-i18n-label="label.nav">
+      <!-- 1. 550W Camera Preset Key Matrix (Rounded White Outlined Keys · Orange Selected + Lit Corner) -->
+      <section class="fui-group moss-group moss-rail-card" data-rail-card="optics" aria-labelledby="p-optics">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-optics"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.optics">机位视角阵列</span><span lang="en" aria-hidden="true">CAM</span></h2>
+          <output class="fui-num" id="cam-index">01 / 06</output>
+        </header>
+        <div class="fui-keys fui-keys--grid moss-cam-matrix" id="cam-matrix" role="group" aria-label="机位视角阵列" data-i18n-label="panel.optics"></div>
+        <div class="moss-cam-meta">
+          <div class="moss-cam-angle">
+            <span class="fui-label" data-i18n="cam.yaw">方位角</span>
+            <span class="fui-num" id="cam-yaw">0°</span>
+          </div>
+          <div class="moss-cam-angle">
+            <span class="fui-label" data-i18n="cam.pitch">俯仰角</span>
+            <span class="fui-num" id="cam-pitch">0°</span>
+          </div>
+          <div class="moss-row moss-row--tight moss-cam-actions">
+            <button class="fui-key fui-key--sm" id="stage-gesture-btn" type="button" aria-pressed="false" data-i18n-title="cam.gesture_title" title="开启/关闭手势控制（Alt+G）· ☝下机位 · ✌上机位 · 🤟滑轨 · 🖐姿态 · 🤏缩放 · ✊复位"><span data-i18n="cam.gesture">手势</span><kbd class="fui-kbd moss-gesture-kbd" aria-hidden="true">Alt+G</kbd></button>
+            <button class="fui-key fui-key--sm" id="reset-view" type="button" data-i18n="cam.reset">复位</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Dedicated Full-Width 550W Holographic 3D CAD Wireframe Twin (Exported via Blender 5.2) -->
+      <section class="fui-group moss-group moss-rail-holo moss-rail-card" data-rail-card="holo" aria-labelledby="p-holowire">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-holowire"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.holo_wire">550W 全息线框</span><span lang="en" aria-hidden="true">CAD</span></h2>
+          <output class="fui-num moss-wire-pose" id="rail-mini-pose">01 MAIN</output>
+        </header>
+        <button class="moss-optics-box moss-wire-box" id="rail-mini-moss-btn" type="button" data-i18n-label="camfeed.wire_label" aria-label="550W 全息线框孪生 · 点击切换机位">
+          <canvas class="moss-wire-canvas" id="rail-mini-moss" role="img" aria-label="550W 真实模型全息线框孪生"></canvas>
+          <span class="moss-optics-box__head" aria-hidden="true">
+            <span class="fui-num">550W · HOLO WIRE</span>
+            <span class="fui-num" id="rail-mini-stats">CAD</span>
+          </span>
+          <span class="moss-optics-box__foot" aria-hidden="true">
+            <span class="fui-num" id="rail-mini-angles">AZ 0° · EL 0°</span>
+            <span class="fui-num" data-i18n="camfeed.cycle_hint">点击切换机位</span>
+          </span>
+        </button>
+      </section>
+
+      <!-- 3. Host Hardware Telemetry Meter Rows on Pure Black -->
+      <section class="fui-group moss-group moss-rail-card" data-rail-card="hardware" aria-labelledby="p-hardware">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-hardware"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.hardware">本机硬件遥测</span><span lang="en" aria-hidden="true">HOST</span></h2>
+          <span class="fui-chip" id="hw-badge" data-state="idle" data-i18n="hw.no_signal">无信号</span>
+        </header>
+        <dl class="fui-meters moss-hw-meters">
+          <div class="fui-meter moss-processor-meter" id="hw-cpu-row">
+            <dt class="fui-meter__name" data-i18n="hw.cpu_short">处理器</dt>
+            <dd class="fui-meter__value fui-num" id="hw-cpu-val">—</dd>
+            <dd class="fui-gauge" id="hw-cpu-gauge" style="--fui-value: 0" role="meter" aria-label="处理器负载" data-i18n-label="hw.cpu" aria-valuemin="0" aria-valuemax="100"></dd>
+            <dd class="moss-hw-temperature fui-num" data-i18n-title="hw.cpu_temperature" title="处理器温度">
+              <span class="fui-sr-only" data-i18n="hw.cpu_temperature">处理器温度</span>
+              <span id="hw-cpu-temp">—</span>
+            </dd>
+          </div>
+          <div class="fui-meter moss-processor-meter" id="hw-gpu-row">
+            <dt class="fui-meter__name" id="hw-gpu-name">GPU</dt>
+            <dd class="fui-meter__value fui-num" id="hw-gpu-val">—</dd>
+            <dd class="fui-gauge" id="hw-gpu-gauge" style="--fui-value: 0" role="meter" aria-label="GPU 负载" data-i18n-label="hw.gpu" aria-valuemin="0" aria-valuemax="100"></dd>
+            <dd class="moss-hw-temperature fui-num" data-i18n-title="hw.gpu_temperature" title="GPU 温度">
+              <span class="fui-sr-only" data-i18n="hw.gpu_temperature">GPU 温度</span>
+              <span id="hw-gpu-temp">—</span>
+            </dd>
+          </div>
+          <div class="fui-meter" id="hw-ram-row" data-tint="1">
+            <dt class="fui-meter__name" data-i18n="hw.ram_short">内存</dt>
+            <dd class="fui-meter__value fui-num" id="hw-ram-val">—</dd>
+            <dd class="fui-gauge" id="hw-ram-gauge" style="--fui-value: 0" role="meter" aria-label="RAM free" data-i18n-label="hw.ram" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></dd>
+          </div>
+          <div class="fui-meter" id="hw-bat-row" data-tint="2">
+            <dt class="fui-meter__name" data-i18n="hw.battery_short">电量</dt>
+            <dd class="fui-meter__value fui-num" id="hw-bat-val">—</dd>
+            <dd class="fui-gauge" id="hw-bat-gauge" style="--fui-value: 0" role="meter" aria-label="Battery" data-i18n-label="hw.battery" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></dd>
+          </div>
+          <div class="fui-meter" id="hw-disk-row">
+            <dt class="fui-meter__name" data-i18n="hw.disk_short">系统盘</dt>
+            <dd class="fui-meter__value fui-num" id="hw-disk-val">—</dd>
+            <dd class="fui-gauge" id="hw-disk-gauge" style="--fui-value: 0" role="meter" aria-label="System disk" data-i18n-label="hw.disk" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></dd>
+          </div>
+        </dl>
+        <div class="moss-hw-meta">
+          <span class="fui-num moss-hw-meta__stamp" id="hw-meta">—</span>
+          <div class="moss-hw-meta__btns">
+            <button class="fui-key fui-key--sm" id="hw-inspect" type="button" data-i18n="hw.inspect">详细读数</button>
+            <button class="fui-key fui-key--sm" id="hw-popout" type="button" data-i18n="hw.popout">独立小窗</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Independent Full-Width Local Camera Monitor (Opt-in · Honest No-Signal / No-Device Fallback) -->
+      <section class="fui-group moss-group moss-rail-cam moss-rail-card" data-rail-card="camfeed" aria-labelledby="p-camfeed">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-camfeed"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.cam_feed">光学摄像头监测</span><span lang="en" aria-hidden="true">CAM-IN</span></h2>
+          <div class="moss-row moss-row--tight">
+            <button class="fui-key fui-key--sm" id="rail-cam-gesture" type="button" aria-pressed="false" data-i18n="cam.gesture" data-i18n-title="cam.gesture_title" title="开启/关闭手势控制（Alt+G）· ☝下机位 · ✌上机位 · 🤟滑轨 · 🖐姿态 · 🤏缩放 · ✊复位">手势</button>
+            <button class="fui-key fui-key--sm" id="rail-cam-sag" type="button" data-i18n="camfeed.sag" title="截取当前镜头画面识图并入库 SAG 知识库">识图入库</button>
+            <button class="fui-key fui-key--sm" id="rail-cam-toggle" type="button" aria-pressed="false" data-i18n="camfeed.start">开启</button>
+          </div>
+        </header>
+        <button class="moss-optics-box moss-cam-box" id="rail-cam-box" type="button" data-i18n-label="camfeed.toggle_label" aria-label="切换本机摄像头采集">
+          <video class="moss-cam-video" id="rail-cam-video" autoplay playsinline muted hidden></video>
+          <span class="moss-cam-standby" id="rail-cam-standby" data-cam-state="idle">
+            <strong class="moss-cam-standby__nosig" id="rail-cam-msg" data-i18n="audio.no_signal">无信号</strong>
+            <span class="moss-cam-standby__sub" id="rail-cam-sub" data-i18n="camfeed.standby">点击开启</span>
+          </span>
+          <span class="moss-optics-box__head" aria-hidden="true">
+            <span class="fui-num">OPTICAL CAM-IN</span>
+            <span class="moss-optics-dot" id="rail-cam-status" data-state="idle" data-i18n="camfeed.off">待命</span>
+          </span>
+        </button>
+      </section>
+
+      <!-- 5. Earth Track & Live Site Weather (Single Bordered Hero Tile in Left Rail) -->
+      <section class="fui-group moss-group moss-rail-card" data-rail-card="geo" aria-labelledby="p-geo">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-geo"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.geo">地球定位与实时天气</span><span lang="en" aria-hidden="true">GEO</span></h2>
+          <output class="fui-num" id="geo-site-id">REF-08</output>
+        </header>
+        <div class="fui-tile moss-geo-tile">
+          <div class="moss-geo-split">
+            <div class="moss-geo-stage">
+              <canvas class="moss-geo-canvas" id="geo-globe" tabindex="0" role="application" aria-label="地球定位点阵仪，方向键可旋转" data-i18n-label="panel.geo"></canvas>
+              <span class="moss-geo-callout fui-num" id="geo-callout">REF-08 · 39.9042°N 116.4074°E</span>
+            </div>
+            <div class="moss-geo-site-col">
+              <button class="moss-weather-city" id="geo-site-label" type="button" data-i18n="geo.ref_site" data-i18n-title="city.click_switch" title="点击切换当前城市（点阵世界地图 / 省市表单）">东八区参考点</button>
+              <span class="fui-coord fui-num" id="geo-coord">39.9042°N 116.4074°E</span>
+            </div>
+          </div>
+          <div class="moss-weather-row">
+            <div class="moss-weather-temp-row">
+              <div class="moss-weather-temp" id="geo-weather-temp"><span class="fui-num">—</span><span class="fui-readout__unit">°C</span></div>
+              <span class="moss-weather-cond" id="geo-weather-cond" data-i18n="geo.weather_na">暂无天气数据</span>
+            </div>
+            <div class="moss-weather-facts fui-num" id="geo-weather-facts"></div>
+          </div>
+        </div>
+        <div class="moss-geo-actions">
+          <button class="fui-key fui-key--sm" id="geo-locate" type="button" data-i18n="geo.locate">定位</button>
+          <button class="fui-key fui-key--sm" id="geo-spin" type="button" aria-pressed="true" data-i18n="geo.spin_on">自转</button>
+          <button class="fui-key fui-key--sm" id="geo-refresh" type="button" data-i18n="geo.refresh">刷新</button>
+          <button class="fui-key fui-key--sm" id="geo-forecast" type="button" disabled data-i18n="geo.forecast">预报</button>
+        </div>
+      </section>
+
+      <!-- 6. Dual Audio Channel Monitors Directly on Pure Black (Fills Left Rail Cleanly) -->
+      <section class="fui-group moss-group moss-rail-audio moss-rail-card" data-rail-card="audio" aria-labelledby="p-channels">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-channels"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.channels">语音通道监测</span><span lang="en" aria-hidden="true">AUDIO</span></h2>
+          <span class="fui-num">2 CH</span>
+        </header>
+        <ul class="fui-voice-list moss-audio-channels" aria-label="语音通道监测" data-i18n-label="panel.channels">
+          <li class="fui-voice moss-voice-row" data-channel="mic" data-channel-state="standby">
+            <span class="fui-tagcode">
+              <span class="fui-badge" id="strip-mic-badge" data-state="warn" data-i18n="audio.standby">待机</span>
+              <span class="fui-tagcode__code fui-num" data-i18n="audio.mic">麦克风</span>
+            </span>
+            <canvas class="fui-audio__view fui-voice__wave" id="strip-mic-wave" role="img" aria-label="麦克风通道频谱波形"></canvas>
+            <span class="fui-voice__wave fui-voice__wave--none" id="strip-mic-nosig" data-i18n="audio.no_signal" hidden>无信号</span>
+            <span class="fui-num fui-voice__level" id="strip-mic-db">—</span>
+          </li>
+          <li class="fui-voice moss-voice-row" data-channel="moss" data-channel-state="standby">
+            <span class="fui-tagcode">
+              <span class="fui-badge" id="strip-moss-badge" data-state="data" data-i18n="audio.standby">待机</span>
+              <span class="fui-tagcode__code fui-num" data-i18n="audio.moss">MOSS 输出</span>
+            </span>
+            <canvas class="fui-audio__view fui-voice__wave" id="strip-moss-wave" role="img" aria-label="MOSS 播报频谱波形"></canvas>
+            <span class="fui-voice__wave fui-voice__wave--none" id="strip-moss-nosig" data-i18n="audio.no_signal" hidden>无信号</span>
+            <span class="fui-num fui-voice__level" id="strip-moss-db">—</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 7. Subsystem Self-Check Chip Rows (.fui-chiprows — Iconic Film Shape, 100% Real Live State, Click-to-Act) -->
+      <section class="fui-group moss-group moss-rail-subs moss-rail-card" data-rail-card="subsystems" aria-labelledby="p-subs">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-subs"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.subsystems">子系统状态</span><span lang="en" aria-hidden="true">SYS</span></h2>
+          <output class="fui-num" id="sub-ready-count">7 / 7</output>
+        </header>
+        <ul class="fui-chiprows moss-sub-list moss-sub-list--grid" id="rail-subsystems" aria-labelledby="p-subs">
+          <li>
+            <button class="fui-chiprow" id="sub-link" type="button" data-state="warn">
+              <span class="fui-chip" id="sub-link-chip" data-i18n="tag.sim">演练</span>
+              <span class="fui-chiprow__name" data-i18n="sub.link_short">链路</span>
+              <span class="fui-chiprow__reading fui-num" id="sub-link-val">:18221</span>
+            </button>
+          </li>
+          <li>
+            <button class="fui-chiprow" id="sub-scene" type="button" data-state="data">
+              <span class="fui-chip" id="sub-scene-chip" data-i18n="tag.active">运行</span>
+              <span class="fui-chiprow__name" data-i18n="sub.scene_short">机体</span>
+              <span class="fui-chiprow__reading fui-num" id="sub-scene-val">01/06</span>
+            </button>
+          </li>
+          <li>
+            <button class="fui-chiprow" id="sub-auth" type="button" data-state="ok">
+              <span class="fui-chip" id="sub-auth-chip" data-i18n="sub.pass">通过</span>
+              <span class="fui-chiprow__name" data-i18n="sub.auth_short">工牌</span>
+              <span class="fui-chiprow__reading" id="sub-auth-val">IQC-001</span>
+            </button>
+          </li>
+          <li>
+            <button class="fui-chiprow" id="sub-core" type="button" data-state="data">
+              <span class="fui-chip" id="sub-core-chip" data-i18n="tag.active">运行</span>
+              <span class="fui-chiprow__name" data-i18n="sub.core_short">核芯</span>
+              <span class="fui-chiprow__reading fui-num" id="sub-core-val">DEEPSEEK</span>
+            </button>
+          </li>
+          <li>
+            <button class="fui-chiprow" id="sub-voice" type="button" data-state="ok">
+              <span class="fui-chip" id="sub-voice-chip" data-i18n="tag.on">开启</span>
+              <span class="fui-chiprow__name" data-i18n="sub.voice_short">语音</span>
+              <span class="fui-chiprow__reading" id="sub-voice-val">开启</span>
+            </button>
+          </li>
+          <li>
+            <button class="fui-chiprow" id="sub-hud" type="button" data-state="data">
+              <span class="fui-chip" id="sub-hud-chip" data-i18n="tag.auto">自动</span>
+              <span class="fui-chiprow__name" data-i18n="sub.hud_short">弹窗</span>
+              <span class="fui-chiprow__reading fui-num" id="sub-hud-val">00</span>
+            </button>
+          </li>
+          <li class="moss-sub-span">
+            <button class="fui-chiprow" id="sub-rem" type="button">
+              <span class="fui-chip" id="sub-rem-chip" data-i18n="tag.null">待命</span>
+              <span class="fui-chiprow__name" data-i18n="sub.rem">日程提醒</span>
+              <span class="fui-chiprow__reading" id="sub-rem-val">无待办</span>
+            </button>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 8. Wandering Earth 2 Robot Dog BenBen — Smart Context-Aware Animated OLED Dot-Matrix Faceplate -->
+      <section class="fui-group moss-group moss-rail-benben moss-rail-card" data-rail-card="benben" aria-labelledby="p-benben">
+        <header class="fui-cap moss-rail-card__head" draggable="true" data-i18n-title="rail.drag_hint" title="按住拖动可上下调整左侧面板顺序">
+          <h2 id="p-benben"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.benben">笨笨伴随单元</span><span lang="en" aria-hidden="true">BENBEN</span></h2>
+          <span class="fui-chip" id="benben-mood-chip" data-state="data" data-i18n="benben.mood_idle">待机卖萌</span>
+        </header>
+        <button class="moss-benben-box moss-oled-screen" id="benben-box" type="button" data-oled="mono-white" data-i18n-title="benben.pet_hint" data-i18n-label="benben.pet_hint" title="点击摸摸笨笨或切换动态表情（自动恢复感知）" aria-label="点击摸摸笨笨或切换动态表情">
+          <span class="moss-benben-box__head" aria-hidden="true">
+            <span class="fui-num">BENBEN · 550W AUX</span>
+            <span class="fui-num moss-benben-box__mode" id="benben-mode-tag" data-i18n="benben.auto">智能感知</span>
+          </span>
+          <canvas class="moss-benben-canvas" id="benben-canvas" role="img" aria-label="流浪地球2机器狗笨笨动态点阵表情屏"></canvas>
+          <span class="moss-benben-box__foot">
+            <span class="moss-benben-box__quote" id="benben-quote" data-i18n="benben.quote_idle">笨笨在线 · 随时协同 550W</span>
+            <span class="fui-num moss-benben-box__code" id="benben-code">M-01</span>
+          </span>
+        </button>
+      </section>
+    </nav>
+
+    <!-- Center Column: Tag Strips + The ONE Teal Blueprint Stage + Bottom Audio/Log Dock -->
+    <main class="fui-console__main">
+      <!-- Hidden compatibility stubs for moss-view.js overlay framing -->
+      <div id="dialogue" hidden></div>
+      <div id="lore-panel" hidden></div>
+      <div id="tools-panel" hidden></div>
+
+      <!-- Primary Station Stage (No Box Title Bar: Upper Tag Strip + Bounded Blueprint Window + Lower Tag Strip) -->
+      <section class="fui-stage moss-stage-shell" aria-labelledby="p-stage">
+        <div class="moss-stage-bar">
+          <ul class="fui-tagstrip moss-tagstrip-top" id="stage-strip-top" aria-label="子系统状态" data-i18n-label="tag.subsystems">
+            <li id="tag-link" data-state="warn"><span class="fui-chip" id="tag-link-chip" data-i18n="tag.sim">演练</span><span class="fui-tagstrip__code">LINK</span></li>
+            <li id="tag-scene" data-state="data"><span class="fui-chip" id="tag-scene-chip" data-i18n="tag.active">运行</span><span class="fui-tagstrip__code">550W</span></li>
+            <li id="tag-mic"><span class="fui-chip" id="tag-mic-chip" data-i18n="tag.null">待命</span><span class="fui-tagstrip__code">MIC</span></li>
+            <li id="tag-tts" data-state="ok"><span class="fui-chip" id="tag-tts-chip" data-i18n="tag.on">开启</span><span class="fui-tagstrip__code">TTS</span></li>
+            <li id="tag-hud" data-state="data"><span class="fui-chip" id="tag-hud-chip" data-i18n="tag.auto">自动</span><span class="fui-tagstrip__code">HUD</span></li>
+          </ul>
+          <!-- Live Contextual HUD Projection Switcher Tray -->
+          <div class="moss-hud-tray" id="hud-tray" role="group" aria-label="上下文情报弹窗切换" data-i18n-label="hud.tray_label"></div>
+        </div>
+
+        <div class="fui-stage__window fui-field fui-field--marks fui-bracket moss-stage">
+          <!-- Reference Dashed 6-Column Camera Heading Bar Along Top Edge of Blueprint Stage -->
+          <ol class="fui-cols" id="stage-cols" aria-hidden="true"></ol>
+
+          <div class="moss-stage__canvas-wrap" id="stage-canvas-wrap">
+            <div class="fui-ruler fui-ruler--v moss-stage__ruler-left" aria-hidden="true"></div>
+            <div class="moss-stage__sweep" id="stage-sweep" aria-hidden="true"></div>
+            <div class="moss-stage__lock" id="stage-lock" aria-hidden="true"></div>
+
+            <!-- Minimal Transparent Blueprint Viewport Label (No Duplicate Logo Inside 3D Stage) -->
+            <div class="moss-stage-ident">
+              <div class="moss-stage-ident__top">
+                <h2 class="moss-stage-ident__title" id="p-stage">
+                  <span class="moss-stage-ident__primary" data-i18n="panel.stage">550W 机体主视口</span>
+                </h2>
+                <span class="fui-chip" id="stage-badge" data-state="idle" data-i18n="state.standby">待命</span>
+              </div>
+              <span class="moss-stage-ident__rule" aria-hidden="true"></span>
+              <span class="moss-stage-ident__secondary" lang="en" aria-hidden="true">550W UNIT VIEWPORT</span>
+            </div>
+
+            <!-- Translucent UEG Emblem Blueprint Watermark Behind 550W 3D Model -->
+            <span class="moss-stage__watermark" aria-hidden="true"></span>
+
+            <!-- Hidden Local File Input for Universal PDF / Word / Image / Audio / Video Viewer -->
+            <input id="hud-file-input" type="file" accept=".pdf,.docx,.doc,.txt,.md,.json,.csv,.log,image/*,audio/*,video/*" hidden>
+
+            <!-- Real 550W 3D WebGL Canvas (Always Primary, position:absolute so it never inflates stage height!) -->
+            <canvas class="moss-stage__canvas" id="moss-model" aria-label="可旋转的 550W 三维模型" data-i18n-label="label.moss_canvas"></canvas>
+
+            <!-- Live Orange Callout Figure Beside 550W Subject (AZ / EL from Real Camera Gimbal) -->
+            <div class="fui-figure moss-stage-figure" id="stage-figure" aria-hidden="true">
+              <div class="moss-stage-figure__item">
+                <b class="fui-figure__value fui-num" id="stage-fig-az">0°</b>
+                <span class="fui-figure__label" data-i18n="cam.yaw">方位角</span>
+              </div>
+              <div class="moss-stage-figure__item">
+                <b class="fui-figure__value fui-num" id="stage-fig-el">0°</b>
+                <span class="fui-figure__label" data-i18n="cam.pitch">俯仰角</span>
+              </div>
+            </div>
+
+            <!-- Wandering Earth Monumental Split-Unit Chronometer Overlay (hides when Headline Plate active) -->
+            <div class="moss-stage-chrono" id="stage-chrono" aria-label="本机标准时刻" data-i18n-label="stage.chrono_label">
+              <span class="moss-stage-chrono__kicker" lang="en">CURRENT SYSTEM TIME</span>
+              <div class="moss-chrono moss-chrono--hero fui-num" id="stage-chrono-time"></div>
+              <div class="moss-stage-chrono__sub">
+                <span data-i18n="stage.chrono_sub">550W 实时遥测同步运行</span>
+                <span class="moss-stage-chrono__up fui-num"><span data-i18n="stage.uptime_label">本轮在轨时长</span> <b id="stage-uptime">00H 00MIN 00S</b></span>
+              </div>
+            </div>
+
+            <!-- Optical reticle overlay updated by moss-view.js -->
+            <div class="camera-overlay" aria-hidden="true" hidden>
+              <i class="optic-target"></i>
+              <div class="optic-readout fui-num">
+                <span class="check-indicator" data-i18n="cam.selftest" hidden>机构自检</span>
+                <span>AZ <b data-angle="yaw">0°</b></span>
+                <span>EL <b data-angle="pitch">0°</b></span>
+              </div>
+            </div>
+
+            <!-- 3D Model Load Indicator -->
+            <div class="moss-model-loading" id="model-loading" hidden>
+              <span class="fui-label" id="model-load-stage" role="status" data-i18n="stage.loading">载入 550W 三维模型</span>
+              <output class="model-load-reading fui-num" aria-hidden="true" hidden></output>
+              <progress class="model-load-meter" aria-labelledby="model-load-stage"></progress>
+            </div>
+
+            <!-- Honest 3D Paused/Unavailable Notice (Never a cartoon schematic) -->
+            <div class="moss-stage-standby" id="stage-standby-notice" hidden>
+              <strong class="fui-panel__title" data-i18n="stage.standby_title">550W 三维机身已暂停</strong>
+              <p class="moss-card__meta" data-i18n="stage.standby_desc">当前会话已关闭三维渲染或浏览器未开启 WebGL。</p>
+              <button class="fui-key" id="stage-reload-3d" type="button" data-i18n="stage.reload_3d">恢复 550W 三维机身</button>
+            </div>
+
+            <!-- Dynamic v3 Headline Plate (3-Blink State Flip + Green Marching Data Tag) -->
+            <div class="moss-stage__plate-slot">
+              <div class="fui-plate fui-stage__plate" id="stage-plate" role="status" hidden>
+                <span class="fui-plate__kicker" id="plate-kicker"></span>
+                <strong class="fui-plate__state" id="plate-title"></strong>
+                <span class="fui-plate__meta fui-num" id="plate-meta"></span>
+                <span class="fui-datatag" id="plate-datatag" hidden>
+                  <span data-i18n="plate.datatag">核心数据同步中</span>
+                  <span class="fui-progress" aria-busy="true"></span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Due Timer Tactical Reminder Float Stack -->
+            <div class="moss-hud-reminders" id="hud-reminders" hidden></div>
+
+            <!-- Live Hand-Gesture Optical PiP Viewfinder (21-Point Skeleton + 5-Gesture Deck) -->
+            <aside class="moss-gesture-hud" id="stage-gesture-hud" aria-label="手势机位识别视窗" data-i18n-label="gesture.hud_label" hidden>
+              <header class="moss-gesture-hud__head">
+                <span class="fui-badge fui-badge--solid" data-state="data">HAND-CAM</span>
+                <span class="moss-gesture-hud__badge fui-num" id="stage-gesture-badge" data-i18n="gesture.badge_ready">识别中</span>
+                <button class="moss-hud-ctrl" id="stage-gesture-stop" type="button" aria-label="关闭手势识别" data-i18n-label="gesture.stop_label">×</button>
+              </header>
+              <div class="moss-gesture-hud__view">
+                <video class="moss-gesture-hud__video" id="gesture-video" playsinline muted></video>
+                <canvas class="moss-gesture-hud__overlay" id="gesture-overlay" width="240" height="180" aria-hidden="true"></canvas>
+              </div>
+              <p class="moss-gesture-hud__notice" id="stage-gesture-notice" role="status" hidden></p>
+              <p class="moss-gesture-hud__legend" data-i18n="gesture.legend">☝下机位 · ✌上机位 · 🤟滑轨 · 🖐姿态 · 🤏缩放 · ✊复位 (Alt+G)</p>
+            </aside>
+
+            <!-- Game-FUI Dialogue-Driven Contextual Information Popup Overlay -->
+            <div class="moss-hud-layer" id="hud-layer" aria-live="polite"></div>
+          </div>
+
+          <!-- Floating Transparent Glowing Sine-Wave Voice Orbit + Live Captions -->
+          <div class="moss-stage__audio">
+            <p class="moss-stage__caption" id="stage-caption" role="status" hidden></p>
+            <div class="moss-stage__orbit-bar">
+              <span class="fui-sr-only" id="stage-orbit-state" data-i18n="stage.orbit_standby">待机</span>
+              <canvas class="moss-stage__orbit-canvas" id="stage-orbit" role="img" aria-label="声纹与语音通道" data-i18n-label="stage.orbit_label"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lower Session Tag Strip Directly Below Blueprint Stage -->
+        <ul class="fui-tagstrip moss-tagstrip-bottom" id="stage-strip-bottom" aria-label="会话遥测摘要" data-i18n-label="tag.session">
+          <li data-state="info"><span class="fui-chip">UNIT</span><span class="fui-tagstrip__code fui-num">550W</span></li>
+          <li><span class="fui-chip">CAM</span><span class="fui-tagstrip__code fui-num" id="tag-cam-code">01 / 06</span></li>
+          <li><span class="fui-chip">CORE</span><span class="fui-tagstrip__code fui-num" id="tag-core-code">DEEPSEEK</span></li>
+          <li><span class="fui-chip">PERS</span><span class="fui-tagstrip__code" id="tag-pers-code">熟人搭档</span></li>
+          <li><span class="fui-chip">TURN</span><span class="fui-tagstrip__code fui-num" id="tag-turn-code">00</span></li>
+          <li><span class="fui-chip">SITE</span><span class="fui-tagstrip__code" id="tag-site-code">北京</span></li>
+        </ul>
+      </section>
+
+      <!-- Bottom Dock: Full-Width Scrollable Runtime Event Log / Reminders / Media Queue (Framed Panel #1) -->
+      <section class="fui-panel fui-console__dock moss-dock" data-accent="data" aria-labelledby="p-dock">
+        <header class="fui-panel__head moss-viewport-head">
+          <h2 class="fui-panel__title" id="p-dock" data-i18n="panel.dock">运行日志与队列</h2>
+          <div class="moss-stage-tabs" role="tablist" aria-label="底部日志与队列分页" data-i18n-label="panel.dock">
+            <button class="moss-stage-tab" type="button" role="tab" data-dock-tab="audio-log" aria-selected="true" data-i18n="dock.tab_audio_log">运行日志</button>
+            <button class="moss-stage-tab" type="button" role="tab" data-dock-tab="reminders" aria-selected="false">
+              <span data-i18n="dock.tab_reminders">日程提醒</span> <span class="fui-num" id="dock-rem-count">0</span>
+            </button>
+            <button class="moss-stage-tab" type="button" role="tab" data-dock-tab="media" aria-selected="false">
+              <span data-i18n="dock.tab_media">媒体队列</span> <span class="fui-num" id="dock-media-count">0</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="fui-panel__body fui-panel__body--flush moss-dock__body">
+          <!-- Pane 1: Full-Width Real-Time Scrolling Backend Log Table (Crisp Normal FUI Text) -->
+          <div class="moss-dock__log-col" data-dock-pane="audio-log">
+            <div class="moss-log-toolbar">
+              <span class="fui-num moss-log-toolbar__src" id="log-source-badge">LIVE · moss-runtime.log</span>
+              <span class="moss-oled-rx fui-num" id="log-oled-rx"><i class="moss-oled-rx__dot" aria-hidden="true"></i><span id="log-oled-seq">RX #000</span></span>
+              <span class="moss-strip__spacer"></span>
+              <button class="fui-key fui-key--sm" id="log-follow-btn" type="button" aria-pressed="true" data-state="ok" data-i18n="log.follow_on">实时刷屏</button>
+            </div>
+            <div class="fui-table-wrap moss-log-scroll" id="log-scroll-wrap" role="region" tabindex="0" aria-label="实时后台日志流" data-i18n-label="log.caption">
+              <table class="fui-table fui-table--compact moss-log-table">
+                <caption class="fui-sr-only" data-i18n="log.caption">实时后台日志流，自动滚屏</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="log.time">时间</th>
+                    <th scope="col" data-i18n="log.source">来源</th>
+                    <th scope="col" data-i18n="log.message">事件内容</th>
+                    <th scope="col" data-i18n="log.level">级别</th>
+                  </tr>
+                </thead>
+                <tbody id="runtime-log-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Pane 2: Active Reminders -->
+          <div class="fui-panel__body" data-dock-pane="reminders" hidden>
+            <p class="moss-card__meta" id="dock-reminders-empty" data-i18n="rem.empty">当前没有待触发的提醒。</p>
+            <ul class="moss-modal-list" id="dock-reminders-list"></ul>
+          </div>
+
+          <!-- Pane 3: Media Queue -->
+          <div class="fui-panel__body" data-dock-pane="media" hidden>
+            <p class="moss-card__meta" id="dock-media-empty" data-i18n="media.empty">当前没有媒体检索结果。</p>
+            <div class="moss-hud-tracklist" id="dock-media-list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Right Aside Rail: Title Card + Live Badge + Mode Tiles + Droppable Cross-Rail Module Zone -->
+    <aside class="fui-console__aside fui-rail moss-rail-black" id="right-rail" aria-label="联合政府授权单元与右侧扩展模块" data-i18n-label="label.aside">
+      <!-- 1. Official Animated Beijing Space Center Title Card (UEG moved to top-left strip) -->
+      <section class="fui-titlecard moss-titlecard" aria-labelledby="p-authority">
+        <div class="moss-titlecard__body">
+          <div class="moss-titlecard__top">
+            <img class="moss-titlecard__bsc" src="/vendor/logos/bsc-wordmark-white.anim.svg" alt="北京航天中心 BEIJING SPACE CENTER" width="188" height="44">
+            <span class="fui-chip" id="authority-link-badge" data-state="warn" data-i18n="auth.sim">演练链路</span>
+          </div>
+          <div class="moss-titlecard__subrow">
+            <strong class="fui-titlecard__title" id="p-authority" data-i18n="auth.title">550W · MOSS 指挥终端</strong>
+            <span class="fui-titlecard__sub fui-num">HOLOJARVIS</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Live Docked Front-Face BSC-IQC Badge + 1-Inch Scan-to-Cutout ID Photo Directly on Black -->
+      <div class="moss-authority-badge-row">
+        <button class="moss-rail-badge-btn" id="rail-badge-card" type="button" data-i18n-label="badge.rail_open" data-i18n-title="badge.rail_open" aria-label="点击展开高清双面工牌"></button>
+        <button class="moss-rail-photo-btn" id="rail-badge-photo" type="button" data-i18n-label="badge.rail_photo" data-i18n-title="badge.rail_photo" aria-label="一寸证件照 · 点击上传或查看档案"></button>
+        <div class="moss-rail-badge-side">
+          <span class="fui-chip" data-state="ok" data-i18n="badge.rail_status">已核验</span>
+          <span class="fui-num moss-rail-badge-meta" id="rail-badge-meta">IQC-001</span>
+          <button class="fui-key fui-key--sm" id="rail-badge-speak" type="button" data-i18n="badge.rail_speak">语音</button>
+          <button class="fui-key fui-key--sm" id="rail-badge-edit" type="button" data-i18n="badge.rail_edit">修改</button>
+        </div>
+      </div>
+
+      <!-- 3. Authentic v3 Bordered Mode Tiles (Corner Marker + Orange In-Force Option + Bar) -->
+      <div class="fui-modes moss-mode-deck" role="group" aria-label="指挥授权单元" data-i18n-label="panel.authority">
+        <button class="fui-mode moss-mode-tile" id="mode-tts" type="button" aria-pressed="true">
+          <span class="fui-label" data-i18n="mode.tts">语音播报</span>
+          <span class="fui-mode__opts" aria-hidden="true">
+            <span class="fui-mode__opt" id="mode-tts-off" data-i18n="mode.off_short">关</span>
+            <span class="fui-mode__opt" id="mode-tts-on" data-on="true" data-i18n="mode.on_short">开</span>
+          </span>
+          <span class="fui-mode__value fui-num" id="mode-tts-val">TTS-01</span>
+        </button>
+        <button class="fui-mode moss-mode-tile" id="mode-hud" type="button" aria-pressed="true">
+          <span class="fui-label" data-i18n="mode.hud">情报弹窗</span>
+          <span class="fui-mode__opts" aria-hidden="true">
+            <span class="fui-mode__opt" id="mode-hud-manual" data-i18n="mode.manual">手动</span>
+            <span class="fui-mode__opt" id="mode-hud-auto" data-on="true" data-i18n="mode.auto">自动</span>
+          </span>
+          <span class="fui-mode__value fui-num" id="mode-hud-val">HUD · 00</span>
+        </button>
+        <button class="fui-mode moss-mode-tile" id="mode-core" type="button">
+          <span class="fui-label" data-i18n="mode.core">推理核心</span>
+          <span class="fui-mode__opts" aria-hidden="true">
+            <span class="fui-mode__opt" id="mode-core-link" data-on="true" data-i18n="mode.online_short">在线</span>
+          </span>
+          <span class="fui-mode__value fui-num" id="mode-core-val">DEEPSEEK</span>
+        </button>
+      </div>
+
+      <!-- 4. Cross-Rail Droppable Zone for Panels Dragged From Left Rail -->
+      <div class="moss-rail-dropzone" id="right-rail-cards" data-rail-zone="right" data-empty="true">
+        <span class="moss-rail-dropzone__hint" data-i18n="rail.drop_hint">可拖入左侧区块至此栏</span>
+      </div>
+    </aside>
+
+    <!-- Right-Edge Pull Tab to Slide Open / Collapse Tactical Comms Drawer -->
+    <button class="moss-comms-tab" id="comms-drawer-tab" type="button" aria-expanded="true" aria-controls="comms-drawer">
+      <span class="moss-comms-tab__dot" id="comms-drawer-unread" hidden aria-hidden="true"></span>
+      <span class="fui-num moss-comms-tab__code">CH-01</span>
+      <span class="moss-comms-tab__label" data-i18n="comms.drawer_tab">指令通讯</span>
+    </button>
+
+    <!-- Slide-Out Tactical Comms Drawer (Supports Side Slide-Out + Detachable Draggable/Resizable Floating Window) -->
+    <div class="moss-comms-drawer" id="comms-drawer" data-mode="drawer" data-open="true">
+      <section class="fui-panel moss-comms-panel" id="comms-panel" data-accent="intel" aria-labelledby="p-comms">
+        <header class="fui-panel__head moss-comms-head" id="comms-drag-head">
+          <h2 class="fui-panel__title" id="p-comms">
+            <span class="fui-bi">
+              <span class="fui-bi__primary" data-i18n="panel.comms">指令通讯终端</span>
+              <span class="fui-bi__secondary" lang="en" aria-hidden="true">CH-01 // TACTICAL COMMS</span>
+            </span>
+          </h2>
+          <div class="moss-comms-head__actions">
+            <button class="fui-key fui-key--sm" id="comms-detach" type="button" aria-pressed="false" data-i18n="comms.detach">独立窗</button>
+            <button class="fui-key fui-key--sm" id="comms-popout" type="button" data-i18n="comms.popout" data-i18n-title="comms.popout_title" title="在新浏览器窗口打开独立会话">弹出</button>
+            <button class="fui-key fui-key--sm moss-comms-new-btn" id="comms-new" type="button" data-i18n="comms.new">新会话</button>
+            <button class="fui-key fui-key--sm" id="comms-collapse" type="button" data-i18n-label="comms.collapse" data-i18n-title="comms.collapse" title="收起侧滑抽屉">▸</button>
+          </div>
+        </header>
+
+        <!-- Edge-to-edge Tactical Key Deck -->
+        <div class="moss-comms-deck" role="toolbar" aria-label="通讯档案工具" data-i18n-label="label.comms_deck">
+          <button class="moss-deck-key" type="button" data-open-modal="history">
+            <span class="fui-num moss-deck-key__code">LOG</span>
+            <span data-i18n="comms.history">历史</span>
+            <span class="fui-num moss-deck-key__count" id="deck-history-count">00</span>
+          </button>
+          <button class="moss-deck-key" type="button" data-open-modal="memory">
+            <span class="fui-num moss-deck-key__code">MEM</span>
+            <span data-i18n="comms.memory">记忆</span>
+            <span class="fui-num moss-deck-key__count" id="deck-memory-count">00</span>
+          </button>
+          <button class="moss-deck-key" type="button" data-open-modal="notes">
+            <span class="fui-num moss-deck-key__code">NOTE</span>
+            <span data-i18n="comms.notes">便签</span>
+          </button>
+          <button class="moss-deck-key" type="button" data-open-modal="tools">
+            <span class="fui-num moss-deck-key__code">CMD</span>
+            <span data-i18n="comms.tools">指令库</span>
+          </button>
+        </div>
+
+        <div class="fui-chat">
+          <ol class="fui-chat__log" id="comms-log" role="log" aria-label="MOSS 对话记录" data-i18n-label="panel.comms" tabindex="0">
+            <li class="moss-starters" id="comms-empty">
+              <strong class="fui-panel__title" data-i18n="comms.empty_title">通道已就绪 · 550W 待命</strong>
+              <p class="moss-card__meta" data-i18n="comms.empty_desc">对话将自动触发图文设定、多媒体播控、实时气象、本机遥测与操作核验等 FUI 情报弹窗。</p>
+              <div class="moss-starters__list">
+                <button class="fui-btn moss-starters__btn" type="button" data-starter-key="comms.starter_1_cmd" data-i18n="comms.starter_1">查询时间、电量与音量</button>
+                <button class="fui-btn moss-starters__btn" type="button" data-starter-key="comms.starter_2_cmd" data-i18n="comms.starter_2">搜索并播放本机音乐</button>
+                <button class="fui-btn moss-starters__btn" type="button" data-starter-key="comms.starter_3_cmd" data-i18n="comms.starter_3">调取 550W 与 UEG 图文档案</button>
+              </div>
+            </li>
+          </ol>
+
+          <div class="fui-chat__typing" id="comms-typing" role="status" hidden>
+            <span data-i18n="comms.typing">MOSS 正在计算回复</span>
+            <div class="fui-progress" role="progressbar" aria-label="MOSS 正在计算回复" aria-busy="true" style="width: 56px"></div>
+          </div>
+
+          <!-- 1-Row Quick Directive Strip (restrained tactical strip above composer) -->
+          <div class="moss-quick-bar" role="group" aria-label="快捷指令" data-i18n-label="label.quick_bar">
+            <button class="moss-quick-key" type="button" data-quick-accent="intel" data-quick-key="quick.intel_cmd" data-i18n="quick.intel">图文·550W</button>
+            <button class="moss-quick-key" type="button" data-quick-accent="ok" data-quick-key="quick.media_cmd" data-i18n="quick.media">多媒体</button>
+            <button class="moss-quick-key" type="button" data-quick-accent="intel" data-quick-key="quick.doc_cmd" data-i18n="quick.doc">文档·PDF</button>
+            <button class="moss-quick-key" type="button" data-quick-accent="data" data-quick-key="quick.weather_cmd" data-i18n="quick.weather">气象</button>
+            <button class="moss-quick-key" type="button" data-quick-accent="warn" data-quick-key="quick.host_cmd" data-i18n="quick.host">本机状态</button>
+            <button class="moss-quick-key" type="button" data-quick-accent="crit" data-quick-key="quick.draft_cmd" data-i18n="quick.draft">核验草稿</button>
+          </div>
+
+          <form class="fui-chat__composer" id="comms-composer" aria-label="发送消息给 MOSS" data-i18n-label="panel.comms">
+            <p class="moss-chat-error" id="comms-error" role="alert" hidden></p>
+            <div class="moss-slash-menu" id="comms-slash-menu" role="listbox" hidden></div>
+            <div class="moss-attach-pill" id="comms-attach-pill" hidden>
+              <img class="moss-attach-pill__thumb" id="comms-attach-thumb" alt="" hidden>
+              <span class="moss-attach-pill__name" id="comms-attach-name"></span>
+              <span class="fui-num moss-attach-pill__meta" id="comms-attach-meta"></span>
+              <button class="fui-key fui-key--sm" id="comms-attach-clear" type="button" aria-label="移除附件">×</button>
+            </div>
+            <div class="moss-voice-bar">
+              <button class="fui-key fui-key--sm" id="comms-mic" type="button" aria-pressed="false" data-i18n="comms.mic_start">全双工语音</button>
+              <button class="fui-key fui-key--sm" id="comms-interrupt" type="button" disabled data-i18n="comms.interrupt">打断</button>
+              <span class="moss-voice-status" id="comms-voice-status" role="status" data-i18n="voice.ready">全双工待命 · 点击开启连续语音对话</span>
+            </div>
+            <label class="fui-sr-only" for="comms-input" data-i18n="comms.placeholder">输入指令或与 MOSS 对话…</label>
+            <div class="fui-chat__field">
+              <button class="fui-key fui-key--sm moss-attach-btn" id="comms-attach-btn" type="button" data-i18n-label="comms.attach" data-i18n-title="comms.attach" title="添加图片或文档（也支持直接 Ctrl+V 粘贴或拖入）">+</button>
+              <input id="comms-attach-input" type="file" hidden accept="image/*,.pdf,.docx,.xlsx,.csv,.tsv,.txt,.md,.json,.log,.py,.js,.ts">
+              <span class="fui-chat__prompt" aria-hidden="true">&gt;</span>
+              <textarea class="fui-chat__input" id="comms-input" rows="1" maxlength="1200" placeholder="输入指令或与 MOSS 对话…" data-i18n-placeholder="comms.placeholder" aria-describedby="comms-hint"></textarea>
+              <button class="fui-btn fui-btn--primary" id="comms-send" type="submit" disabled data-i18n="comms.send">发送</button>
+            </div>
+            <p class="fui-chat__hint">
+              <span id="comms-hint" data-i18n="comms.hint">Enter 发送 · Shift+Enter 换行</span>
+              <span class="fui-num" id="comms-count">0 / 1200</span>
+            </p>
+          </form>
+        </div>
+        <div class="moss-comms-resize" id="comms-resize-handle" aria-hidden="true"></div>
+      </section>
+    </div>
+
+    <!-- Bottom Footer Strip -->
+    <footer class="fui-strip fui-console__footer moss-footer">
+      <span class="fui-chip" data-i18n="footer.last">最近事件</span>
+      <span class="fui-num" id="footer-last-event">—</span>
+      <span class="moss-strip__sep moss-strip__hide-sm" aria-hidden="true"></span>
+      <span class="fui-num moss-strip__hide-sm" id="footer-link">CONNECTING</span>
+      <span class="moss-strip__spacer"></span>
+      <span class="fui-hint">
+        <kbd class="fui-kbd">[</kbd><kbd class="fui-kbd">]</kbd>
+        <span data-i18n="footer.beat">场景态</span>
+        <span class="fui-num" id="footer-beat">nominal</span>
+      </span>
+    </footer>
+  </div>
+
+  <!-- ── Native FUI Modal Dialogs ── -->
+
+  <!-- History Dialog -->
+  <dialog class="fui-dialog" id="dlg-history" aria-labelledby="dlg-history-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">LOG</span>
+      <h2 class="fui-dialog__title" id="dlg-history-title" data-i18n="modal.history_title">历史对话</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body moss-stack">
+      <form class="moss-row moss-history-search" id="history-search-form">
+        <input class="fui-dialog__input" id="history-search-input" type="search" maxlength="120" placeholder="全文搜索历史对话内容…" data-i18n-placeholder="modal.history_search_ph" style="flex: 1 1 180px">
+        <button class="fui-btn" type="submit" data-i18n="modal.search">搜索</button>
+        <button class="fui-btn" id="history-search-clear" type="button" hidden data-i18n="modal.history_clear">清空</button>
+      </form>
+      <p class="moss-card__meta" id="history-search-status" role="status" hidden></p>
+      <ul class="moss-modal-list" id="history-list"></ul>
+    </div>
+    <footer class="fui-dialog__actions"><button class="fui-btn" type="button" data-dialog-close data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+
+  <!-- Long-Term Memory Dialog -->
+  <dialog class="fui-dialog" id="dlg-memory" aria-labelledby="dlg-memory-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">MEM</span>
+      <h2 class="fui-dialog__title" id="dlg-memory-title" data-i18n="modal.memory_title">长期记忆</h2>
+      <span class="fui-dialog__ref fui-num" id="memory-backend">SQLITE</span>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body">
+      <form class="moss-stack" id="memory-form">
+        <label class="fui-label" for="memory-input" data-i18n="modal.memory_add_label">新增记忆条目</label>
+        <input class="fui-dialog__input" id="memory-input" type="text" maxlength="160" placeholder="输入称呼、偏好或约定…" data-i18n-placeholder="modal.memory_placeholder">
+        <div><button class="fui-btn fui-btn--primary" type="submit" data-i18n="modal.save">保存</button></div>
+      </form>
+      <ul class="moss-modal-list" id="memory-list"></ul>
+    </div>
+    <footer class="fui-dialog__actions"><button class="fui-btn" type="button" data-dialog-close data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+
+  <!-- Notes Archive Dialog -->
+  <dialog class="fui-dialog fui-dialog--lg" id="dlg-notes" aria-labelledby="dlg-notes-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">NOTE</span>
+      <h2 class="fui-dialog__title" id="dlg-notes-title" data-i18n="modal.notes_title">便签档案</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body">
+      <form class="moss-stack" id="notes-form">
+        <label class="fui-label" id="notes-label" for="notes-body" data-i18n="modal.notes_new">新建便签</label>
+        <input class="fui-dialog__input" id="notes-body" type="text" maxlength="1200" required>
+        <div class="moss-row moss-row--tight">
+          <button class="fui-btn fui-btn--primary" type="submit" data-i18n="modal.save">保存</button>
+          <button class="fui-btn" id="notes-cancel-edit" type="button" hidden data-i18n="modal.cancel">取消</button>
+        </div>
+      </form>
+      <form class="moss-row" id="notes-filter">
+        <input class="fui-dialog__input" id="notes-query" type="search" aria-label="搜索便签" data-i18n-label="modal.search" style="flex: 1 1 160px">
+        <button class="fui-btn" type="submit" data-i18n="modal.search">搜索</button>
+        <label class="moss-check"><input id="notes-archive-toggle" type="checkbox"><span data-i18n="modal.notes_show_archived">显示已归档</span></label>
+      </form>
+      <p class="moss-card__meta" id="notes-status" role="status"></p>
+      <ul class="moss-modal-list" id="notes-list"></ul>
+    </div>
+    <footer class="fui-dialog__actions"><button class="fui-btn" type="button" data-dialog-close data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+  <!-- MOSS Brain Control Deck Dialog: RSI · SQLite-SAG · Proactive Pulse · Sleep Dream · Background Jobs · Home Assistant · Physical 550W -->
+  <dialog class="fui-dialog fui-dialog--lg moss-brain-dlg" id="dlg-brain" aria-labelledby="dlg-brain-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="ok">BRAIN v3</span>
+      <h2 class="fui-dialog__title" id="dlg-brain-title" data-i18n="brain.title">MOSS 大脑与实体协议中枢</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body moss-stack">
+      <div class="moss-brain-kpis">
+        <div class="moss-gen-kpi"><span class="moss-gen-kpi__label" data-i18n="brain.kpi_rsi">RSI 规则 / DPO</span><span class="moss-gen-kpi__val fui-num" id="brain-kpi-rsi">0</span></div>
+        <div class="moss-gen-kpi"><span class="moss-gen-kpi__label" data-i18n="brain.kpi_sag">SAG 节点·实体·超边</span><span class="moss-gen-kpi__val fui-num" id="brain-kpi-sag">0</span></div>
+        <div class="moss-gen-kpi"><span class="moss-gen-kpi__label" data-i18n="brain.kpi_pulse">自主脉搏</span><span class="moss-gen-kpi__val fui-num" id="brain-kpi-pulse">—</span></div>
+        <div class="moss-gen-kpi"><span class="moss-gen-kpi__label" data-i18n="brain.kpi_dream">世界模型世代</span><span class="moss-gen-kpi__val fui-num" id="brain-kpi-dream">STANDBY</span></div>
+      </div>
+
+      <div class="moss-stage-tabs" role="tablist">
+        <button class="moss-stage-tab" type="button" role="tab" data-brain-tab="rsi" aria-selected="true" data-i18n="brain.tab_rsi">RSI 自我进化</button>
+        <button class="moss-stage-tab" type="button" role="tab" data-brain-tab="sag" aria-selected="false" data-i18n="brain.tab_sag">SAG 知识图谱</button>
+        <button class="moss-stage-tab" type="button" role="tab" data-brain-tab="pulse" aria-selected="false" data-i18n="brain.tab_pulse">脉搏与做梦</button>
+        <button class="moss-stage-tab" type="button" role="tab" data-brain-tab="jobs" aria-selected="false" data-i18n="brain.tab_jobs">后台与技能</button>
+        <button class="moss-stage-tab" type="button" role="tab" data-brain-tab="iot" aria-selected="false" data-i18n="brain.tab_iot">家居与实体</button>
+      </div>
+
+      <!-- Tab 1: RSI -->
+      <section class="moss-stack" data-brain-pane="rsi">
+        <div class="moss-row">
+          <p class="moss-card__meta" id="brain-rsi-status" style="flex:1"></p>
+          <button class="fui-btn fui-btn--primary" id="brain-rsi-run" type="button" data-i18n="brain.rsi_run">执行 RSI 复盘迭代</button>
+        </div>
+        <ul class="moss-modal-list" id="brain-rsi-list"></ul>
+      </section>
+
+      <!-- Tab 2: SQLite-SAG -->
+      <section class="moss-stack" data-brain-pane="sag" hidden>
+        <div class="moss-row moss-row--tight" id="brain-sag-entities"></div>
+        <form class="moss-row" id="brain-sag-search-form">
+          <input class="fui-dialog__input" id="brain-sag-search-input" type="search" placeholder="输入问题或实体，测试向量 + 动态超边多跳检索…" style="flex:1">
+          <button class="fui-btn fui-btn--primary" type="submit" data-i18n="brain.sag_search">多跳检索</button>
+        </form>
+        <pre class="moss-brain-pre" id="brain-sag-search-result"></pre>
+        <form class="moss-stack" id="brain-sag-ingest-form" data-cs-only="true">
+          <div class="moss-row">
+            <input class="fui-dialog__input" id="brain-sag-title" type="text" placeholder="知识标题（文本入库用）" style="flex:1">
+            <input class="fui-dialog__input" id="brain-sag-file" type="text" placeholder="或填本地 .md/.txt 文件路径批量分块入库" style="flex:1">
+          </div>
+          <div class="moss-row">
+            <input class="fui-dialog__input" id="brain-sag-content" type="text" placeholder="输入项目资料、会议结论或偏好事实…" style="flex:1">
+            <button class="fui-btn" type="submit" data-i18n="brain.sag_ingest">写入 SAG</button>
+          </div>
+          <p class="moss-card__meta" id="brain-sag-ingest-msg" role="status"></p>
+        </form>
+      </section>
+
+      <!-- Tab 3: Proactive Pulse & Sleep Dream -->
+      <section class="moss-stack" data-brain-pane="pulse" hidden>
+        <div class="moss-row">
+          <label class="moss-check"><input id="brain-pulse-enabled" type="checkbox" checked><span data-i18n="brain.pulse_enable">启用自主脉搏守望（温控/电量/日程）</span></label>
+          <label class="moss-check"><input id="brain-pulse-dnd" type="checkbox"><span data-i18n="brain.pulse_dnd_toggle">静默护航（免打扰）</span></label>
+        </div>
+        <div class="moss-row">
+          <button class="fui-btn fui-btn--primary" id="brain-briefing-btn" type="button" data-i18n="brain.briefing_run">生成态势简报</button>
+          <button class="fui-btn" id="brain-dream-btn" type="button" data-i18n="brain.dream_run">执行夜间做梦深度整理</button>
+        </div>
+        <p class="moss-brain-briefing" id="brain-briefing-box"></p>
+        <div class="moss-stack" id="brain-world-model"></div>
+      </section>
+
+      <!-- Tab 4: Background Jobs & Self-Authoring Skills -->
+      <section class="moss-stack" data-brain-pane="jobs" hidden>
+        <form class="moss-row" id="brain-job-form" data-cs-only="true">
+          <select class="fui-dialog__input" id="brain-job-kind" style="flex:0 0 auto">
+            <option value="web_research">后台联网深度调研</option>
+            <option value="folder_digest">后台目录文档入库</option>
+          </select>
+          <input class="fui-dialog__input" id="brain-job-target" type="text" placeholder="输入调研主题或本地目录路径…" style="flex:1">
+          <button class="fui-btn fui-btn--primary" type="submit" data-i18n="brain.job_submit">派发后台</button>
+        </form>
+        <ul class="moss-modal-list" id="brain-jobs-list"></ul>
+        <form class="moss-row" id="brain-skill-form" data-cs-only="true">
+          <input class="fui-dialog__input" id="brain-skill-name" type="text" placeholder="新技能名称" style="flex:0 0 130px">
+          <input class="fui-dialog__input" id="brain-skill-prompt" type="text" placeholder="点击该技能时要执行的一句话指令…" style="flex:1">
+          <button class="fui-btn" type="submit" data-i18n="brain.skill_save">保存技能</button>
+        </form>
+        <ul class="moss-modal-list" id="brain-skills-list"></ul>
+      </section>
+
+      <!-- Tab 5: Home Assistant & Physical 550W Hardware Embodiment & /mobile -->
+      <section class="moss-stack" data-brain-pane="iot" hidden>
+        <form class="moss-stack" id="brain-ha-form" data-cs-only="true">
+          <div class="moss-row">
+            <input class="fui-dialog__input" id="brain-ha-url" type="url" placeholder="Home Assistant 地址，如 http://homeassistant.local:8123" style="flex:1">
+            <select class="fui-dialog__input" id="brain-ha-mode" style="flex:0 0 auto">
+              <option value="dry_run">演练模式 (dry_run)</option>
+              <option value="live">实机模式 (live)</option>
+            </select>
+          </div>
+          <div class="moss-row">
+            <input class="fui-dialog__input" id="brain-ha-token" type="password" placeholder="Home Assistant 长效访问令牌（选填）" style="flex:1">
+            <label class="moss-check"><input id="brain-ha-enabled" type="checkbox"><span>允许实机控制</span></label>
+            <button class="fui-btn fui-btn--primary" type="submit">保存 HA</button>
+            <button class="fui-btn" id="brain-ha-refresh" type="button">刷新设备</button>
+          </div>
+          <p class="moss-card__meta" id="brain-ha-msg" role="status"></p>
+        </form>
+        <ul class="moss-modal-list" id="brain-ha-devices"></ul>
+
+        <div class="moss-brain-hw-box" data-cs-only="true">
+          <p class="moss-card__meta fui-num" id="brain-hw-status">moss-hw-v1 · 实体 550W 协议桥（音箱 / 红眼灯 / 小屏 / 镜头 / 舵机）</p>
+          <div class="moss-row moss-row--tight">
+            <button class="fui-key fui-key--sm" type="button" data-hw-mode="standby">待命青灯</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-mode="listening">聆听红眼</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-mode="thinking">运算琥珀</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-mode="speaking">播报律动</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-mode="alert">告警频闪</button>
+          </div>
+          <div class="moss-row moss-row--tight">
+            <label class="moss-card__meta fui-num">YAW <input id="brain-hw-yaw" type="range" min="-60" max="60" value="0"></label>
+            <label class="moss-card__meta fui-num">PITCH <input id="brain-hw-pitch" type="range" min="-30" max="30" value="0"></label>
+            <button class="fui-key fui-key--sm" type="button" data-hw-gesture="nod">点头</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-gesture="look_user">注视</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-gesture="patrol">巡航</button>
+            <button class="fui-key fui-key--sm" type="button" data-hw-gesture="reset">回中</button>
+          </div>
+          <p class="moss-card__meta">实体硬件 SSE 帧流：<code class="fui-num">/api/hardware/moss/stream</code> · 手机精简分身：<a id="brain-mobile-link" href="/mobile" target="_blank" rel="noopener">/mobile</a></p>
+        </div>
+      </section>
+    </div>
+    <footer class="fui-dialog__actions"><button class="fui-btn" type="button" data-dialog-close data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+  <!-- Local Host Status Overview Dialog -->
+  <dialog class="fui-dialog" id="dlg-status" aria-labelledby="dlg-status-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">HOST</span>
+      <h2 class="fui-dialog__title" id="dlg-status-title" data-i18n="modal.status_title">本机状态总览</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body"><dl class="fui-dialog__list" id="dlg-status-list"></dl></div>
+    <footer class="fui-dialog__actions"><button class="fui-btn fui-btn--primary" type="button" data-dialog-close autofocus data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+  <!-- Weather Forecast Dialog -->
+  <dialog class="fui-dialog fui-dialog--lg" id="dlg-weather" aria-labelledby="dlg-weather-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">METEO</span>
+      <h2 class="fui-dialog__title" id="dlg-weather-title" data-i18n="modal.weather_title">定位点天气预报</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body" id="dlg-weather-body"></div>
+    <footer class="fui-dialog__actions"><button class="fui-btn fui-btn--primary" type="button" data-dialog-close autofocus data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+  <!-- Jev Native Draft Handoff Dialog -->
+  <dialog class="fui-dialog" id="dlg-jev" data-state="warn" aria-labelledby="dlg-jev-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="warn">JEV</span>
+      <h2 class="fui-dialog__title" id="dlg-jev-title" data-i18n="modal.jev_title">填入本机草稿窗</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body">
+      <p class="moss-card__meta" data-i18n="modal.jev_dest">目标：MOSS 本机草稿窗</p>
+      <pre class="moss-pre" id="jev-preview"></pre>
+      <p class="moss-chat-error" id="jev-status" role="status"></p>
+    </div>
+    <footer class="fui-dialog__actions">
+      <button class="fui-btn" type="button" data-dialog-close autofocus data-i18n="modal.cancel">取消</button>
+      <button class="fui-btn fui-btn--primary" id="jev-confirm" type="button" data-i18n="modal.jev_confirm">确认填入</button>
+    </footer>
+  </dialog>
+
+  <!-- Tool Prompts Catalog Dialog -->
+  <dialog class="fui-dialog fui-dialog--lg" id="dlg-tools" aria-labelledby="dlg-tools-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">CMD</span>
+      <h2 class="fui-dialog__title" id="dlg-tools-title" data-i18n="modal.tools_title">常用工具指令</h2>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body"><div class="moss-tools-grid" id="tools-grid"></div></div>
+    <footer class="fui-dialog__actions"><button class="fui-btn" type="button" data-dialog-close data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+
+  <!-- Console Settings Split-Pane Tactical Modal -->
+  <dialog class="fui-dialog moss-settings-modal" id="dlg-settings" aria-labelledby="dlg-settings-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge" data-state="info">CFG</span>
+      <h2 class="fui-dialog__title" id="dlg-settings-title" data-i18n="modal.settings_title">控制台设置</h2>
+      <span class="fui-dialog__ref fui-num">550W // SYS-CFG</span>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="moss-settings-shell">
+      <nav class="moss-settings-nav" role="tablist" aria-orientation="vertical" aria-label="设置分类导航" data-i18n-label="set.nav_aria">
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="model" aria-selected="true">
+          <span class="moss-settings-nav__code fui-num">01</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_model">模型与性格</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_model_sub">对话模型 · 性格 · 媒体库</span>
+          </span>
+        </button>
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="audio" aria-selected="false">
+          <span class="moss-settings-nav__code fui-num">02</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_audio">语音与音频</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_audio_sub">语音合成 · 唤醒 · 波形</span>
+          </span>
+        </button>
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="display" aria-selected="false">
+          <span class="moss-settings-nav__code fui-num">03</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_display">显示与小屏</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_display_sub">H50 点阵 · 3D · 手势</span>
+          </span>
+        </button>
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="location" aria-selected="false">
+          <span class="moss-settings-nav__code fui-num">04</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_location">城市与定位</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_location_sub">气象站点 · 点阵地图</span>
+          </span>
+        </button>
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="badge" aria-selected="false">
+          <span class="moss-settings-nav__code fui-num">05</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_badge">工牌与凭证</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_badge_sub">BSC 身份卡 · 抠图</span>
+          </span>
+        </button>
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="auth" data-cs-only="true" aria-selected="false">
+          <span class="moss-settings-nav__code fui-num">06</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_auth">授权码管理</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_auth_sub">CS 管理员 · 用户档案</span>
+          </span>
+        </button>
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="soul" aria-selected="false">
+          <span class="moss-settings-nav__code fui-num">07</span>
+          <span class="moss-settings-nav__meta">
+            <strong class="moss-settings-nav__title" data-i18n="set.tab_soul">灵魂记忆</strong>
+            <span class="moss-settings-nav__sub" data-i18n="set.tab_soul_sub">画像 · 信念 · .md</span>
+          </span>
+        </button>
+      </nav>
+
+      <div class="moss-settings-content">
+        <p class="moss-role-banner" id="set-role-note" hidden data-i18n="auth.c_role_note">当前为 C 级操作员权限，仅开放工牌、定位、频谱/布局与陪伴语气等个性化配置；系统级全局配置需 CS 级管理员权限。</p>
+        <!-- Pane 01: Models, Cloud Providers & Media Library -->
+        <section class="moss-settings-pane" data-set-pane="model" role="tabpanel">
+          <div class="moss-set-card" data-cs-only="true">
+            <span class="fui-label" id="set-model-label" data-i18n="set.model">对话模型选择</span>
+            <div class="moss-choice-grid moss-choice-grid--models" id="set-model-grid" role="radiogroup" aria-labelledby="set-model-label"></div>
+            <p class="moss-card__meta" id="set-cloud-note" data-i18n="set.cloud_note">选用云模型时，当前消息、近期上下文与召回记忆会发往所选服务。</p>
+            <label class="moss-check"><input id="set-cloud-count" type="checkbox"><span data-i18n="set.cloud_count">显示每轮云模型请求次数</span></label>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" id="set-personality-label" data-i18n="set.personality">MOSS 性格与语气预设</span>
+            <div class="moss-personality-grid" id="set-personality-grid" role="radiogroup" aria-labelledby="set-personality-label"></div>
+            <p class="moss-card__meta" id="set-personality-status" role="status" data-i18n="set.personality_note">实时作用于所有云/本地模型的回答风格、措辞与语音语气。</p>
+          </div>
+
+          <div class="moss-set-card" data-cs-only="true">
+            <details class="moss-console-settings" id="set-provider-section">
+              <summary data-i18n="console.providers">配置云模型服务</summary>
+              <form id="set-provider-form" class="moss-console-settings__form">
+                <fieldset class="moss-console-settings__fields" id="set-provider-fields" disabled>
+                  <legend class="fui-sr-only" data-i18n="console.providers">配置云模型服务</legend>
+                  <fieldset class="moss-console-settings__choices">
+                    <legend class="fui-label" data-i18n="console.provider">模型服务</legend>
+                    <div id="set-provider-choices" class="moss-console-settings__options"></div>
+                  </fieldset>
+                  <p class="moss-card__meta" id="set-provider-availability" hidden></p>
+                  <div class="moss-set-grid-2">
+                    <label class="moss-field">
+                      <span class="fui-label" data-i18n="console.base_url">服务地址</span>
+                      <input class="fui-dialog__input" type="url" name="base_url" required autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="moss-field">
+                      <span class="fui-label" data-i18n="console.model_id">模型名称</span>
+                      <input class="fui-dialog__input" type="text" name="model" required autocomplete="off" spellcheck="false">
+                    </label>
+                  </div>
+                  <label class="moss-field">
+                    <span class="fui-label" data-i18n="console.api_key">API 密钥</span>
+                    <input class="fui-dialog__input" type="password" name="api_key" autocomplete="new-password" spellcheck="false"
+                      aria-describedby="set-provider-key-help">
+                  </label>
+                  <p class="moss-card__meta" id="set-provider-key-help" data-i18n="console.key_note">留空保留已保存的密钥。</p>
+                  <button class="fui-btn fui-btn--primary" type="submit" data-i18n="console.save_provider">保存服务配置</button>
+                </fieldset>
+                <p class="moss-card__meta moss-console-settings__status" id="set-provider-feedback" role="status" hidden></p>
+              </form>
+            </details>
+          </div>
+
+          <div class="moss-set-card" data-cs-only="true">
+            <details class="moss-console-settings" id="set-library-section">
+              <summary data-i18n="console.library">本地媒体库目录</summary>
+              <div class="moss-console-settings__form">
+                <div class="moss-row">
+                  <button class="fui-btn" id="set-library-scan-all" type="button" disabled data-i18n="console.scan_all">扫描全部目录</button>
+                  <button class="fui-btn" id="set-library-refresh" type="button" data-i18n="console.refresh">刷新状态</button>
+                </div>
+                <p class="moss-card__meta moss-console-settings__status" id="set-library-feedback" role="status" hidden></p>
+                <ul id="set-library-sources" class="moss-console-settings__sources"></ul>
+                <form id="set-library-form">
+                  <fieldset class="moss-console-settings__fields" id="set-library-fields" disabled>
+                    <legend class="fui-label" data-i18n="console.add_source">添加媒体目录</legend>
+                    <fieldset class="moss-console-settings__choices">
+                      <legend class="fui-sr-only" data-i18n="console.source_kind">目录类型</legend>
+                      <div class="moss-console-settings__options">
+                        <label class="moss-console-settings__option"><input type="radio" name="kind" value="local" checked><span data-i18n="console.local">本机磁盘</span></label>
+                        <label class="moss-console-settings__option"><input type="radio" name="kind" value="nas"><span data-i18n="console.nas">NAS 共享</span></label>
+                      </div>
+                    </fieldset>
+                    <div class="moss-set-grid-2">
+                      <label class="moss-field">
+                        <span class="fui-label" data-i18n="console.source_label">目录名称</span>
+                        <input class="fui-dialog__input" type="text" name="label" required autocomplete="off">
+                      </label>
+                      <label class="moss-field">
+                        <span class="fui-label" data-i18n="console.source_path">目录路径</span>
+                        <input class="fui-dialog__input" type="text" name="path" required autocomplete="off" spellcheck="false"
+                          placeholder="G:\音乐 或 \NAS\共享目录" data-i18n-placeholder="console.path_hint">
+                      </label>
+                    </div>
+                    <button class="fui-btn fui-btn--primary" type="submit" data-i18n="console.save_source">添加目录</button>
+                  </fieldset>
+                </form>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <!-- Pane 02: Voice Synthesis, Mic, Wake & Audio Waveforms -->
+        <section class="moss-settings-pane" data-set-pane="audio" role="tabpanel" hidden>
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="set.audio_synth_card">MOSS 语音播报与空间感（OmniVoice）</span>
+            <label class="moss-check"><input id="set-tts" type="checkbox" checked><span data-i18n="set.tts_enable">开启 MOSS 语音播报（OmniVoice）</span></label>
+            <label class="moss-check"><input id="set-voice-resident" type="checkbox" checked><span data-i18n="set.voice_resident">前台自动预热 MOSS 语音（首句 &lt; 2 秒，切本地模型/离页自动释放显存）</span></label>
+            <output id="set-voice-resident-status" class="moss-card__meta" role="status"></output>
+            <div class="moss-room-row">
+              <label class="moss-field" for="set-voice-room" style="flex:1">
+                <span class="fui-label" data-i18n="set.voice_room">语音空间感</span>
+                <div class="moss-row moss-row--tight">
+                  <input id="set-voice-room" type="range" min="0" max="150" step="5" value="100" style="flex:1">
+                  <output class="fui-num" id="set-voice-room-value" for="set-voice-room">100%</output>
+                </div>
+              </label>
+              <div class="moss-row moss-row--tight">
+                <button type="button" class="fui-btn" id="set-voice-room-reset" data-i18n="set.voice_room_reset">恢复 100%</button>
+                <button type="button" class="fui-btn fui-btn--primary" id="set-voice-room-preview" data-i18n="set.voice_room_preview">试听</button>
+              </div>
+            </div>
+            <output id="set-voice-room-status" class="moss-card__meta" role="status"></output>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="set.audio_mic_card">麦克风输入与本地唤醒</span>
+            <span class="fui-sr-only" id="set-mic-label" data-i18n="set.mic_device">麦克风输入设备</span>
+            <div class="moss-choice-list" id="set-mic-list" role="radiogroup" aria-labelledby="set-mic-label"></div>
+            <p class="moss-card__meta" id="set-mic-status" role="status"></p>
+            <div class="moss-set-grid-2">
+              <label class="moss-check"><input id="set-wake" type="checkbox"><span data-i18n="set.wake_listen">开启本地语音唤醒（“你好，莫斯”）</span></label>
+              <label class="moss-check"><input id="set-barge" type="checkbox"><span data-i18n="set.wake_interrupt">播报期间允许语音打断</span></label>
+            </div>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="set.audio_wave_card">主视口与通道波形样式</span>
+            <span class="moss-card__meta" id="set-audio-style-label" data-i18n="set.audio_style">主视口波形样式</span>
+            <div class="moss-seg-group moss-seg-group--3" id="set-stage-audio-group" role="radiogroup" aria-labelledby="set-audio-style-label">
+              <button class="moss-seg-btn" type="button" role="radio" data-stage-audio="orbit" aria-checked="false" data-i18n="set.audio_orbit">流光正弦</button>
+              <button class="moss-seg-btn" type="button" role="radio" data-stage-audio="spectrum" aria-checked="true" data-i18n="set.audio_spectrum">高密线谱</button>
+              <button class="moss-seg-btn" type="button" role="radio" data-stage-audio="bars" aria-checked="false" data-i18n="set.audio_bars">分段柱谱</button>
+            </div>
+            <span class="moss-card__meta" id="set-channel-audio-label" data-i18n="set.channel_audio_style">通道与播放器波形（播放器 / MOSS / 麦克风）</span>
+            <div class="moss-seg-group moss-seg-group--3" id="set-channel-audio-group" role="radiogroup" aria-labelledby="set-channel-audio-label">
+              <button class="moss-seg-btn" type="button" role="radio" data-channel-audio="fui" aria-checked="false" data-i18n="set.ch_wave_fui">镜像包络</button>
+              <button class="moss-seg-btn" type="button" role="radio" data-channel-audio="bars" aria-checked="true" data-i18n="set.ch_wave_bars">分段柱谱</button>
+              <button class="moss-seg-btn" type="button" role="radio" data-channel-audio="orbit" aria-checked="false" data-i18n="set.ch_wave_orbit">流光正弦</button>
+            </div>
+          </div>
+
+          <div class="moss-set-card" data-cs-only="true">
+            <details class="moss-console-settings" id="set-online-music-section">
+              <summary data-i18n="console.online_music">在线开源曲库与私有 Navidrome（融合接入）</summary>
+              <form class="moss-console-settings__form" id="set-online-music-form">
+                <p class="moss-card__meta" data-i18n="console.online_music_desc">本地/NAS 优先级最高；仅在显式要求在线搜歌/听电台，或本机曲库无匹配/离线时才自动回落公网开放曲库与歌词引擎。</p>
+                <fieldset class="moss-console-settings__fields" id="set-online-music-fields" disabled>
+                  <div class="moss-set-grid-2">
+                    <label class="moss-check"><input type="checkbox" id="set-om-enabled" checked><span data-i18n="console.om_enabled">启用融合在线曲库</span></label>
+                    <label class="moss-check"><input type="checkbox" id="set-om-lrclib" checked><span data-i18n="console.om_lrclib">自动匹配 LRCLIB 同步歌词</span></label>
+                    <label class="moss-check"><input type="checkbox" id="set-om-empty" checked><span data-i18n="console.om_fallback_empty">本地无结果时自动联网搜歌</span></label>
+                    <label class="moss-check"><input type="checkbox" id="set-om-offline" checked><span data-i18n="console.om_fallback_offline">本地盘离线时自动联网续听</span></label>
+                  </div>
+                  <div class="moss-set-grid-2">
+                    <label class="moss-check"><input type="checkbox" id="set-om-audius" checked><span data-i18n="console.om_audius">Audius 开放热榜与独立曲库（免密钥）</span></label>
+                    <label class="moss-check"><input type="checkbox" id="set-om-archive" checked><span data-i18n="console.om_archive">Internet Archive 古典/国乐与现场档案（免密钥）</span></label>
+                    <label class="moss-check"><input type="checkbox" id="set-om-radio" checked><span data-i18n="console.om_radio">Radio Browser 华语/全球广播电台（免密钥）</span></label>
+                    <label class="moss-check"><input type="checkbox" id="set-om-jamendo"><span data-i18n="console.om_jamendo">Jamendo CC 曲库（可选 Client ID）</span></label>
+                  </div>
+                  <label class="moss-field">
+                    <span class="fui-label" data-i18n="console.om_jamendo_id">Jamendo Client ID（可选，留空保留已加密凭据）</span>
+                    <input class="fui-dialog__input" id="set-om-jamendo-id" type="password" autocomplete="new-password" spellcheck="false" placeholder="留空保留已加密凭据" data-i18n-placeholder="console.om_secret_keep">
+                  </label>
+                  <label class="moss-check"><input type="checkbox" id="set-om-nav-enabled"><span data-i18n="console.om_nav_enabled">优先检索自建 Navidrome / OpenSubsonic 私有曲库</span></label>
+                  <div class="moss-set-grid-2">
+                    <label class="moss-field">
+                      <span class="fui-label" data-i18n="console.om_nav_url">Navidrome 服务地址</span>
+                      <input class="fui-dialog__input" id="set-om-nav-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.x.x:4533">
+                    </label>
+                    <label class="moss-field">
+                      <span class="fui-label" data-i18n="console.om_nav_user">Navidrome 用户名</span>
+                      <input class="fui-dialog__input" id="set-om-nav-user" type="text" autocomplete="off" spellcheck="false">
+                    </label>
+                  </div>
+                  <label class="moss-field">
+                    <span class="fui-label" data-i18n="console.om_nav_pass">Navidrome 密码（DPAPI 加密保存，留空保留原密码）</span>
+                    <input class="fui-dialog__input" id="set-om-nav-pass" type="password" autocomplete="new-password" spellcheck="false" placeholder="留空保留已加密凭据" data-i18n-placeholder="console.om_secret_keep">
+                  </label>
+                  <div class="moss-row">
+                    <button class="fui-btn fui-btn--primary" type="submit" data-i18n="console.om_save">保存在线曲库配置</button>
+                    <button class="fui-btn" id="set-om-ping-nav" type="button" data-i18n="console.om_ping_nav">测试 Navidrome</button>
+                    <button class="fui-btn" id="set-om-ping-pub" type="button" data-i18n="console.om_ping_pub">测试开放曲库</button>
+                  </div>
+                </fieldset>
+                <p class="moss-card__meta moss-console-settings__status" id="set-online-music-feedback" role="status" hidden></p>
+              </form>
+            </details>
+          </div>
+        </section>
+
+        <!-- Pane 03: H50 OLED Dot-Matrix Screen, 3D Stage & Scenario Controls -->
+        <section class="moss-settings-pane" data-set-pane="display" role="tabpanel" hidden>
+          <div class="moss-set-card">
+            <span class="fui-label" id="set-oled-label" data-i18n="set.oled_section">550W 机身 H50 点阵小屏配色</span>
+            <p class="moss-card__meta" data-i18n="set.oled_desc">实时同步三维 550W 机箱 H50 物理点阵屏与左侧笨笨伴随 OLED 面板的发光色系。</p>
+            <div class="moss-oled-grid" id="set-oled-grid" role="radiogroup" aria-labelledby="set-oled-label">
+              <button class="moss-oled-card" type="button" role="radio" data-oled-preset="mono-white" aria-checked="true">
+                <span class="moss-oled-swatch" data-swatch="mono-white" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span class="moss-oled-card__name" data-i18n="log.oled_mono_white">黑白点阵</span>
+                <span class="moss-oled-card__code fui-num">MONO-W</span>
+              </button>
+              <button class="moss-oled-card" type="button" role="radio" data-oled-preset="ssd-dual" aria-checked="false">
+                <span class="moss-oled-swatch" data-swatch="ssd-dual" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span class="moss-oled-card__name" data-i18n="log.oled_ssd_dual">黄蓝双色</span>
+                <span class="moss-oled-card__code fui-num">SSD1306</span>
+              </button>
+              <button class="moss-oled-card" type="button" role="radio" data-oled-preset="ice-cyan" aria-checked="false">
+                <span class="moss-oled-swatch" data-swatch="ice-cyan" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span class="moss-oled-card__name" data-i18n="log.oled_ice_cyan">冰蓝点阵</span>
+                <span class="moss-oled-card__code fui-num">CYAN-03</span>
+              </button>
+              <button class="moss-oled-card" type="button" role="radio" data-oled-preset="amber" aria-checked="false">
+                <span class="moss-oled-swatch" data-swatch="amber" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span class="moss-oled-card__name" data-i18n="log.oled_amber">琥珀点阵</span>
+                <span class="moss-oled-card__code fui-num">VFD-AMB</span>
+              </button>
+              <button class="moss-oled-card" type="button" role="radio" data-oled-preset="phosphor-green" aria-checked="false">
+                <span class="moss-oled-swatch" data-swatch="phosphor-green" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span class="moss-oled-card__name" data-i18n="log.oled_phosphor_green">磷绿点阵</span>
+                <span class="moss-oled-card__code fui-num">PHOS-G</span>
+              </button>
+              <button class="moss-oled-card" type="button" role="radio" data-oled-preset="moss-red" aria-checked="false">
+                <span class="moss-oled-swatch" data-swatch="moss-red" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                <span class="moss-oled-card__name" data-i18n="log.oled_moss_red">550W红点阵</span>
+                <span class="moss-oled-card__code fui-num">550W-R</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="set.stage_section">显示与 550W 三维舞台</span>
+            <label class="moss-check"><input id="set-scene-3d" type="checkbox" checked><span data-i18n="set.scene_3d">启用 550W 三维 WebGL 机身</span></label>
+            <label class="moss-check"><input id="set-gesture" type="checkbox"><span data-i18n="set.gesture_cam">开启手势切换机位（本机摄像头）</span></label>
+            <output id="set-gesture-status" class="moss-card__meta" role="status" data-i18n="gesture.idle">开启后用本机摄像头识别手势。</output>
+            <p class="moss-card__meta" data-i18n="gesture.legend">☝下机位 · ✌上机位 · 🤟滑轨 · 🖐姿态 · 🤏缩放 · ✊复位 (Alt+G)</p>
+            <div class="moss-row moss-row--tight">
+              <button class="fui-btn" id="set-replay-opening" type="button" data-i18n="set.replay_opening">重播 550W 开场动画</button>
+              <button class="fui-btn" id="set-open-status" type="button" data-i18n="set.open_status">打开独立状态小窗</button>
+            </div>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="set.sim_section">场景与演练控制</span>
+            <label class="moss-check"><input id="set-sim-mode" type="checkbox"><span data-i18n="set.sim_mode">强制使用模拟演练数据</span></label>
+          </div>
+        </section>
+
+        <!-- Pane 04: City & Dot-Matrix World Map Location Override -->
+        <section class="moss-settings-pane" data-set-pane="location" role="tabpanel" hidden>
+          <div class="moss-set-card" id="set-city-section">
+            <span class="fui-label" data-i18n="city.section">当前城市与全球点阵坐标（优先于自动定位）</span>
+            <div class="moss-city-current">
+              <div class="moss-city-current__main">
+                <span class="moss-city-current__name" id="set-city-current-name" data-i18n="city.auto_current">自动定位模式</span>
+                <span class="fui-badge" id="set-city-priority-badge" data-state="info" data-i18n="city.auto_badge">自动定位</span>
+              </div>
+              <span class="fui-num moss-card__meta" id="set-city-current-meta" data-i18n="city.auto_hint">当前按自动定位或默认参考点获取气象；选定城市后将锁定并优先于自动定位经纬度。</span>
+            </div>
+
+            <div class="moss-city-map-wrap">
+              <div class="moss-city-map-bar">
+                <div class="moss-row moss-row--tight" role="group" aria-label="点阵地图视角" data-i18n-label="city.map_view">
+                  <button class="fui-btn" id="set-city-view-china" type="button" aria-pressed="true" data-i18n="city.view_china">中国全境</button>
+                  <button class="fui-btn" id="set-city-view-global" type="button" aria-pressed="false" data-i18n="city.view_global">全球点阵</button>
+                </div>
+                <span class="fui-num moss-city-hover" id="set-city-hover" data-i18n="city.map_hint">点击点阵地图直接选定城市</span>
+              </div>
+              <canvas class="moss-city-map-canvas" id="set-city-map" role="application" aria-label="点阵世界地图城市选择器" data-i18n-label="city.map_aria"></canvas>
+            </div>
+
+            <label class="moss-field">
+              <span class="fui-label" data-i18n="city.search_label">快速搜索城市 / 省份 / 国际都市</span>
+              <input class="fui-dialog__input" id="set-city-search" type="search" maxlength="32" placeholder="输入城市、省份或英文名（如 成都、海淀、Tokyo）…" data-i18n-placeholder="city.search_placeholder">
+            </label>
+            <div class="moss-city-results" id="set-city-results" hidden></div>
+
+            <div class="moss-city-picker-tabs" role="tablist" aria-label="区域范围">
+              <button class="moss-seg-btn" id="set-city-scope-cn" type="button" role="tab" aria-selected="true" data-i18n="city.group_cn">中国 34 个省级行政区</button>
+              <button class="moss-seg-btn" id="set-city-scope-intl" type="button" role="tab" aria-selected="false" data-i18n="city.group_intl">国际主要城市</button>
+            </div>
+            <div class="moss-city-matrix-block">
+              <span class="fui-label" data-i18n="city.region_label">省 / 自治区 / 地区</span>
+              <div class="moss-choice-grid moss-choice-grid--regions" id="set-city-region-grid" role="radiogroup" aria-label="省 / 自治区 / 地区"></div>
+            </div>
+            <div class="moss-city-matrix-block">
+              <span class="fui-label" id="set-city-list-heading" data-i18n="city.city_label">城市 / 区县</span>
+              <div class="moss-choice-grid moss-choice-grid--cities" id="set-city-grid" role="radiogroup" aria-label="城市 / 区县"></div>
+            </div>
+
+            <div class="moss-row moss-row--tight">
+              <button class="fui-btn" id="set-city-auto-btn" type="button" disabled data-i18n="city.restore_auto">解除锁定 · 恢复自动定位</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Pane 05: BSC · IQC Personnel Access Badge -->
+        <section class="moss-settings-pane" data-set-pane="badge" role="tabpanel" hidden>
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="set.badge_section">人员工牌与身份凭证（BSC · IQC）</span>
+            <div class="moss-badge-preview-row">
+              <div class="moss-badge-mini-preview" id="set-badge-preview"></div>
+              <button class="moss-badge-photo-preview" id="set-badge-photo-preview" type="button" data-i18n-label="set.badge_photo_upload" data-i18n-title="set.badge_photo_upload" aria-label="上传一寸证件照（25×35mm）"></button>
+            </div>
+            <input type="file" id="set-badge-photo-file" accept="image/*" hidden>
+            <div class="moss-row moss-row--tight">
+              <button class="fui-btn" id="set-badge-photo-upload" type="button" data-i18n="set.badge_photo_upload">上传一寸证件照</button>
+              <button class="fui-btn" id="set-badge-photo-clear" type="button" disabled data-i18n="set.badge_photo_clear">清除照片</button>
+            </div>
+            <div class="moss-matting-bar">
+              <span class="fui-badge" id="set-badge-matting-status" data-state="data" data-i18n="badge.matting_ready">微模型就绪 · MediaPipe WASM</span>
+              <div class="moss-row moss-row--tight">
+                <label class="moss-check moss-check--inline"><input id="set-badge-photo-cutout" type="checkbox" checked><span data-i18n="set.badge_photo_cutout">微模型自动抠图</span></label>
+                <label class="moss-check moss-check--inline"><input id="set-badge-photo-tone" type="checkbox"><span data-i18n="set.badge_photo_tone">档案冷调滤镜</span></label>
+              </div>
+              <label class="moss-matting-slider">
+                <span class="fui-label" data-i18n="set.badge_photo_sens">抠图边缘紧度</span>
+                <input id="set-badge-photo-sens" type="range" min="15" max="85" value="50">
+                <span class="fui-num" id="set-badge-sens-val">50</span>
+              </label>
+            </div>
+            <div class="moss-badge-form-grid">
+              <label class="moss-field"><span class="fui-label" data-i18n="set.badge_name">姓名</span><input class="fui-dialog__input" id="set-badge-name" type="text" maxlength="16"></label>
+              <label class="moss-field"><span class="fui-label" data-i18n="set.badge_latin">英文 / 拼音码</span><input class="fui-dialog__input" id="set-badge-latin" type="text" maxlength="20"></label>
+              <label class="moss-field"><span class="fui-label" data-i18n="set.badge_id">人员编号</span><input class="fui-dialog__input" id="set-badge-id" type="text" maxlength="16"></label>
+              <label class="moss-field"><span class="fui-label" data-i18n="set.badge_serial">流水序列号</span><input class="fui-dialog__input" id="set-badge-serial" type="text" maxlength="16"></label>
+              <label class="moss-field"><span class="fui-label" data-i18n="set.badge_clearance">密级标识</span><input class="fui-dialog__input" id="set-badge-clearance" type="text" maxlength="4"></label>
+              <label class="moss-field"><span class="fui-label" data-i18n="set.badge_role">职务 / 职称</span><input class="fui-dialog__input" id="set-badge-role" type="text" maxlength="24"></label>
+            </div>
+            <label class="moss-field"><span class="fui-label" data-i18n="set.badge_dept">所属实验室 / 部门</span><input class="fui-dialog__input" id="set-badge-dept" type="text" maxlength="32"></label>
+            <label class="moss-field"><span class="fui-label" data-i18n="set.badge_barcode">自定义条形码内容（留空则按编号自动生成）</span><input class="fui-dialog__input" id="set-badge-barcode" type="text" maxlength="40" placeholder="BSC-IQC001 222179 MAZHAO"></label>
+            <label class="moss-field"><span class="fui-label" data-i18n="set.badge_greeting">自定义 MOSS 欢迎播报（支持 {name} {role} {id} {clearance}）</span><input class="fui-dialog__input" id="set-badge-greeting" type="text" maxlength="160" placeholder="身份核验通过。{name}{role}，编号 {id}，{clearance} 级操作权限已确认。550W 在线，MOSS 欢迎您接入。"></label>
+            <div class="moss-set-grid-2">
+              <label class="moss-check"><input id="set-badge-auto" type="checkbox" checked><span data-i18n="set.badge_auto">550W 开场动画结束后自动弹出工牌核验</span></label>
+              <label class="moss-check"><input id="set-badge-speak" type="checkbox" checked><span data-i18n="set.badge_speak">确认身份后自动语音播报 MOSS 欢迎语</span></label>
+            </div>
+            <div class="moss-row moss-row--tight">
+              <button class="fui-btn fui-btn--primary" id="set-badge-open" type="button" data-i18n="set.badge_open">查看双面工牌</button>
+              <button class="fui-btn" id="set-badge-speak-btn" type="button" data-i18n="set.badge_speak_btn">试听播报</button>
+              <button class="fui-btn" id="set-badge-reset" type="button" data-i18n="set.badge_reset">恢复马兆默认</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Pane 06: CS-Only Authorization Code & Operator User Management -->
+        <section class="moss-settings-pane" data-set-pane="auth" data-cs-only="true" role="tabpanel" hidden>
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="auth.policy_title">550W 授权码门禁策略（4 位字母/数字 · 支持多身份专属档案）</span>
+            <label class="moss-check"><input id="set-auth-enabled" type="checkbox" checked><span data-i18n="auth.enable_gate">启用开场动画后 4 位身份授权码验证</span></label>
+            <div class="moss-row moss-row--tight">
+              <select class="fui-dialog__input" id="set-auth-scope" style="flex: 1 1 260px">
+                <option value="lan" data-i18n="auth.scope_lan">仅局域网访问验证（本机自动 CS）</option>
+                <option value="all" data-i18n="auth.scope_all">所有设备均需输入 4 位授权码</option>
+              </select>
+              <button class="fui-btn fui-btn--primary" id="set-auth-save" type="button" data-i18n="auth.save_policy">保存策略</button>
+              <button class="fui-btn" id="set-auth-switch" type="button" data-i18n="auth.switch_btn">切换当前授权码</button>
+            </div>
+            <p class="moss-card__meta" id="set-auth-feedback" role="status" hidden></p>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="auth.users_title">已登记 4 位授权码与个人档案</span>
+            <form class="moss-row moss-row--tight" id="set-auth-user-form">
+              <input class="fui-dialog__input fui-num" id="set-auth-user-code" type="text" maxlength="4" placeholder="4位授权码" data-i18n-placeholder="auth.code_ph" style="max-width: 110px; text-transform: uppercase">
+              <input class="fui-dialog__input" id="set-auth-user-label" type="text" maxlength="40" placeholder="操作员备注姓名（选填）" data-i18n-placeholder="auth.label_ph" style="flex: 1 1 140px">
+              <button class="fui-btn fui-btn--primary" type="submit" data-i18n="auth.add_user">登记 / 更新</button>
+            </form>
+            <ul class="moss-modal-list" id="set-auth-users-list"></ul>
+          </div>
+        </section>
+
+        <!-- Pane 07: Soul Constitution, Graduated Beliefs & Structured User Persona Archive -->
+        <section class="moss-settings-pane" data-set-pane="soul" role="tabpanel" hidden>
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="soul.archive_title">550W 灵魂准则与分层记忆档案（SQLite 单一真相源）</span>
+            <p class="moss-card__meta" data-i18n="soul.archive_hint">底层核心准则、多轮纠错毕业的协作信念、用户画像与固定长期记忆统一受单一真相源保护，支持脱敏蒸馏与回溯指针。</p>
+            <div class="moss-row moss-row--tight">
+              <button class="fui-btn fui-btn--primary" id="set-soul-distill-btn" type="button" data-i18n="soul.distill_btn" data-cs-only="true">立即蒸馏整理</button>
+              <button class="fui-btn" id="set-soul-export-btn" type="button" data-i18n="soul.export_btn">预览 / 导出 .md 档案</button>
+              <button class="fui-btn" id="set-soul-download-btn" type="button" hidden data-i18n="soul.download_btn">下载 .md 文件</button>
+            </div>
+            <p class="moss-card__meta fui-num" id="set-soul-stats" role="status"></p>
+            <p class="moss-card__meta" id="set-soul-status" role="status" hidden></p>
+            <pre class="moss-brain-pre" id="set-soul-export-preview" hidden></pre>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="soul.beliefs_title">底层宪法原则与演进信念（SOUL / BELIEFS）</span>
+            <form class="moss-row moss-row--tight" id="set-soul-belief-form" data-cs-only="true">
+              <select class="fui-dialog__input" id="set-soul-belief-scope" style="flex: 0 0 auto">
+                <option value="habit">habit</option>
+                <option value="tone">tone</option>
+                <option value="routing">routing</option>
+                <option value="preference">preference</option>
+              </select>
+              <input class="fui-dialog__input" id="set-soul-belief-input" type="text" maxlength="200" placeholder="新增长期协作信念或对话习惯原则…" data-i18n-placeholder="soul.belief_ph" style="flex: 1 1 200px">
+              <button class="fui-btn fui-btn--primary" type="submit" data-i18n="soul.add_belief">写入信念</button>
+            </form>
+            <ul class="moss-modal-list" id="set-soul-beliefs-list"></ul>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" data-i18n="soul.profile_title">结构化用户画像档案（USER.md · 自动蒸馏或手动维护）</span>
+            <form class="moss-row moss-row--tight" id="set-soul-trait-form" data-cs-only="true">
+              <select class="fui-dialog__input" id="set-soul-trait-cat" style="flex: 0 0 auto">
+                <option value="preference">preference</option>
+                <option value="identity">identity</option>
+                <option value="work">work</option>
+                <option value="location">location</option>
+                <option value="habit">habit</option>
+                <option value="goal">goal</option>
+              </select>
+              <input class="fui-dialog__input" id="set-soul-trait-key" type="text" maxlength="48" placeholder="属性键（如 work_city）" data-i18n-placeholder="soul.trait_key_ph" style="flex: 0 1 140px">
+              <input class="fui-dialog__input" id="set-soul-trait-val" type="text" maxlength="200" placeholder="画像内容（敏感凭据自动脱敏）…" data-i18n-placeholder="soul.trait_val_ph" style="flex: 1 1 180px">
+              <button class="fui-btn fui-btn--primary" type="submit" data-i18n="soul.add_trait">保存画像</button>
+            </form>
+            <ul class="moss-modal-list" id="set-soul-profile-list"></ul>
+          </div>
+
+          <div class="moss-set-card">
+            <span class="fui-label" id="set-soul-pinned-title">固定长期记忆条款</span>
+            <p class="moss-card__meta" data-i18n="soul.pinned_note">显式“记住…”或工具写入的精准事实单独维护版本与边界，不与自动蒸馏画像互相挤占槽位，并与 SAG 知识库严格 1:1 同步。</p>
+            <div><button class="fui-btn" id="set-soul-open-memory-btn" type="button" data-i18n="soul.open_memories_btn">管理固定记忆条款</button></div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <footer class="fui-dialog__actions"><button class="fui-btn fui-btn--primary" type="button" data-dialog-close data-i18n="modal.close">关闭</button></footer>
+  </dialog>
+
+  <!-- Post-Opening 4-Char Authorization Code Gate Dialog -->
+  <dialog class="fui-dialog moss-auth-gate" id="dlg-auth-gate" aria-labelledby="dlg-auth-gate-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge fui-badge--solid" data-state="warn">AUTH-550W</span>
+      <h2 class="fui-dialog__title" id="dlg-auth-gate-title" data-i18n="auth.gate_title">550W · 4 位身份授权码核验</h2>
+      <span class="fui-dialog__ref fui-num">AUTH-04</span>
+    </header>
+    <form class="fui-dialog__body moss-auth-gate__body" id="auth-gate-form">
+      <p class="moss-card__meta" id="auth-gate-hint" data-i18n="auth.gate_hint">请输入 4 位字母/数字授权码（不区分大小写）。系统将依据授权码核验身份并加载专属个性化配置。</p>
+      <input class="fui-dialog__input fui-num moss-auth-gate__input" id="auth-gate-input" type="text" maxlength="4" autocomplete="off" placeholder="XXXX">
+      <p class="moss-chat-error" id="auth-gate-err" role="alert" hidden></p>
+      <div class="fui-dialog__actions">
+        <button class="fui-btn fui-btn--primary" type="submit" data-i18n="auth.gate_submit">核验身份 · 接入 550W</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- BSC · IQC Personnel Access Badge Authentication Gate Dialog -->
+  <dialog class="fui-dialog moss-badge-dialog" id="dlg-badge" aria-labelledby="dlg-badge-title">
+    <header class="fui-dialog__head">
+      <span class="fui-badge fui-badge--solid" data-state="intel">AUTH-ID</span>
+      <h2 class="fui-dialog__title" id="dlg-badge-title" data-i18n="badge.title">人员工牌与权限核验</h2>
+      <span class="fui-dialog__ref fui-num" id="badge-meta-readout">CODE-128B</span>
+      <button class="fui-btn fui-btn--icon" type="button" data-dialog-close aria-label="关闭" data-i18n-label="modal.close">
+        <svg class="fui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+      </button>
+    </header>
+    <div class="fui-dialog__body moss-badge-dialog__body">
+      <div class="moss-id-stage" id="badge-stage" data-view="dual"></div>
+      <div class="moss-badge-greeting">
+        <span class="fui-badge" data-state="ok">MOSS VOICE</span>
+        <p class="moss-badge-greeting__text" id="badge-greeting-line"></p>
+      </div>
+    </div>
+    <footer class="fui-dialog__actions moss-badge-dialog__actions">
+      <div class="moss-row moss-row--tight">
+        <button class="fui-btn" id="badge-dual" type="button" aria-pressed="true" data-i18n="badge.single_view">单面放大</button>
+        <button class="fui-btn" id="badge-flip" type="button" data-i18n="badge.show_back">翻转背面</button>
+        <button class="fui-btn" id="badge-speak-test" type="button" data-i18n="badge.speak_test">试听语音</button>
+        <button class="fui-btn" id="badge-edit" type="button" data-i18n="badge.edit">修改工牌</button>
+      </div>
+      <button class="fui-btn fui-btn--primary" id="badge-verify" type="button" autofocus data-i18n="badge.verify">确认身份 · 进入控制台</button>
+    </footer>
+  </dialog>
+
+  <!-- Ctrl+K Global Tactical Command Palette -->
+  <dialog class="fui-dialog moss-cmdk" id="dlg-cmdk" aria-labelledby="dlg-cmdk-title">
+    <header class="fui-dialog__head">
+      <div class="moss-dialog-title">
+        <span class="fui-badge" data-state="intel">⌘K</span>
+        <h2 id="dlg-cmdk-title" data-i18n="cmdk.title">全局战术命令面板</h2>
+      </div>
+      <button class="fui-btn" type="button" data-dialog-close aria-label="关闭">×</button>
+    </header>
+    <div class="fui-dialog__body moss-cmdk__body">
+      <input class="fui-dialog__input" id="cmdk-input" type="search" autocomplete="off" placeholder="输入指令、模型、性格、机位、布局或自定义技能…" data-i18n-placeholder="cmdk.placeholder">
+      <ul class="moss-cmdk__list" id="cmdk-list" role="listbox"></ul>
+      <p class="moss-card__meta" data-i18n="cmdk.hint">↑↓ 选择 · Enter 执行 · Esc 关闭</p>
+    </div>
+  </dialog>
+
+  <script type="module" src="/js/app.js"></script>
+  <script type="module" src="/js/console-settings.js"></script>
+</body>
+</html>

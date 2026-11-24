@@ -1,0 +1,553 @@
+[
+  {
+    "term": "MOSS",
+    "spoken": "Moss"
+  },
+  {
+    "term": "550W",
+    "spoken": "五五零 W"
+  },
+  {
+    "term": "MOSS",
+    "spoken": "MOSS",
+    "model": "index"
+  },
+  {
+    "term": "MOSS",
+    "spoken": "moss",
+    "model": "omnivoice"
+  },
+  {
+    "term": "MOSS",
+    "spoken": "/mɔs/",
+    "model": "moss8b"
+  },
+  {
+    "term": "DeepSeek Harness",
+    "spoken": "DeepSeek Harness",
+    "model": "omnivoice"
+  },
+  {
+    "term": "DeepSeek",
+    "spoken": "Deep Seek",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Codex Desktop",
+    "spoken": "Codex Desktop",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Codex",
+    "spoken": "Codex",
+    "model": "omnivoice"
+  },
+  {
+    "term": "ChatGPT",
+    "spoken": "ChatGPT",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Claude Code",
+    "spoken": "Claude Code",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Claude",
+    "spoken": "Claude",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Kimi",
+    "spoken": "Kimi",
+    "model": "omnivoice"
+  },
+  {
+    "term": "OpenAI",
+    "spoken": "Open A I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "OpenClaw",
+    "spoken": "Open Claw",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Ollama",
+    "spoken": "Oh Llama",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Qwen",
+    "spoken": "千问",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Qwen3",
+    "spoken": "千问三",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Qwen3-TTS",
+    "spoken": "千问三 T T S",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Gemini",
+    "spoken": "Gemini",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Grok",
+    "spoken": "Grok",
+    "model": "omnivoice"
+  },
+  {
+    "term": "LM Studio",
+    "spoken": "L M Studio",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GitHub",
+    "spoken": "Git Hub",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Hugging Face",
+    "spoken": "Hugging Face",
+    "model": "omnivoice"
+  },
+  {
+    "term": "OmniVoice",
+    "spoken": "Omni Voice",
+    "model": "omnivoice"
+  },
+  {
+    "term": "VoxCPM",
+    "spoken": "Vox C P M",
+    "model": "omnivoice"
+  },
+  {
+    "term": "VoxCPM2",
+    "spoken": "Vox C P M 二",
+    "model": "omnivoice"
+  },
+  {
+    "term": "IndexTTS",
+    "spoken": "Index T T S",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GPT-SoVITS",
+    "spoken": "G P T So Vits",
+    "model": "omnivoice"
+  },
+  {
+    "term": "SenseVoice",
+    "spoken": "Sense Voice",
+    "model": "omnivoice"
+  },
+  {
+    "term": "FunASR",
+    "spoken": "Fun A S R",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Paraformer",
+    "spoken": "Para Former",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Jev Chat Jarvis",
+    "spoken": "Jev Chat Jarvis",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Vulkan",
+    "spoken": "Vulcan",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CUDA",
+    "spoken": "Cooda",
+    "model": "omnivoice"
+  },
+  {
+    "term": "ONNX",
+    "spoken": "Onyx",
+    "model": "omnivoice"
+  },
+  {
+    "term": "JSON",
+    "spoken": "Jason",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RAG",
+    "spoken": "rag",
+    "model": "omnivoice"
+  },
+  {
+    "term": "LoRA",
+    "spoken": "Laura",
+    "model": "omnivoice"
+  },
+  {
+    "term": "vLLM",
+    "spoken": "V L L M",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GPT",
+    "spoken": "G P T",
+    "model": "omnivoice"
+  },
+  {
+    "term": "MCP",
+    "spoken": "M C P",
+    "model": "omnivoice"
+  },
+  {
+    "term": "API",
+    "spoken": "A P I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "SDK",
+    "spoken": "S D K",
+    "model": "omnivoice"
+  },
+  {
+    "term": "LLM",
+    "spoken": "L L M",
+    "model": "omnivoice"
+  },
+  {
+    "term": "VLM",
+    "spoken": "V L M",
+    "model": "omnivoice"
+  },
+  {
+    "term": "AGI",
+    "spoken": "A G I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "AI",
+    "spoken": "A I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CLI",
+    "spoken": "C L I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "MoE",
+    "spoken": "M O E",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GGUF",
+    "spoken": "G G U F",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GGML",
+    "spoken": "G G M L",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GLM",
+    "spoken": "G L M",
+    "model": "omnivoice"
+  },
+  {
+    "term": "OCR",
+    "spoken": "O C R",
+    "model": "omnivoice"
+  },
+  {
+    "term": "TTS",
+    "spoken": "T T S",
+    "model": "omnivoice"
+  },
+  {
+    "term": "ASR",
+    "spoken": "A S R",
+    "model": "omnivoice"
+  },
+  {
+    "term": "STT",
+    "spoken": "S T T",
+    "model": "omnivoice"
+  },
+  {
+    "term": "VAD",
+    "spoken": "V A D",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CPU",
+    "spoken": "C P U",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GPU",
+    "spoken": "G P U",
+    "model": "omnivoice"
+  },
+  {
+    "term": "VRAM",
+    "spoken": "V RAM",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RLHF",
+    "spoken": "R L H F",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RLVR",
+    "spoken": "R L V R",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RPA",
+    "spoken": "R P A",
+    "model": "omnivoice"
+  },
+  {
+    "term": "FUI",
+    "spoken": "F U I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "UEG",
+    "spoken": "U E G",
+    "model": "omnivoice"
+  },
+  {
+    "term": "IQC",
+    "spoken": "I Q C",
+    "model": "omnivoice"
+  },
+  {
+    "term": "BSC",
+    "spoken": "B S C",
+    "model": "omnivoice"
+  },
+  {
+    "term": "MMU",
+    "spoken": "M M U",
+    "model": "omnivoice"
+  },
+  {
+    "term": "550A",
+    "spoken": "五五零 A",
+    "model": "omnivoice"
+  },
+  {
+    "term": "550C",
+    "spoken": "五五零 C",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Z9",
+    "spoken": "Z 九",
+    "model": "omnivoice"
+  },
+  {
+    "term": "周喆直",
+    "spoken": "周哲直",
+    "model": "omnivoice"
+  },
+  {
+    "term": "郝晓晞",
+    "spoken": "郝晓希",
+    "model": "omnivoice"
+  },
+  {
+    "term": "郝晓曦",
+    "spoken": "郝晓希",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Qwen4-Max",
+    "spoken": "千问四 Max",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Qwen4",
+    "spoken": "千问四",
+    "model": "omnivoice"
+  },
+  {
+    "term": "OLED",
+    "spoken": "O L E D",
+    "model": "omnivoice"
+  },
+  {
+    "term": "H50",
+    "spoken": "H 五零",
+    "model": "omnivoice"
+  },
+  {
+    "term": "SQLite",
+    "spoken": "S Q Lite",
+    "model": "omnivoice"
+  },
+  {
+    "term": "PDF",
+    "spoken": "P D F",
+    "model": "omnivoice"
+  },
+  {
+    "term": "URL",
+    "spoken": "U R L",
+    "model": "omnivoice"
+  },
+  {
+    "term": "Wi-Fi",
+    "spoken": "Wi Fi",
+    "model": "omnivoice"
+  },
+  {
+    "term": "WiFi",
+    "spoken": "Wi Fi",
+    "model": "omnivoice"
+  },
+  {
+    "term": "SSE",
+    "spoken": "S S E",
+    "model": "omnivoice"
+  },
+  {
+    "term": "NAS",
+    "spoken": "N A S",
+    "model": "omnivoice"
+  },
+  {
+    "term": "HDR",
+    "spoken": "H D R",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RAM",
+    "spoken": "RAM",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RTX",
+    "spoken": "R T X",
+    "model": "omnivoice"
+  },
+  {
+    "term": "SAG",
+    "spoken": "S A G",
+    "model": "omnivoice"
+  },
+  {
+    "term": "RSI",
+    "spoken": "R S I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "SSRF",
+    "spoken": "S S R F",
+    "model": "omnivoice"
+  },
+  {
+    "term": "APEC",
+    "spoken": "A P E C",
+    "model": "omnivoice"
+  },
+  {
+    "term": "App",
+    "spoken": "A P P",
+    "model": "omnivoice"
+  },
+  {
+    "term": "GDP",
+    "spoken": "G D P",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CPI",
+    "spoken": "C P I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CEO",
+    "spoken": "C E O",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CFO",
+    "spoken": "C F O",
+    "model": "omnivoice"
+  },
+  {
+    "term": "CTO",
+    "spoken": "C T O",
+    "model": "omnivoice"
+  },
+  {
+    "term": "IPO",
+    "spoken": "I P O",
+    "model": "omnivoice"
+  },
+  {
+    "term": "USB",
+    "spoken": "U S B",
+    "model": "omnivoice"
+  },
+  {
+    "term": "HDMI",
+    "spoken": "H D M I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "VIP",
+    "spoken": "V I P",
+    "model": "omnivoice"
+  },
+  {
+    "term": "PPT",
+    "spoken": "P P T",
+    "model": "omnivoice"
+  },
+  {
+    "term": "UI",
+    "spoken": "U I",
+    "model": "omnivoice"
+  },
+  {
+    "term": "UX",
+    "spoken": "U X",
+    "model": "omnivoice"
+  },
+  {
+    "term": "HTTP",
+    "spoken": "H T T P",
+    "model": "omnivoice"
+  },
+  {
+    "term": "HTTPS",
+    "spoken": "H T T P S",
+    "model": "omnivoice"
+  },
+  {
+    "term": "FPS",
+    "spoken": "F P S",
+    "model": "omnivoice"
+  },
+  {
+    "term": "33700",
+    "spoken": "三三七零零"
+  },
+  {
+    "term": "30240",
+    "spoken": "三零二四零"
+  }
+]
