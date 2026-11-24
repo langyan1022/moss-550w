@@ -2,11 +2,13 @@
 
 import argparse
 import asyncio
+from contextlib import closing
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 import re
+import socket
 from time import perf_counter
 from unittest.mock import patch
 import wave
@@ -26,7 +28,12 @@ from media_chat import classify
 from model_catalog import SPECS
 from reply_length import reply_length
 from serve import application
-from verify_context_reply import free_port
+
+
+def free_port():
+    with closing(socket.socket()) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 def visible_chars(text: str) -> int:
