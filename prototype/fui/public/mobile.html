@@ -65,8 +65,63 @@
     .m-media__row {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       min-width: 0;
+    }
+    .m-media__cover {
+      width: 26px;
+      height: 26px;
+      object-fit: cover;
+      border: 1px solid var(--fui-line-1);
+      flex: none;
+    }
+    .m-media__lrc {
+      font-size: 0.74rem;
+      color: var(--fui-text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border-top: 1px solid var(--fui-line-1);
+      padding-top: 4px;
+    }
+    .m-media__lrc[hidden], .m-media__queue[hidden], .m-media__cover[hidden] { display: none; }
+    .m-media__queue {
+      display: grid;
+      gap: 3px;
+      max-height: 78px;
+      overflow-y: auto;
+      border-top: 1px solid var(--fui-line-1);
+      padding-top: 4px;
+    }
+    .m-media__qbtn {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      min-width: 0;
+      padding: 4px 6px;
+      border: 1px solid var(--fui-line-1);
+      background: var(--fui-surface-1);
+      color: var(--fui-text-dim);
+      font: 500 0.72rem / 1.2 var(--fui-font-sans);
+      text-align: left;
+      cursor: pointer;
+    }
+    .m-media__qbtn[aria-current="true"] {
+      border-color: var(--fui-ok);
+      color: var(--fui-text-hi);
+    }
+    .m-media__qname {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .m-media__ctrl[data-active="true"] {
+      border-color: var(--fui-act);
+      color: var(--fui-act);
     }
     .m-media__viz {
       display: block;
@@ -166,14 +221,20 @@
 
     <section class="m-media" id="m-media-bar" aria-label="正在播放" hidden>
       <div class="m-media__row">
-        <span class="fui-badge" data-state="ok">AUD</span>
+        <img class="m-media__cover" id="m-media-cover" alt="" hidden>
+        <span class="fui-badge" id="m-media-badge" data-state="ok">AUD</span>
         <div class="m-media__meta">
           <strong class="m-media__title" id="m-media-title">—</strong>
           <span class="m-media__artist" id="m-media-artist">—</span>
         </div>
+        <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-prev" type="button" aria-label="上一首">‹</button>
         <button class="fui-key fui-key--sm" id="m-media-toggle" type="button">播放</button>
+        <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-next" type="button" aria-label="下一首">›</button>
+        <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-sleep" type="button" title="睡眠定时 (15 / 30 / 60m)">⏱</button>
       </div>
+      <div class="m-media__lrc" id="m-media-lrc" hidden></div>
       <canvas class="m-media__viz" id="m-viz" height="26" role="img" aria-label="音频实时频谱"></canvas>
+      <div class="m-media__queue" id="m-media-queue" hidden></div>
       <audio id="m-audio" hidden></audio>
     </section>
 
@@ -218,9 +279,16 @@
     const micBtn = document.getElementById('m-mic');
     const newChatBtn = document.getElementById('m-new-chat');
     const mediaBar = document.getElementById('m-media-bar');
+    const mediaCover = document.getElementById('m-media-cover');
+    const mediaBadge = document.getElementById('m-media-badge');
     const mediaTitle = document.getElementById('m-media-title');
     const mediaArtist = document.getElementById('m-media-artist');
+    const mediaPrev = document.getElementById('m-media-prev');
     const mediaToggle = document.getElementById('m-media-toggle');
+    const mediaNext = document.getElementById('m-media-next');
+    const mediaSleep = document.getElementById('m-media-sleep');
+    const mediaLrc = document.getElementById('m-media-lrc');
+    const mediaQueue = document.getElementById('m-media-queue');
     const audioEl = document.getElementById('m-audio');
     const vizCanvas = document.getElementById('m-viz');
     const authOverlay = document.getElementById('m-auth');
@@ -321,6 +389,15 @@
     let ttsOn = false;
     let lastSpokenTurn = '';
     let activeMediaId = '';
+    let activeMediaProvider = '';
+    let mobileMediaItems = [];
+    let mobileMediaTurnId = '';
+    let mobileLrcLines = [];
+    let mobileLrcAbort = null;
+    let mobileSleepEnd = 0;
+    let mobileSleepTick = 0;
+    let mobileScrobbledStart = false;
+    let mobileScrobbledDone = false;
     let micStream = null;
     let micCtx = null;
     let micNodeSrc = null;
@@ -420,6 +497,107 @@
       } catch { /* ignore */ }
     }
 
+    function syncMobileSleepBtn() {
+      const rem = mobileSleepEnd ? Math.max(0, Math.ceil((mobileSleepEnd - Date.now()) / 60000)) : 0;
+      mediaSleep.textContent = rem > 0 ? `⏱ ${rem}m` : '⏱';
+      if (rem > 0) mediaSleep.dataset.active = 'true';
+      else delete mediaSleep.dataset.active;
+    }
+
+    function armMobileSleep(minutes) {
+      clearInterval(mobileSleepTick);
+      mobileSleepTick = 0;
+      if (!minutes) {
+        mobileSleepEnd = 0;
+        syncMobileSleepBtn();
+        return;
+      }
+      mobileSleepEnd = Date.now() + minutes * 60000;
+      syncMobileSleepBtn();
+      mobileSleepTick = setInterval(() => { // fui-lint-ignore: R15 bounded sleep countdown while armed
+        if (mobileSleepEnd - Date.now() <= 0) {
+          clearInterval(mobileSleepTick);
+          mobileSleepTick = 0;
+          mobileSleepEnd = 0;
+          if (!audioEl.paused) audioEl.pause();
+        }
+        syncMobileSleepBtn();
+      }, 5000);
+    }
+
+    function syncMobileLrc(sec) {
+      if (!mediaLrc || !mobileLrcLines.length) return;
+      let idx = 0;
+      for (let i = 0; i < mobileLrcLines.length; i++) {
+        if (mobileLrcLines[i].time <= sec + 0.15) idx = i;
+        else break;
+      }
+      mediaLrc.textContent = mobileLrcLines[idx]?.text || '';
+    }
+
+    function loadMobileLyrics(sel) {
+      if (mobileLrcAbort) { mobileLrcAbort.abort(); mobileLrcAbort = null; }
+      mobileLrcLines = [];
+      mediaLrc.hidden = true;
+      mediaLrc.textContent = '';
+      if (!sel?.media_id || sel.live) return;
+      mobileLrcAbort = new AbortController();
+      const qs = new URLSearchParams();
+      if (sel.title) qs.set('title', sel.title);
+      if (sel.artist) qs.set('artist', sel.artist);
+      fetch(`/api/media/${encodeURIComponent(sel.media_id)}/lyrics?${qs}`, { cache: 'no-store', signal: mobileLrcAbort.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.lines?.length && sel.media_id === activeMediaId) {
+            mobileLrcLines = d.lines;
+            mediaLrc.hidden = false;
+            mediaLrc.textContent = d.lines[0]?.text || '';
+            if (d.synced !== false) syncMobileLrc(audioEl.currentTime || 0);
+          }
+        }).catch(() => {});
+    }
+
+    async function selectMobileTrack(item, index) {
+      if (!item?.media_id) return;
+      if (mobileMediaTurnId && chatId) {
+        const res = await postJson('/api/media-select', { chat_id: chatId, turn_id: mobileMediaTurnId, media_id: item.media_id, index });
+        if (res?.state) render(res.state);
+      }
+      ensureAudioTap();
+      audioEl.play().catch(() => {});
+    }
+
+    function renderMobileQueue(sel) {
+      const audioItems = mobileMediaItems.filter((it) => it && it.kind !== 'video');
+      if (audioItems.length <= 1) {
+        mediaQueue.hidden = true;
+        mediaQueue.replaceChildren();
+        mediaPrev.disabled = true;
+        mediaNext.disabled = true;
+        return;
+      }
+      const curIdx = audioItems.findIndex((it) => it.media_id === sel.media_id);
+      mediaPrev.disabled = curIdx <= 0;
+      mediaNext.disabled = curIdx < 0 || curIdx >= audioItems.length - 1;
+      mediaQueue.hidden = false;
+      mediaQueue.replaceChildren();
+      audioItems.forEach((item, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'm-media__qbtn';
+        btn.setAttribute('aria-current', String(item.media_id === sel.media_id));
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'm-media__qname';
+        nameSpan.textContent = `${String(i + 1).padStart(2, '0')} · ${item.title || item.media_id}${item.artist ? ` - ${item.artist}` : ''}`;
+        const tagSpan = document.createElement('span');
+        tagSpan.className = 'fui-num';
+        tagSpan.textContent = item.live ? 'LIVE' : String(item.provider || 'LOC').toUpperCase();
+        btn.append(nameSpan, tagSpan);
+        btn.addEventListener('click', () => { void selectMobileTrack(item, i + 1); });
+        mediaQueue.append(btn);
+      });
+    }
+
     function syncMedia(turns) {
       const mTurn = [...turns].reverse().find((t) => t.media?.selected?.media_id);
       const sel = mTurn?.media?.selected;
@@ -427,7 +605,15 @@
         if (!mediaBar.hidden || activeMediaId) {
           audioEl.pause();
           audioEl.removeAttribute('src');
+          try { audioEl.load(); } catch { /* ignore */ }
           activeMediaId = '';
+          activeMediaProvider = '';
+          mobileMediaItems = [];
+          mobileMediaTurnId = '';
+          mobileLrcLines = [];
+          mediaLrc.hidden = true;
+          mediaCover.hidden = true;
+          mediaQueue.hidden = true;
           mediaToggle.textContent = '播放';
           stopVizLoop();
         }
@@ -435,14 +621,30 @@
         return;
       }
       mediaBar.hidden = false;
+      mobileMediaTurnId = mTurn.id || '';
+      mobileMediaItems = Array.isArray(mTurn.media?.items) ? mTurn.media.items : [sel];
+      mediaBadge.textContent = sel.live ? 'LIVE' : sel.source_kind === 'online' ? String(sel.provider || 'ONL').slice(0, 4).toUpperCase() : 'AUD';
       mediaTitle.textContent = sel.title || sel.media_id;
       mediaArtist.textContent = sel.source_label ? `${sel.artist ? `${sel.artist} · ` : ''}${sel.source_label}` : (sel.artist || '550W MEDIA');
+      if (sel.cover_url && String(sel.cover_url).startsWith('/')) {
+        if (mediaCover.getAttribute('src') !== sel.cover_url) {
+          mediaCover.src = sel.cover_url;
+          mediaCover.hidden = false;
+        }
+      } else {
+        mediaCover.hidden = true;
+      }
+      renderMobileQueue(sel);
       const src = sel.url || `/media/${encodeURIComponent(sel.media_id)}`;
       if (activeMediaId !== sel.media_id) {
         activeMediaId = sel.media_id;
+        activeMediaProvider = sel.provider || '';
+        mobileScrobbledStart = false;
+        mobileScrobbledDone = false;
         audioEl.src = src;
         mediaToggle.textContent = '播放';
         stopVizLoop();
+        loadMobileLyrics(sel);
       } else if (audioEl.paused) {
         drawMobileViz(false);
       }
@@ -534,9 +736,45 @@
         stopVizLoop();
       }
     });
-    audioEl.addEventListener('play', () => { mediaToggle.textContent = '暂停'; startVizLoop(); });
+    mediaCover.addEventListener('error', () => { mediaCover.hidden = true; });
+    mediaPrev.addEventListener('click', () => {
+      const idx = mobileMediaItems.findIndex((it) => it.media_id === activeMediaId);
+      if (idx > 0) void selectMobileTrack(mobileMediaItems[idx - 1], idx);
+    });
+    mediaNext.addEventListener('click', () => {
+      const idx = mobileMediaItems.findIndex((it) => it.media_id === activeMediaId);
+      if (idx >= 0 && idx + 1 < mobileMediaItems.length) void selectMobileTrack(mobileMediaItems[idx + 1], idx + 2);
+    });
+    const MOBILE_SLEEP_STEPS = [0, 15, 30, 60];
+    mediaSleep.addEventListener('click', () => {
+      const curRem = mobileSleepEnd ? Math.ceil((mobileSleepEnd - Date.now()) / 60000) : 0;
+      const nextIdx = MOBILE_SLEEP_STEPS.findIndex((m) => m > curRem);
+      armMobileSleep(nextIdx >= 0 ? MOBILE_SLEEP_STEPS[nextIdx] : 0);
+    });
+    audioEl.addEventListener('timeupdate', () => { if (mobileLrcLines.length) syncMobileLrc(audioEl.currentTime); });
+    audioEl.addEventListener('play', () => {
+      mediaToggle.textContent = '暂停';
+      startVizLoop();
+      if (activeMediaProvider === 'navidrome' && activeMediaId && !mobileScrobbledStart) {
+        mobileScrobbledStart = true;
+        fetch('/api/online-music/scrobble', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ media_id: activeMediaId, submission: false }),
+        }).catch(() => {});
+      }
+    });
     audioEl.addEventListener('pause', () => { mediaToggle.textContent = '播放'; stopVizLoop(); });
-    audioEl.addEventListener('ended', () => { mediaToggle.textContent = '播放'; stopVizLoop(); });
+    audioEl.addEventListener('ended', () => {
+      mediaToggle.textContent = '播放';
+      stopVizLoop();
+      if (activeMediaProvider === 'navidrome' && activeMediaId && !mobileScrobbledDone) {
+        mobileScrobbledDone = true;
+        fetch('/api/online-music/scrobble', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ media_id: activeMediaId, submission: true }),
+        }).catch(() => {});
+      }
+    });
     newChatBtn.addEventListener('click', () => void postJson('/api/new-chat', {}));
 
     function encodeWav16k(floatBuf, inRate) {
@@ -634,6 +872,9 @@
       if (!document.hidden && !audioEl.paused && !audioEl.ended) startVizLoop();
     });
     window.addEventListener('pagehide', () => {
+      clearInterval(mobileSleepTick);
+      mobileSleepTick = 0;
+      if (mobileLrcAbort) { mobileLrcAbort.abort(); mobileLrcAbort = null; }
       void releaseMicResources();
       stopSpeakAudio();
       if (es) { es.close(); es = null; }

@@ -180,6 +180,23 @@ try {
         statusText: document.getElementById('set-mic-status')?.textContent || '',
       }));
       assert(micInfo.listText.includes('AUTO') && micInfo.statusText.trim().length > 4, `Auto mic UI missing: ${JSON.stringify(micInfo)}`);
+      if (await page.locator('#set-online-music-section > summary').isVisible()) {
+        await page.locator('#set-online-music-section > summary').click();
+        await page.waitForTimeout(250);
+        await page.fill('#set-om-jamendo-id', 'jam_dirty_1234');
+        await page.locator('#set-om-jamendo').check();
+        await page.locator('[data-set-tab="display"]').click();
+        await page.waitForTimeout(120);
+        await page.locator('[data-set-tab="audio"]').click();
+        await page.waitForTimeout(180);
+        const jamPersist = await page.evaluate(() => ({
+          val: document.getElementById('set-om-jamendo-id')?.value || '',
+          checked: Boolean(document.getElementById('set-om-jamendo')?.checked),
+          badge: document.getElementById('set-om-jamendo-state')?.dataset?.state || '',
+        }));
+        assert(jamPersist.val === 'jam_dirty_1234' && jamPersist.checked && jamPersist.badge === 'warn',
+          `Online music unsaved state wiped on tab switch: ${JSON.stringify(jamPersist)}`);
+      }
     }
   }
   await page.locator('[data-set-tab="soul"]').click();
@@ -864,6 +881,7 @@ try {
     hasPers: Boolean(document.getElementById('m-personality')),
     hasModel: Boolean(document.getElementById('m-model')),
     hasVizCanvas: Boolean(document.getElementById('m-viz')),
+    hasQueueCtrl: Boolean(document.getElementById('m-media-prev') && document.getElementById('m-media-next') && document.getElementById('m-media-sleep')),
     msgCount: document.querySelectorAll('#m-feed .m-msg').length,
     mediaTitle: (document.getElementById('m-media-title')?.textContent || '').trim(),
     feedHeight: document.getElementById('m-feed')?.clientHeight || 0,
@@ -871,7 +889,7 @@ try {
   }));
   report.mobile = { ...mobMetrics, vizLitPixels: vizNonBlank };
   assert(mobMetrics.scrollW <= mobMetrics.innerW + 2, `Mobile horizontal overflow after multi-turn + long token: ${mobMetrics.scrollW} > ${mobMetrics.innerW}`);
-  assert(mobMetrics.hasVizCanvas && mobMetrics.msgCount >= 6, `Unexpected mobile metrics: ${JSON.stringify(mobMetrics)}`);
+  assert(mobMetrics.hasVizCanvas && mobMetrics.hasQueueCtrl && mobMetrics.msgCount >= 6, `Unexpected mobile metrics: ${JSON.stringify(mobMetrics)}`);
   await mobPage.screenshot({ path: path.join(OUT, '07_mobile_390px.png'), animations: 'disabled' });
   await mobPage.close();
 

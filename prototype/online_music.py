@@ -37,12 +37,8 @@ from urllib.parse import quote, urlencode, urljoin, urlsplit
 
 import aiohttp
 
-try:
-    import win32crypt  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover
-    win32crypt = None
-
 from music_prefs import parse_lrc_text
+from secret_store import protect_secret as _seal_secret, unprotect_secret as _unseal_secret
 
 
 DEFAULT_SOURCE_ORDER = ["navidrome", "audius", "archive", "jamendo", "radiobrowser"]
@@ -175,26 +171,13 @@ _ZH_TO_EN_HINTS: tuple[tuple[str, str], ...] = (
 
 
 def _protect_secret(scope: str, plain: str) -> str:
-    """Encrypt secret via Windows DPAPI (or fail safely if unavailable)."""
-    raw = plain.encode("utf-8")
-    if win32crypt is None:
-        raise RuntimeError("当前运行环境缺少 DPAPI 加密模块，无法安全保存凭据。")
-    entropy = f"MOSS-550W\0online-music\0{scope}".encode("utf-8")
-    blob = win32crypt.CryptProtectData(raw, "MOSS-OnlineMusic", entropy, None, None, 1)
-    return base64.b64encode(blob).decode("ascii")
+    """Encrypt secret via shared cross-platform secret_store (DPAPI on Windows, Fernet fallback)."""
+    return _seal_secret(plain, entropy=f"MOSS-550W\0online-music\0{scope}", description="MOSS-OnlineMusic", flags=1)
 
 
 def _unprotect_secret(scope: str, cipher_b64: str) -> str:
-    """Decrypt DPAPI secret cleanly, returning empty string on corruption."""
-    if not cipher_b64 or win32crypt is None:
-        return ""
-    try:
-        entropy = f"MOSS-550W\0online-music\0{scope}".encode("utf-8")
-        raw = base64.b64decode(cipher_b64.encode("ascii"))
-        _, plain_bytes = win32crypt.CryptUnprotectData(raw, entropy, None, None, 0)
-        return plain_bytes.decode("utf-8")
-    except Exception:
-        return ""
+    """Decrypt stored secret cleanly, returning empty string on corruption."""
+    return _unseal_secret(cipher_b64, entropy=f"MOSS-550W\0online-music\0{scope}", flags=0)
 
 
 def _media_id(provider: str, external_id: str) -> str:
@@ -606,7 +589,7 @@ class OnlineMusicHub:
                        SELECT media_id FROM online_tracks ORDER BY updated_at DESC LIMIT -1 OFFSET 600
                    )"""
             )
-        return {
+        out = {
             "media_id": mid,
             "title": track["title"],
             "artist": track["artist"],
@@ -622,6 +605,9 @@ class OnlineMusicHub:
             "url": f"/api/media/online-stream/{mid}",
             "available": True,
         }
+        if (track.get("meta") or {}).get("cover_ref"):
+            out["cover_url"] = f"/api/media/online-cover/{mid}"
+        return out
 
     def get_cached_track(self, media_id: str) -> dict | None:
         if not media_id:
@@ -635,7 +621,8 @@ class OnlineMusicHub:
             ).fetchone()
         if not row:
             return None
-        return {
+        meta = json.loads(row[10] or "{}")
+        out = {
             "media_id": row[0],
             "provider": row[1],
             "external_id": row[2],
@@ -646,8 +633,11 @@ class OnlineMusicHub:
             "live": bool(row[7]),
             "raw_url": row[8],
             "license": row[9],
-            "meta": json.loads(row[10] or "{}"),
+            "meta": meta,
         }
+        if meta.get("cover_ref"):
+            out["cover_url"] = f"/api/media/online-cover/{row[0]}"
+        return out
 
     def _navidrome_params(self, cfg_nav: dict, extra: dict | None = None) -> tuple[str, dict]:
         pw = _unprotect_secret("navidrome", cfg_nav.get("password_enc") or "")
@@ -689,6 +679,47 @@ class OnlineMusicHub:
             raise ValueError(f"Navidrome 返回错误：{err}")
         return {"ok": True, "type": sub.get("type") or "subsonic", "version": sub.get("serverVersion") or sub.get("version") or ""}
 
+    async def ping_jamendo(self, candidate_id: str | None = None) -> dict:
+        cfg_jam = self._load_raw_config()["jamendo"]
+        cid = str(candidate_id or "").strip() or _unprotect_secret("jamendo", cfg_jam.get("client_id_enc") or "")
+        if not cid:
+            return {"ok": False, "configured": False, "detail": ""}
+        if not re.fullmatch(r"[A-Za-z0-9_-]{4,64}", cid):
+            return {"ok": False, "configured": True, "error": True, "detail": "Jamendo Client ID 格式无效"}
+        params = {"client_id": cid, "format": "json", "audioformat": "mp32", "limit": 1}
+        doc = await self._http_get_json(f"https://api.jamendo.com/v3.0/tracks/?{urlencode(params)}", timeout_s=5.5)
+        hdr = (doc.get("headers") or {}) if isinstance(doc, dict) else {}
+        if hdr.get("status") == "failed":
+            msg = str(hdr.get("error_message") or f"code {hdr.get('code')}").strip()
+            return {"ok": False, "configured": True, "error": True, "detail": f"Jamendo 校验失败：{msg}"}
+        results = doc.get("results") or [] if isinstance(doc, dict) else []
+        if not results:
+            return {"ok": False, "configured": True, "error": True, "detail": "Jamendo 返回空结果"}
+        sample = str(results[0].get("name") or "OK").strip()[:40]
+        return {"ok": True, "configured": True, "detail": f"Jamendo OK ({sample})"}
+
+    def _navidrome_song_to_track(self, s: dict) -> dict | None:
+        sid = str(s.get("id") or "").strip()
+        if not sid:
+            return None
+        meta: dict = {"suffix": str(s.get("suffix") or "").lower()}
+        cover_art = str(s.get("coverArt") or "").strip()
+        if cover_art:
+            meta["cover_ref"] = cover_art
+        return {
+            "media_id": _media_id("navidrome", sid),
+            "provider": "navidrome",
+            "external_id": sid,
+            "title": str(s.get("title") or "Untitled").strip()[:140],
+            "artist": str(s.get("artist") or "").strip()[:100],
+            "album": str(s.get("album") or "").strip()[:100],
+            "duration_s": float(s["duration"]) if s.get("duration") else None,
+            "live": False,
+            "raw_url": f"navidrome://{sid}",
+            "license": "private-server",
+            "meta": meta,
+        }
+
     async def _search_navidrome(self, query: str, limit: int, cfg_nav: dict) -> list[dict]:
         if not cfg_nav.get("enabled") or not cfg_nav.get("url"):
             return []
@@ -706,23 +737,9 @@ class OnlineMusicHub:
             return []
         out = []
         for s in songs[:limit]:
-            sid = str(s.get("id") or "")
-            if not sid:
-                continue
-            mid = _media_id("navidrome", sid)
-            out.append({
-                "media_id": mid,
-                "provider": "navidrome",
-                "external_id": sid,
-                "title": str(s.get("title") or "Untitled").strip()[:140],
-                "artist": str(s.get("artist") or "").strip()[:100],
-                "album": str(s.get("album") or "").strip()[:100],
-                "duration_s": float(s["duration"]) if s.get("duration") else None,
-                "live": False,
-                "raw_url": f"navidrome://{sid}",
-                "license": "private-server",
-                "meta": {"suffix": str(s.get("suffix") or "").lower()},
-            })
+            item = self._navidrome_song_to_track(s)
+            if item:
+                out.append(item)
         return out
 
     async def _search_audius(self, query: str, limit: int) -> list[dict]:
@@ -756,6 +773,11 @@ class OnlineMusicHub:
             if tr.get("is_streamable") is False or (tr.get("access") or {}).get("stream") is False:
                 continue
             artist_name = str((tr.get("user") or {}).get("name") or "").strip()
+            art = tr.get("artwork") if isinstance(tr.get("artwork"), dict) else {}
+            art_url = str(art.get("480x480") or art.get("150x150") or "").strip()
+            meta = {}
+            if art_url.startswith("https://"):
+                meta["cover_ref"] = art_url
             out.append({
                 "media_id": _media_id("audius", tid),
                 "provider": "audius",
@@ -767,6 +789,7 @@ class OnlineMusicHub:
                 "live": False,
                 "raw_url": f"https://api.audius.co/v1/tracks/{quote(tid, safe='')}/stream",
                 "license": "open-audius",
+                "meta": meta,
             })
             if len(out) >= limit:
                 break
@@ -940,6 +963,8 @@ class OnlineMusicHub:
                 _validate_public_url(audio_url, allow_http=False)
             except ValueError:
                 continue
+            art_url = str(tr.get("album_image") or tr.get("image") or "").strip()
+            meta = {"cover_ref": art_url} if art_url.startswith("https://") else {}
             out.append({
                 "media_id": _media_id("jamendo", tid),
                 "provider": "jamendo",
@@ -951,6 +976,7 @@ class OnlineMusicHub:
                 "live": False,
                 "raw_url": audio_url,
                 "license": str(tr.get("license_ccurl") or "CC"),
+                "meta": meta,
             })
             if len(out) >= limit:
                 break
@@ -1071,6 +1097,144 @@ class OnlineMusicHub:
             "live": bool(cached.get("live")),
             "provider": provider,
         }
+
+    def resolve_cover_target(self, media_id: str) -> dict:
+        """Resolve server-side artwork URL & SSRF policy for /api/media/online-cover/{media_id}."""
+        cached = self.get_cached_track(media_id)
+        if not cached:
+            raise FileNotFoundError("未找到曲目缓存。")
+        cover_ref = str((cached.get("meta") or {}).get("cover_ref") or "").strip()
+        if not cover_ref:
+            raise FileNotFoundError("该曲目无封面信息。")
+        if cached["provider"] == "navidrome":
+            cfg_nav = self._load_raw_config()["navidrome"]
+            base, params = self._navidrome_params(cfg_nav, {"id": cover_ref, "size": 256})
+            return {
+                "url": f"{base}/rest/getCoverArt.view?{urlencode(params)}",
+                "allow_internal": True,
+                "allowed_netloc": urlsplit(base).netloc,
+                "allow_http": False,
+            }
+        _validate_public_url(cover_ref, allow_http=False)
+        return {
+            "url": cover_ref,
+            "allow_internal": False,
+            "allowed_netloc": "",
+            "allow_http": False,
+        }
+
+    async def browse_navidrome(self, *, kind: str = "playlists", item_id: str = "", limit: int = 18) -> dict:
+        """Browse Navidrome playlists or albums and return cached track queues."""
+        cfg = self._load_raw_config()
+        cfg_nav = cfg["navidrome"]
+        if self.is_isolated() or not cfg.get("enabled", True):
+            raise ValueError("当前处于离线隔离模式或在线曲库已关闭。")
+        if not cfg_nav.get("enabled") or not cfg_nav.get("url"):
+            raise ValueError("尚未启用并配置 Navidrome 私有曲库。")
+        mode = str(kind or "playlists").strip().lower()
+        clean_id = str(item_id or "").strip()[:80]
+        max_n = min(40, max(1, int(limit or 18)))
+
+        def _check_sub(doc) -> dict:
+            sub = (doc.get("subsonic-response") if isinstance(doc, dict) else None) or {}
+            if not isinstance(sub, dict) or sub.get("status") != "ok":
+                err = ((sub.get("error") or {}) if isinstance(sub, dict) else {}).get("message") or "Navidrome 查询失败"
+                raise ValueError(f"Navidrome 返回错误：{err}")
+            return sub
+
+        if mode == "playlists":
+            base, params = self._navidrome_params(cfg_nav)
+            sub = _check_sub(await self._http_get_json(f"{base}/rest/getPlaylists.view?{urlencode(params)}", allow_internal=True))
+            pls = (sub.get("playlists") or {}).get("playlist") or []
+            return {
+                "kind": "playlists",
+                "items": [
+                    {
+                        "id": str(pl.get("id") or ""),
+                        "name": str(pl.get("name") or "Playlist").strip()[:120],
+                        "song_count": int(pl.get("songCount") or 0),
+                        "duration_s": float(pl["duration"]) if pl.get("duration") else None,
+                    }
+                    for pl in pls[:max_n] if pl.get("id")
+                ],
+            }
+        if mode == "albums":
+            base, params = self._navidrome_params(cfg_nav, {"type": "newest", "size": max_n})
+            sub = _check_sub(await self._http_get_json(f"{base}/rest/getAlbumList2.view?{urlencode(params)}", allow_internal=True))
+            albums = (sub.get("albumList2") or {}).get("album") or []
+            return {
+                "kind": "albums",
+                "items": [
+                    {
+                        "id": str(al.get("id") or ""),
+                        "name": str(al.get("name") or "Album").strip()[:120],
+                        "artist": str(al.get("artist") or "").strip()[:100],
+                        "song_count": int(al.get("songCount") or 0),
+                        "year": al.get("year"),
+                    }
+                    for al in albums[:max_n] if al.get("id")
+                ],
+            }
+        if mode == "playlist":
+            if not clean_id:
+                raise ValueError("缺少歌单 ID。")
+            base, params = self._navidrome_params(cfg_nav, {"id": clean_id})
+            sub = _check_sub(await self._http_get_json(f"{base}/rest/getPlaylist.view?{urlencode(params)}", allow_internal=True))
+            pl = sub.get("playlist") or {}
+            tracks = []
+            for s in (pl.get("entry") or [])[:max_n]:
+                item = self._navidrome_song_to_track(s)
+                if item:
+                    tracks.append(self._cache_track(item))
+            return {
+                "kind": "playlist",
+                "id": clean_id,
+                "name": str(pl.get("name") or "Playlist").strip()[:120],
+                "tracks": tracks,
+            }
+        if mode == "album":
+            if not clean_id:
+                raise ValueError("缺少专辑 ID。")
+            base, params = self._navidrome_params(cfg_nav, {"id": clean_id})
+            sub = _check_sub(await self._http_get_json(f"{base}/rest/getAlbum.view?{urlencode(params)}", allow_internal=True))
+            al = sub.get("album") or {}
+            tracks = []
+            for s in (al.get("song") or [])[:max_n]:
+                item = self._navidrome_song_to_track(s)
+                if item:
+                    tracks.append(self._cache_track(item))
+            return {
+                "kind": "album",
+                "id": clean_id,
+                "name": str(al.get("name") or "Album").strip()[:120],
+                "artist": str(al.get("artist") or "").strip()[:100],
+                "tracks": tracks,
+            }
+        raise ValueError("不支持的浏览类型（仅支持 playlists / albums / playlist / album）。")
+
+    async def scrobble_navidrome(self, media_id: str, *, submission: bool = True) -> dict:
+        """Report playback start or completion back to Navidrome via Subsonic scrobble.view."""
+        cfg = self._load_raw_config()
+        cfg_nav = cfg["navidrome"]
+        if self.is_isolated() or not cfg.get("enabled", True) or not cfg_nav.get("enabled"):
+            return {"ok": False, "skipped": True}
+        cached = self.get_cached_track(media_id)
+        if not cached or cached.get("provider") != "navidrome":
+            return {"ok": False, "skipped": True}
+        try:
+            base, params = self._navidrome_params(
+                cfg_nav,
+                {
+                    "id": cached["external_id"],
+                    "submission": "true" if submission else "false",
+                    "time": int(datetime.now(timezone.utc).timestamp() * 1000),
+                },
+            )
+            doc = await self._http_get_json(f"{base}/rest/scrobble.view?{urlencode(params)}", allow_internal=True, timeout_s=4.0)
+            ok = (doc.get("subsonic-response") or {}).get("status") == "ok"
+            return {"ok": bool(ok)}
+        except Exception:
+            return {"ok": False}
 
     async def get_lyrics(self, media_id: str, *, title: str = "", artist: str = "") -> dict:
         """Fetch synced/plain LRC lyrics via Navidrome OpenSubsonic or LRCLIB with SQLite caching."""

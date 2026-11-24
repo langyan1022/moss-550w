@@ -25,6 +25,10 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
+from secret_store import protect_secret, unprotect_secret
+
+_IOT_TOKEN_ENTROPY = "MOSS-550W\0iot\0ha_token"
+
 
 SAFE_HA_DOMAINS = (
     "light", "switch", "climate", "scene", "script",
@@ -135,7 +139,12 @@ class IoTAndHardwareBridge:
             try:
                 saved = json.loads(row[0])
                 if isinstance(saved, dict):
-                    return {**DEFAULT_IOT_CONFIG, **saved}
+                    merged = {**DEFAULT_IOT_CONFIG, **saved}
+                    tok_enc = str(saved.get("ha_token_enc") or "")
+                    if tok_enc:
+                        merged["ha_token"] = unprotect_secret(tok_enc, entropy=_IOT_TOKEN_ENTROPY)
+                    merged.pop("ha_token_enc", None)
+                    return merged
             except json.JSONDecodeError:
                 pass
         return dict(DEFAULT_IOT_CONFIG)
@@ -185,10 +194,18 @@ class IoTAndHardwareBridge:
             merged["hw_webhook_url"] = _validate_local_or_lan_url(patch["hw_webhook_url"])
 
         self.config = merged
+        to_persist = dict(merged)
+        raw_tok = str(to_persist.pop("ha_token", "") or "")
+        to_persist["ha_token"] = ""
+        to_persist["ha_token_enc"] = (
+            protect_secret(raw_tok, entropy=_IOT_TOKEN_ENTROPY, description="MOSS-IoT")
+            if raw_tok
+            else ""
+        )
         with self.db:
             self.db.execute(
                 "INSERT OR REPLACE INTO iot_bridge_config(id, doc) VALUES (1, ?)",
-                (json.dumps(merged, ensure_ascii=False),),
+                (json.dumps(to_persist, ensure_ascii=False),),
             )
         self._log(
             f"IoT config updated: HA={merged['ha_mode']}/{'on' if merged['ha_enabled'] else 'off'} HW={'on' if merged['hw_enabled'] else 'off'}",

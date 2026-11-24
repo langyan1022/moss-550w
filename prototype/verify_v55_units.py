@@ -364,6 +364,27 @@ async def test_voice_process_guards():
     return "LocalVoice + MossSpeech closing/timeout cleanup OK"
 
 
+def test_secret_store_and_iot_encryption():
+    from iot_bridge import IoTAndHardwareBridge
+    from secret_store import protect_secret, unprotect_secret
+
+    with tempfile.TemporaryDirectory(prefix="moss-sec-") as td:
+        td_path = Path(td)
+        sealed = protect_secret("tok_secret_987", entropy="unit-scope", key_dir=td_path, prefer_portable=True)
+        assert sealed.startswith("fernet1:")
+        assert unprotect_secret(sealed, entropy="unit-scope", key_dir=td_path) == "tok_secret_987"
+        assert unprotect_secret(sealed, entropy="wrong-scope", key_dir=td_path) == ""
+
+        db = sqlite3.connect(":memory:")
+        iot = IoTAndHardwareBridge(db)
+        iot.update_config({"ha_url": "http://127.0.0.1:8123", "ha_token": "ha_tok_unit_xyz"})
+        raw_doc = db.execute("SELECT doc FROM iot_bridge_config WHERE id=1").fetchone()[0]
+        assert "ha_tok_unit_xyz" not in raw_doc and "ha_token_enc" in raw_doc
+        iot_reloaded = IoTAndHardwareBridge(db)
+        assert iot_reloaded.config["ha_token"] == "ha_tok_unit_xyz"
+    return "DPAPI/Fernet + IoT ha_token encryption OK"
+
+
 async def main():
     res = {
         "parallel_tools": await test_parallel_tools_and_trace(),
@@ -374,6 +395,7 @@ async def main():
         "music_prefs_lrc_sleep": test_music_prefs_lrc_sleep(),
         "auth_cs_c_rbac": await test_auth_rbac_and_persistence_http(),
         "voice_process_guards": await test_voice_process_guards(),
+        "secret_store_iot": test_secret_store_and_iot_encryption(),
     }
     print("V55_UNITS_PASS:", json.dumps(res, ensure_ascii=False))
 

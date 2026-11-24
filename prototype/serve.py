@@ -1692,6 +1692,93 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                 )
         return web.json_response({"media_id": mid, "has_lrc": False, "lines": []}, headers={"Cache-Control": "no-store"})
 
+    async def _pinned_hop(cur_url: str, *, allow_internal: bool, allow_http: bool):
+        if allow_internal:
+            return cur_url, None
+        resolved_url, host, pinned_ip = await resolve_public_url(cur_url, allow_http=allow_http)
+        return resolved_url, make_pinned_connector(host, pinned_ip)
+
+    async def online_music_browse(request):
+        if moss.online_music.is_isolated():
+            return web.json_response({"error": "当前处于离线隔离模式，在线曲库浏览已禁用。"}, status=503)
+        kind = str(request.query.get("kind") or "playlists").strip().lower()
+        item_id = str(request.query.get("id") or "").strip()
+        try:
+            limit = int(request.query.get("limit") or 18)
+        except ValueError:
+            limit = 18
+        try:
+            res = await moss.online_music.browse_navidrome(kind=kind, item_id=item_id, limit=limit)
+            return web.json_response(res, headers={"Cache-Control": "no-store"})
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            return web.json_response({"error": f"Navidrome 请求失败：{type(exc).__name__}"}, status=502)
+
+    async def online_music_scrobble(request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "无效 JSON"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"ok": False, "error": "需要 JSON 对象"}, status=400)
+        mid = str(body.get("media_id") or "").strip()[:64]
+        submission = bool(body.get("submission", True))
+        res = await moss.online_music.scrobble_navidrome(mid, submission=submission)
+        return web.json_response(res, headers={"Cache-Control": "no-store"})
+
+    async def online_media_cover(request):
+        mid = request.match_info.get("media_id", "")
+        if moss.online_music.is_isolated():
+            raise web.HTTPServiceUnavailable(text="离线隔离模式已禁用在线封面加载。")
+        try:
+            target = moss.online_music.resolve_cover_target(mid)
+        except FileNotFoundError as exc:
+            raise web.HTTPNotFound(text=str(exc)) from None
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from None
+
+        cur_url = target["url"]
+        allow_internal = bool(target.get("allow_internal"))
+        allow_http = bool(target.get("allow_http"))
+        allowed_netloc = str(target.get("allowed_netloc") or "")
+        timeout = aiohttp.ClientTimeout(total=8, connect=5, sock_read=5)
+        try:
+            for _ in range(4):
+                try:
+                    cur_url, connector = await _pinned_hop(cur_url, allow_internal=allow_internal, allow_http=allow_http)
+                except ValueError as exc:
+                    raise web.HTTPBadRequest(text=str(exc)) from None
+                async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+                    async with session.get(cur_url, allow_redirects=False) as upstream:
+                        if upstream.status in (301, 302, 303, 307, 308):
+                            nxt = urljoin(cur_url, upstream.headers.get("Location") or "")
+                            if allow_internal and urlsplit(nxt).netloc != allowed_netloc:
+                                raise web.HTTPBadGateway(text="拒绝跳转到配置以外的服务主机")
+                            cur_url = nxt
+                            continue
+                        if upstream.status >= 400:
+                            raise web.HTTPNotFound(text=f"封面源返回 {upstream.status}")
+                        ctype = (upstream.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+                        if not ctype.startswith("image/"):
+                            raise web.HTTPBadGateway(text="上游封面不是有效的图片格式")
+                        raw = await upstream.content.read(4 * 1024 * 1024 + 1)
+                        if len(raw) > 4 * 1024 * 1024:
+                            raise web.HTTPBadGateway(text="封面图片超过 4 MiB 限制")
+                        return web.Response(
+                            body=raw,
+                            headers={
+                                "Content-Type": ctype,
+                                "X-Content-Type-Options": "nosniff",
+                                "Cache-Control": "private, max-age=3600",
+                            },
+                        )
+            raise web.HTTPBadGateway(text="封面重定向次数过多")
+        except web.HTTPException:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            raise web.HTTPBadGateway(text="封面加载失败") from None
+
     async def online_media_stream(request):
         mid = request.match_info.get("media_id", "")
         if moss.online_music.is_isolated():
@@ -1720,13 +1807,10 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         resp = None
         try:
             for _ in range(6):
-                connector = None
-                if not allow_internal:
-                    try:
-                        cur_url, host, pinned_ip = await resolve_public_url(cur_url, allow_http=allow_http)
-                        connector = make_pinned_connector(host, pinned_ip)
-                    except ValueError as exc:
-                        raise web.HTTPBadRequest(text=str(exc)) from None
+                try:
+                    cur_url, connector = await _pinned_hop(cur_url, allow_internal=allow_internal, allow_http=allow_http)
+                except ValueError as exc:
+                    raise web.HTTPBadRequest(text=str(exc)) from None
                 async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                     async with session.get(cur_url, headers=req_headers, allow_redirects=False) as upstream:
                         if upstream.status in (301, 302, 303, 307, 308):
@@ -1864,6 +1948,9 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     web.post(r"/api/routines/{routine_id:[A-Za-z0-9_-]{1,32}}/toggle", routines_handler),
                     web.get("/api/music/prefs", music_prefs_handler),
                     web.post("/api/music/prefs", music_prefs_handler),
+                    web.get("/api/online-music/browse", online_music_browse),
+                    web.post("/api/online-music/scrobble", online_music_scrobble),
+                    web.get(r"/api/media/online-cover/{media_id:[A-Za-z0-9_-]{1,64}}", online_media_cover),
                     web.get(r"/api/media/online-stream/{media_id:[A-Za-z0-9_-]{1,64}}", online_media_stream),
                     web.get(r"/api/media/{media_id:[A-Za-z0-9_-]{1,64}}/lyrics", media_lyrics),
                     web.get("/api/events", event_stream), web.post("/api/shutdown", shutdown),

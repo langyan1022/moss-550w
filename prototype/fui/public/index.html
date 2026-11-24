@@ -1232,7 +1232,7 @@
                     <label class="moss-check"><input type="checkbox" id="set-om-jamendo"><span data-i18n="console.om_jamendo">Jamendo CC 曲库（可选 Client ID）</span></label>
                   </div>
                   <label class="moss-field">
-                    <span class="fui-label" data-i18n="console.om_jamendo_id">Jamendo Client ID（可选，留空保留已加密凭据）</span>
+                    <span class="fui-label"><span data-i18n="console.om_jamendo_id">Jamendo Client ID（可选，留空保留已加密凭据）</span> <span class="fui-badge" id="set-om-jamendo-state" hidden></span></span>
                     <input class="fui-dialog__input" id="set-om-jamendo-id" type="password" autocomplete="new-password" spellcheck="false" placeholder="留空保留已加密凭据" data-i18n-placeholder="console.om_secret_keep">
                   </label>
                   <label class="moss-check"><input type="checkbox" id="set-om-nav-enabled"><span data-i18n="console.om_nav_enabled">优先检索自建 Navidrome / OpenSubsonic 私有曲库</span></label>
@@ -1247,7 +1247,7 @@
                     </label>
                   </div>
                   <label class="moss-field">
-                    <span class="fui-label" data-i18n="console.om_nav_pass">Navidrome 密码（DPAPI 加密保存，留空保留原密码）</span>
+                    <span class="fui-label"><span data-i18n="console.om_nav_pass">Navidrome 密码（DPAPI 加密保存，留空保留原密码）</span> <span class="fui-badge" id="set-om-nav-state" hidden></span></span>
                     <input class="fui-dialog__input" id="set-om-nav-pass" type="password" autocomplete="new-password" spellcheck="false" placeholder="留空保留已加密凭据" data-i18n-placeholder="console.om_secret_keep">
                   </label>
                   <div class="moss-row">

@@ -3778,6 +3778,7 @@ body[data-frozen="true"] .moss-log-row--fresh {
 .moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-fui-media-controls,
 .moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-seek-bar,
 .moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-media-transport,
+.moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-nav-shelf,
 .moss-hud-card[data-hud-type="media"][data-mini="true"] .moss-hud-tracklist {
   display: none;
 }
@@ -4277,4 +4278,34 @@ body[data-auth-role="C"] [data-cs-only="true"] {
 .moss-hud-ctrl[data-active="true"] {
   border-color: var(--fui-act);
   color: var(--fui-act);
+}
+
+/* ── v5.6 Navidrome Cover & Playlist/Album Shelf ── */
+.moss-hud-cover {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-2);
+  flex: none;
+}
+.moss-hud-nav-shelf {
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+  max-height: 170px;
+  overflow-y: auto;
+}
+.moss-hud-nav-shelf[hidden] { display: none; }
+.moss-hud-nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.moss-hud-nav-empty {
+  margin: 2px 0;
+  font-size: 0.74rem;
+  color: var(--fui-text-dim);
 }

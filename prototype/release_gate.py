@@ -396,8 +396,11 @@ def run_v53_unit_checks():
         "assert first_loud <= 0.06, f'Pre-breath click leaked dead lead-in: {first_loud:.3f}s';"
         "print(f'{first_loud:.3f}')"
     )
-    onset_res = run_cmd([str(omni_py), "-c", onset_script], label="sustained-onset trim (OmniVoice venv)")
-    first_loud = float(onset_res["tail"].strip())
+    if omni_py.is_file():
+        onset_res = run_cmd([str(omni_py), "-c", onset_script], label="sustained-onset trim (OmniVoice venv)")
+        onset_label = f"first_loud={float(onset_res['tail'].strip()):.3f}s"
+    else:
+        onset_label = "skipped (no VoiceStudio)"
 
     # 2d. JS unit checks: 5-gesture classifier + live CPU 3-sample alert debounce
     js_unit = r"""
@@ -445,7 +448,7 @@ if (s1.state !== 'idle' || s2.state !== 'idle' || s3.state !== 'crit' || s4.stat
 console.log('V53_JS_UNITS_OK');
 """
     run_cmd(["node", "--input-type=module", "-e", js_unit], label="v5.3 JS units (5 gestures + CPU debounce)")
-    return {"echo_strip": "PASS", "cloud_retry": "PASS", "onset_trim": f"first_loud={first_loud:.3f}s", "gestures_5": "PASS", "cpu_debounce": "PASS"}
+    return {"echo_strip": "PASS", "cloud_retry": "PASS", "onset_trim": onset_label, "gestures_5": "PASS", "cpu_debounce": "PASS"}
 
 
 def run_stage_unit():

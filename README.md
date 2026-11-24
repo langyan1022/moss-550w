@@ -30,6 +30,7 @@ MOSS 550W 是一个以**本地运行与隐私安全**为核心的个人 AI 伴�
 | [`architecture/MOSS架构评估.md`](./architecture/MOSS架构评估.md) | 个人助手底座框架评估与能力边界分析 |
 | [`框架选型实测.md`](./框架选型实测.md) | Pydantic AI Slim / LangGraph / nanobot 工具执行、取消与重启恢复实测对照 |
 | [`architecture/MOSS技术演进路线.md`](./architecture/MOSS技术演进路线.md) | 从原型到 v5.5+ 的全量迭代记录与实测数据归档说明 |
+| [`architecture/MOSS下一阶段演进规划_v5.6-v6.0.md`](./architecture/MOSS下一阶段演进规划_v5.6-v6.0.md) | `v5.5+` 开源后深度复盘与 `v5.6` → `v6.0` 分阶段演进规划 |
 | [`architecture/MOSS本机语音候选比较.md`](./architecture/MOSS本机语音候选比较.md) | 本机 TTS / ASR / 打断与 Turn-Taking 候选方案实测对比 |
 | [`architecture/HoloJarvis整体二开评估.md`](./architecture/HoloJarvis整体二开评估.md) | HoloJarvis 运行时与 550W FUI 融合改造评估 |
 | [`architecture/MOSS实体硬件与HomeAssistant对接协议.md`](./architecture/MOSS实体硬件与HomeAssistant对接协议.md) | Home Assistant 与硬件遥测/控制 HTTP 接口约定 |

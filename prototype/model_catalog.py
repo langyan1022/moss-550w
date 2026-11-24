@@ -13,8 +13,8 @@ from urllib.parse import urlsplit
 from dotenv import dotenv_values
 import httpx2
 from pydantic import SecretStr
-import win32crypt
-import pywintypes
+
+from secret_store import SecretStoreError, app_config_dir, unprotect_secret
 
 
 SPECS = {
@@ -142,7 +142,7 @@ def allowed(provider_id, url):
 
 def profiles():
     legacy = Path(os.environ.get("MOSS_PROVIDER_DIR", r"F:\moss\tts"))
-    config = Path(os.environ["LOCALAPPDATA"]) / "MOSS-550W/chat-providers.json"
+    config = app_config_dir() / "chat-providers.json"
     try:
         document = json.loads(config.read_text(encoding="utf-8-sig"))
         saved = document.get("profiles") if isinstance(document, dict) else None
@@ -170,11 +170,15 @@ def profiles():
         if allowed(key, url):
             encrypted = entry.get("key")
             if encrypted:
-                entropy = f"MOSS-550W\0{key}\0{url}".encode("utf-8")
                 try:
-                    secret = win32crypt.CryptUnprotectData(base64.b64decode(encrypted, validate=True), entropy, None, None, 1)[1].decode("ascii")
-                except (ValueError, TypeError, pywintypes.error):
-                    reason = "此 Windows 用户无法读取已保存的该提供方凭据"
+                    secret = unprotect_secret(
+                        encrypted,
+                        entropy=f"MOSS-550W\0{key}\0{url}",
+                        flags=1,
+                        raise_on_error=True,
+                    )
+                except (ValueError, TypeError, SecretStoreError):
+                    reason = "此用户环境无法读取已保存的该提供方凭据"
             else:
                 secret = next((s for u, s, _ in layers if s and (u or default_url) == url), "")
         else:

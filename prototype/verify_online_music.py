@@ -326,10 +326,31 @@ async def test_http_proxy_rbac_and_range():
             headers={"Content-Type": "audio/mpeg", "Accept-Ranges": "bytes"},
         )
 
+    sample_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+    async def handle_cover(request):
+        q = parse_qs(request.query_string)
+        if q.get("id") == ["bad_html"]:
+            return web.Response(text="<html>not image</html>", content_type="text/html")
+        return web.Response(body=sample_png, status=200, headers={"Content-Type": "image/png"})
+
+    async def handle_playlists(request):
+        return web.json_response({"subsonic-response": {"status": "ok", "playlists": {"playlist": [{"id": "pl1", "name": "深夜编码", "songCount": 2, "duration": 390}]}}})
+
+    async def handle_playlist(request):
+        return web.json_response({"subsonic-response": {"status": "ok", "playlist": {"id": "pl1", "name": "深夜编码", "entry": [{"id": "nd_pl_1", "title": "Night Code", "artist": "Synth", "duration": 210, "coverArt": "art_pl_1"}]}}})
+
+    async def handle_scrobble(request):
+        return web.json_response({"subsonic-response": {"status": "ok"}})
+
     up_app = web.Application()
     up_app.add_routes([
         web.get("/rest/ping.view", handle_ping),
         web.get("/rest/stream.view", handle_stream),
+        web.get("/rest/getCoverArt.view", handle_cover),
+        web.get("/rest/getPlaylists.view", handle_playlists),
+        web.get("/rest/getPlaylist.view", handle_playlist),
+        web.get("/rest/scrobble.view", handle_scrobble),
     ])
     up_runner = web.AppRunner(up_app)
     await up_runner.setup()
@@ -449,10 +470,51 @@ async def test_http_proxy_rbac_and_range():
                     return [{"syncedLyrics": "[00:02.00]Lyrics Line OK"}]
 
                 moss.online_music._fetcher = lrc_fetch
-                r_lrc = await cli_cs.get(f"{base}/api/media/ol_nd_test1/lyrics?title=Range%20Test%20Song&artist=Alice")
-                assert r_lrc.status == 200
-                lrc_data = await r_lrc.json()
-                assert lrc_data["has_lrc"] is True and lrc_data["lines"][0]["text"] == "Lyrics Line OK"
+                try:
+                    r_lrc = await cli_cs.get(f"{base}/api/media/ol_nd_test1/lyrics?title=Range%20Test%20Song&artist=Alice")
+                    assert r_lrc.status == 200
+                    lrc_data = await r_lrc.json()
+                    assert lrc_data["has_lrc"] is True and lrc_data["lines"][0]["text"] == "Lyrics Line OK"
+                finally:
+                    moss.online_music._fetcher = None
+
+                # Navidrome 2.0: browse playlists -> cover proxy MIME/SSRF check -> scrobble
+                r_pl_list = await cli_cs.get(f"{base}/api/online-music/browse?kind=playlists")
+                assert r_pl_list.status == 200, f"browse playlists failed: {r_pl_list.status} {await r_pl_list.text()}"
+                pl_items = (await r_pl_list.json()).get("items") or []
+                assert len(pl_items) == 1 and pl_items[0]["id"] == "pl1"
+
+                r_pl = await cli_cs.get(f"{base}/api/online-music/browse?kind=playlist&id=pl1")
+                assert r_pl.status == 200
+                pl_tracks = (await r_pl.json()).get("tracks") or []
+                assert len(pl_tracks) == 1 and pl_tracks[0].get("cover_url")
+                cov_url = pl_tracks[0]["cover_url"]
+
+                r_cov = await cli_cs.get(f"{base}{cov_url}")
+                assert r_cov.status == 200 and r_cov.headers.get("Content-Type") == "image/png"
+                assert r_cov.headers.get("X-Content-Type-Options") == "nosniff"
+                assert (await r_cov.read()) == sample_png
+
+                # Non-image upstream cover must be rejected with 502
+                bad_cov = moss.online_music._cache_track({
+                    "media_id": "ol_nd_badcov",
+                    "provider": "navidrome",
+                    "external_id": "badcov",
+                    "title": "Bad Cover",
+                    "artist": "Test",
+                    "raw_url": "navidrome://badcov",
+                    "meta": {"cover_ref": "bad_html"},
+                })
+                r_bad_cov = await cli_cs.get(f"{base}{bad_cov['cover_url']}")
+                assert r_bad_cov.status == 502
+
+                # Scrobble submission returns ok
+                r_scr = await cli_cs.post(f"{base}/api/online-music/scrobble", json={"media_id": pl_tracks[0]["media_id"], "submission": True})
+                assert r_scr.status == 200 and (await r_scr.json()).get("ok") is True
+
+                # Jamendo ping validation handles bad client_id format cleanly
+                bad_jam = await moss.online_music.ping_jamendo("!!")
+                assert bad_jam["ok"] is False and bad_jam["error"] is True
         finally:
             stopped.set()
             await runner.cleanup()

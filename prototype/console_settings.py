@@ -16,15 +16,14 @@ from tempfile import NamedTemporaryFile
 
 from aiohttp import web
 import aiohttp
-import pywintypes
-import win32crypt
 
 from media_chat import json_command
 from model_catalog import SPECS, allowed, profiles
+from secret_store import SecretStoreError, app_config_dir, protect_secret
 
 
 def provider_path():
-    return Path(os.environ["LOCALAPPDATA"]) / "MOSS-550W/chat-providers.json"
+    return app_config_dir() / "chat-providers.json"
 
 
 def save_provider(provider_id, current, url, model, secret):
@@ -52,9 +51,7 @@ def save_provider(provider_id, current, url, model, secret):
         raise ValueError("本机服务商配置格式无效。")
     updated = {**stored, "base_url": url, "model": model}
     if secret is not None:
-        entropy = f"MOSS-550W\0{provider_id}\0{url}".encode("utf-8")
-        encrypted = win32crypt.CryptProtectData(secret.encode("ascii"), "MOSS", entropy, None, None, 1)
-        updated["key"] = base64.b64encode(encrypted).decode("ascii")
+        updated["key"] = protect_secret(secret, entropy=f"MOSS-550W\0{provider_id}\0{url}", description="MOSS", flags=1)
     elif url != current.url:
         updated.pop("key", None)
     values[provider_id] = updated
@@ -454,7 +451,7 @@ def install_console_settings(app, moss):
                           model.strip() if isinstance(model, str) else model, body.get("api_key") or None)
         except ValueError as error:
             return reply({"error": str(error)}, status=400)
-        except (OSError, pywintypes.error):
+        except (OSError, SecretStoreError):
             return reply({"error": "无法保存本机模型设置。"}, status=500)
         moss.cloud[provider_id] = profiles()[provider_id]
         retired = moss.clients.pop(provider_id, None)
@@ -544,11 +541,16 @@ def install_console_settings(app, moss):
             if target == "public":
                 res = await moss.online_music.search_tracks(str(body.get("query") or "piano")[:40], limit=2)
                 items = res.get("items") or []
+                jam_res = await moss.online_music.ping_jamendo(body.get("jamendo_client_id"))
+                jam_detail = jam_res.get("detail") or ""
+                jam_err = bool(jam_res.get("error"))
                 return reply({
-                    "ok": bool(items),
+                    "ok": bool(items) and not jam_err,
                     "count": len(items),
                     "providers": res.get("providers_consulted") or [],
                     "sample": items[0]["title"] if items else "",
+                    "jamendo_detail": jam_detail,
+                    "jamendo_error": jam_err,
                 })
             raise ValueError("未知在线曲库探测目标。")
         except (ValueError, RuntimeError, aiohttp.ClientError, asyncio.TimeoutError, OSError) as err:

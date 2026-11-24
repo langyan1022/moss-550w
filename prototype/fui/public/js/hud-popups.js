@@ -732,6 +732,16 @@ export function createHudPopupsController({
   }
 
   function selectQueueItem(card, item, index) {
+    if (card.customMedia) {
+      card.customMedia = { ...card.customMedia, selected: item, autoplay: true, playback: null };
+      if (card.key) {
+        for (const k of [...attemptedPlay]) {
+          if (k.includes(card.key)) attemptedPlay.delete(k);
+        }
+      }
+      renderOpenCards({ autoplayKey: card.key });
+      return;
+    }
     const prevMediaId = card.turn?.media?.selected?.media_id || null;
     for (const k of [...attemptedPlay]) {
       if (k.includes(card.turn.id)) attemptedPlay.delete(k);
@@ -766,6 +776,10 @@ export function createHudPopupsController({
     for (const turn of turns) {
       const cards = buildCardsForTurn(turn);
       for (const c of cards) {
+        const prev = registry.get(c.key);
+        if (prev?.customMedia && prev.turn?.media?.selected?.media_id === turn.media?.selected?.media_id) {
+          c.customMedia = prev.customMedia;
+        }
         seenKeys.add(c.key);
         registry.set(c.key, c);
       }
@@ -982,8 +996,8 @@ export function createHudPopupsController({
 
   /* ── Render Active MOSS-Avoiding Floating HUD Card ── */
   function mediaSignature(card) {
-    const media = card.turn?.media;
-    return JSON.stringify([card.key, card.pendingQuery, media?.selected?.media_id,
+    const media = card.customMedia || card.turn?.media;
+    return JSON.stringify([card.key, Boolean(card.customMedia), card.pendingQuery, media?.selected?.media_id,
       media?.selected?.url, media?.playback, media?.autoplay, media?.resume_position_s, media?.items,
       card.turn?.status === 'cancelled' || card.turn?.status === 'error']);
   }
@@ -1348,7 +1362,7 @@ export function createHudPopupsController({
       return;
     }
 
-    const m = card.turn?.media || {};
+    const m = card.customMedia || card.turn?.media || {};
     const items = m.items || [];
     const selected = m.selected || items[0] || null;
     const selIdx = selected ? items.findIndex((x) => x.media_id === selected.media_id) : -1;
@@ -1362,6 +1376,7 @@ export function createHudPopupsController({
     const hasClip = Number.isFinite(clipStart) && Number.isFinite(clipEnd) && clipStart >= 0 && clipEnd > clipStart;
     const source = selected?.url || (selected?.media_id ? `/media/${encodeURIComponent(selected.media_id)}` : '');
     const mediaSrc = hasClip && source ? `${source.split('#', 1)[0]}#t=${clipStart},${clipEnd}` : source;
+    const coverSrc = !isSimTrack && kind !== 'video' ? safePopupUrl(selected?.cover_url) : null;
 
     const mediaStage = document.createElement('div');
     mediaStage.className = 'moss-hud-media-stage';
@@ -1377,16 +1392,30 @@ export function createHudPopupsController({
       el.preload = isLive ? 'none' : 'metadata';
       el.playsInline = true;
       el.src = mediaSrc;
-      const identity = card.local || m.selected?.media_id !== selected.media_id ? null : {
-        chat_id: card.turn.chat_id, turn_id: card.turn.id, media_id: selected.media_id,
+      const isCustom = Boolean(card.customMedia);
+      const identity = (card.local || (!isCustom && m.selected?.media_id !== selected.media_id)) ? null : {
+        chat_id: card.turn?.chat_id || 'browse',
+        turn_id: isCustom ? card.key : card.turn.id,
+        media_id: selected.media_id,
+        custom: isCustom,
       };
       let playId = null;
       let playing = false;
       let pausedByUser = false;
       let failureReported = false;
+      let scrobbledStart = false;
+      let scrobbledDone = false;
       function reportPlayback(event, extra = {}) {
-        if (!identity || !el.isConnected) return;
+        if (!identity || identity.custom || !el.isConnected) return;
         return onMediaEvent?.({ ...identity, event, play_id: playId, ...extra });
+      }
+      function pingScrobble(submission) {
+        if (selected.provider !== 'navidrome' || !selected.media_id || card.local) return;
+        fetch('/api/online-music/scrobble', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ media_id: selected.media_id, submission: Boolean(submission) }),
+        }).catch(() => {});
       }
       const startPosition = Number.isFinite(m.resume_position_s) ? m.resume_position_s : hasClip ? clipStart : 0;
       if (startPosition > 0) {
@@ -1408,6 +1437,7 @@ export function createHudPopupsController({
       deck.className = 'moss-hud-media-deck';
       deck.innerHTML = `
         <div class="moss-hud-media-meta">
+          ${coverSrc ? `<img class="moss-hud-cover" data-media-cover src="${escapeHtml(coverSrc)}" alt="" loading="lazy">` : ''}
           <span class="fui-badge" data-media-badge data-state="${isLive ? 'warn' : isVideo ? 'data' : 'ok'}">${escapeHtml(badgeLabel)}</span>
           <span class="moss-hud-media-artist">${escapeHtml(selected.artist || selected.source_label || selected.title || '550W MEDIA')}</span>
           <span class="fui-num" data-media-time>${isLive ? 'LIVE · 00:00' : '00:00 / --:--'}</span>
@@ -1430,7 +1460,7 @@ export function createHudPopupsController({
             <button class="moss-hud-ctrl" type="button" data-media-seek="-10" ${isLive ? 'disabled' : ''}>-10s</button>
             <button class="moss-hud-ctrl" type="button" data-media-seek="10" ${isLive ? 'disabled' : ''}>+10s</button>
             <button class="moss-hud-ctrl" type="button" data-media-rate ${isLive ? 'disabled' : ''}>1.0x</button>
-            ${isVideo ? `<button class="moss-hud-ctrl" type="button" data-media-fs>${escapeHtml(t('strip.fullscreen'))}</button>` : `<button class="moss-hud-ctrl" type="button" data-media-fav aria-pressed="false" title="${escapeHtml(t('hud.fav_title'))}">${escapeHtml(t('hud.fav'))}</button><button class="moss-hud-ctrl" type="button" data-media-sleep title="${escapeHtml(t('hud.sleep_title'))}">${escapeHtml(t('hud.sleep_off'))}</button>`}
+            ${isVideo ? `<button class="moss-hud-ctrl" type="button" data-media-fs>${escapeHtml(t('strip.fullscreen'))}</button>` : `<button class="moss-hud-ctrl" type="button" data-media-fav aria-pressed="false" title="${escapeHtml(t('hud.fav_title'))}">${escapeHtml(t('hud.fav'))}</button><button class="moss-hud-ctrl" type="button" data-media-sleep title="${escapeHtml(t('hud.sleep_title'))}">${escapeHtml(t('hud.sleep_off'))}</button>${!card.local ? `<button class="moss-hud-ctrl" type="button" data-media-nav aria-expanded="false" title="${escapeHtml(t('hud.nav_browse_title'))}">${escapeHtml(t('hud.nav_browse'))}</button>` : ''}`}
           </div>
           <div class="moss-fui-vol-wrap">
             <button class="moss-hud-ctrl" type="button" data-media-mute aria-pressed="false">${escapeHtml(t('hud.vol'))}</button>
@@ -1438,9 +1468,12 @@ export function createHudPopupsController({
               <div class="moss-fui-vol__fill" data-media-vol-fill style="width: 100%"></div>
             </div>
           </div>
-        </div>`;
+        </div>
+        ${!isVideo && !card.local ? '<div class="moss-hud-nav-shelf" data-media-nav-shelf hidden></div>' : ''}`;
 
       mediaStage.append(el, deck);
+      const coverEl = deck.querySelector('[data-media-cover]');
+      coverEl?.addEventListener('error', () => { coverEl.hidden = true; });
 
       const playBtn = deck.querySelector('[data-media-play]');
       const miniPlayBtn = deck.querySelector('[data-media-mini-play]');
@@ -1452,6 +1485,8 @@ export function createHudPopupsController({
       const rateBtn = deck.querySelector('[data-media-rate]');
       const favBtn = deck.querySelector('[data-media-fav]');
       const sleepBtn = deck.querySelector('[data-media-sleep]');
+      const navBtn = deck.querySelector('[data-media-nav]');
+      const navShelf = deck.querySelector('[data-media-nav-shelf]');
       const lyricsBox = deck.querySelector('[data-media-lyrics]');
       const lrcCurEl = deck.querySelector('[data-lrc-cur]');
       const lrcNxtEl = deck.querySelector('[data-lrc-nxt]');
@@ -1538,6 +1573,73 @@ export function createHudPopupsController({
         armSleepTimer(nextIdx >= 0 ? SLEEP_STEPS[nextIdx] : 0);
       });
 
+      let navMode = 'playlists';
+      async function loadNavBrowse(kind, itemId = '') {
+        if (!navShelf) return;
+        navShelf.innerHTML = `<p class="moss-hud-nav-empty">${escapeHtml(t('hud.nav_loading'))}</p>`;
+        try {
+          const qs = new URLSearchParams({ kind, ...(itemId ? { id: itemId } : {}) });
+          const resp = await fetch(`/api/online-music/browse?${qs}`, { cache: 'no-store' });
+          const data = await resp.json().catch(() => null);
+          if (!resp.ok || !data) {
+            navShelf.innerHTML = `<p class="moss-hud-nav-empty">${escapeHtml(data?.error || t('hud.nav_empty'))}</p>`;
+            return;
+          }
+          if (Array.isArray(data.tracks)) {
+            if (!data.tracks.length) {
+              navShelf.innerHTML = `<p class="moss-hud-nav-empty">${escapeHtml(t('hud.nav_empty'))}</p>`;
+              return;
+            }
+            card.customMedia = {
+              ...m,
+              title: data.name || m.title,
+              items: data.tracks,
+              selected: data.tracks[0],
+              autoplay: true,
+              playback: null,
+              online: true,
+            };
+            renderOpenCards({ autoplayKey: card.key });
+            return;
+          }
+          const rows = data.items || [];
+          navShelf.innerHTML = `
+            <div class="moss-hud-nav-tabs">
+              <button class="moss-hud-ctrl" type="button" data-nav-tab="playlists" data-active="${String(kind === 'playlists')}">${escapeHtml(t('hud.nav_playlists'))}</button>
+              <button class="moss-hud-ctrl" type="button" data-nav-tab="albums" data-active="${String(kind === 'albums')}">${escapeHtml(t('hud.nav_albums'))}</button>
+            </div>
+            ${rows.length ? '' : `<p class="moss-hud-nav-empty">${escapeHtml(t('hud.nav_empty'))}</p>`}`;
+          for (const tabBtn of navShelf.querySelectorAll('[data-nav-tab]')) {
+            tabBtn.addEventListener('click', () => {
+              navMode = tabBtn.dataset.navTab || 'playlists';
+              void loadNavBrowse(navMode);
+            });
+          }
+          for (const entry of rows) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'moss-hud-track';
+            const sub = entry.artist ? ` · ${entry.artist}` : '';
+            btn.innerHTML = `<span class="fui-num">${kind === 'playlists' ? 'PL' : 'AL'}</span><span class="moss-hud-track__name">${escapeHtml(entry.name)}${escapeHtml(sub)}</span><span class="fui-num moss-hud-track__kind">${escapeHtml(t('hud.nav_tracks', { n: entry.song_count || 0 }))}</span>`;
+            btn.addEventListener('click', () => {
+              void loadNavBrowse(kind === 'playlists' ? 'playlist' : 'album', entry.id);
+            });
+            navShelf.append(btn);
+          }
+        } catch {
+          navShelf.innerHTML = `<p class="moss-hud-nav-empty">${escapeHtml(t('hud.nav_empty'))}</p>`;
+        }
+      }
+      navBtn?.addEventListener('click', () => {
+        if (!navShelf) return;
+        const willOpen = navShelf.hidden;
+        navShelf.hidden = !willOpen;
+        navBtn.setAttribute('aria-expanded', String(willOpen));
+        if (willOpen) navBtn.dataset.active = 'true';
+        else delete navBtn.dataset.active;
+        if (willOpen) void loadNavBrowse(navMode);
+      });
+
       const RATES = [1, 1.25, 1.5, 2, 0.75];
       let rateIdx = 0;
       const trackHist = new Float32Array(192);
@@ -1615,6 +1717,10 @@ export function createHudPopupsController({
         const micros = Math.round((performance.timeOrigin + event.timeStamp) * 1000);
         lastStartedAtUs = Math.max(micros, lastStartedAtUs + 1);
         Promise.resolve(reportPlayback('started', { started_at_us: lastStartedAtUs })).catch(() => {});
+        if (!scrobbledStart) {
+          scrobbledStart = true;
+          pingScrobble(false);
+        }
         window.dispatchEvent(new CustomEvent('moss-media-start', { detail: { turnId: card.turn?.id, title: selected.title, element: el } }));
       });
       const onStop = () => {
@@ -1627,7 +1733,14 @@ export function createHudPopupsController({
         paintIdleViz();
       };
       el.addEventListener('pause', onStop);
-      el.addEventListener('ended', () => { playId = null; onStop(); });
+      el.addEventListener('ended', () => {
+        if (!scrobbledDone) {
+          scrobbledDone = true;
+          pingScrobble(true);
+        }
+        playId = null;
+        onStop();
+      });
 
       function reportFailure() {
         if (!identity || !el.isConnected || failureReported) return;

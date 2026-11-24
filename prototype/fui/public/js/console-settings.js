@@ -65,16 +65,22 @@ function installConsoleSettings() {
   const omRadio = get('set-om-radio');
   const omJamendo = get('set-om-jamendo');
   const omJamendoId = get('set-om-jamendo-id');
+  const omJamendoState = get('set-om-jamendo-state');
   const omNavEnabled = get('set-om-nav-enabled');
   const omNavUrl = get('set-om-nav-url');
   const omNavUser = get('set-om-nav-user');
   const omNavPass = get('set-om-nav-pass');
+  const omNavState = get('set-om-nav-state');
   const omPingNav = get('set-om-ping-nav');
   const omPingPub = get('set-om-ping-pub');
   let omLoading = false;
   let omSaving = false;
+  let omLoaded = false;
+  let omDirty = false;
   let omShown = false;
   let omHasConfig = false;
+  let providerDirty = false;
+  let providersLoaded = false;
 
   const locationOptions = new URLSearchParams(location.search);
   const demo = locationOptions.get('sim') === '1' || locationOptions.has('beat');
@@ -149,6 +155,8 @@ function installConsoleSettings() {
     feedback(providerFeedback, 'console.loading');
     try {
       applyProviders(await request('providers'));
+      providersLoaded = true;
+      providerDirty = false;
       feedback(providerFeedback);
     } catch (error) {
       providers = [];
@@ -159,6 +167,7 @@ function installConsoleSettings() {
     }
   }
 
+  providerForm.addEventListener('input', () => { providerDirty = true; });
   providerForm.addEventListener('submit', async event => {
     event.preventDefault();
     if (savingProvider || loadingProviders || !providerId || !canAccess()) return;
@@ -302,9 +311,40 @@ function installConsoleSettings() {
     return `http://${val}`;
   }
 
+  function syncSecretBadges() {
+    if (omJamendoState) {
+      if (omJamendoId?.value?.trim()) {
+        omJamendoState.hidden = false;
+        omJamendoState.dataset.state = 'warn';
+        omJamendoState.textContent = t('console.om_state_dirty');
+      } else if (omHasJamId) {
+        omJamendoState.hidden = false;
+        omJamendoState.dataset.state = 'ok';
+        omJamendoState.textContent = t('console.om_state_saved');
+      } else {
+        omJamendoState.hidden = true;
+      }
+    }
+    if (omNavState) {
+      if (omNavPass?.value) {
+        omNavState.hidden = false;
+        omNavState.dataset.state = 'warn';
+        omNavState.textContent = t('console.om_state_dirty');
+      } else if (omHasNavPw) {
+        omNavState.hidden = false;
+        omNavState.dataset.state = 'ok';
+        omNavState.textContent = t('console.om_state_saved');
+      } else {
+        omNavState.hidden = true;
+      }
+    }
+  }
+
   function applyOnlineMusic(data) {
     omHasConfig = Boolean(data);
     if (!data) return;
+    omLoaded = true;
+    omDirty = false;
     if (omEnabled) omEnabled.checked = data.enabled !== false;
     if (omLrclib) omLrclib.checked = data.lyrics_lrclib !== false;
     if (omEmpty) omEmpty.checked = data.fallback_when_empty !== false;
@@ -328,6 +368,7 @@ function installConsoleSettings() {
       omNavPass.value = '';
       omNavPass.placeholder = t(omHasNavPw ? 'console.om_secret_saved' : 'console.om_secret_keep');
     }
+    syncSecretBadges();
   }
 
   async function loadOnlineMusic() {
@@ -349,6 +390,16 @@ function installConsoleSettings() {
       if (omFields) omFields.disabled = !canAccess() || !omHasConfig;
     }
   }
+
+  const markOmDirty = () => {
+    omDirty = true;
+    syncSecretBadges();
+    if (!omSaving && !omLoading && omFeedback) {
+      feedback(omFeedback, 'console.om_dirty_hint');
+    }
+  };
+  omForm?.addEventListener('input', markOmDirty);
+  omForm?.addEventListener('change', markOmDirty);
 
   omForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -399,16 +450,22 @@ function installConsoleSettings() {
             username: String(omNavUser?.value || '').trim(),
             password: omNavPass?.value || '',
           }
-        : { target: 'public', query: 'piano' };
+        : {
+            target: 'public',
+            query: 'piano',
+            ...(omJamendoId?.value?.trim() ? { jamendo_client_id: omJamendoId.value.trim() } : {}),
+            jamendo_enabled: Boolean(omJamendo?.checked),
+          };
       const res = await requestApi('/api/online-music/ping', payload);
       if (target === 'navidrome') {
         const detail = [res.type || 'subsonic', res.version].filter(Boolean).join(' v');
         feedback(omFeedback, null, { reason: t('console.om_ping_ok', { detail }) });
       } else if (res.ok) {
-        const detail = `${(res.providers || []).join(', ')} · ${res.sample || res.count}`;
-        feedback(omFeedback, null, { reason: t('console.om_ping_ok', { detail }) });
+        const parts = [`${(res.providers || []).join(', ')} · ${res.sample || res.count}`];
+        if (res.jamendo_detail) parts.push(res.jamendo_detail);
+        feedback(omFeedback, null, { reason: t('console.om_ping_ok', { detail: parts.join(' | ') }), error: Boolean(res.jamendo_error) });
       } else {
-        feedback(omFeedback, 'console.om_ping_empty', { error: true });
+        feedback(omFeedback, null, { reason: res.jamendo_detail || t('console.om_ping_empty'), error: true });
       }
     } catch (error) {
       feedback(omFeedback, null, { reason: error.message, error: true });
@@ -425,14 +482,19 @@ function installConsoleSettings() {
     const showProvider = visible(providerSection);
     const showLibrary = visible(librarySection);
     const showOnlineMusic = Boolean(omSection && visible(omSection));
-    if (!dialog.open || !providerSection.open) apiKey.value = '';
-    if (!dialog.open || !omSection?.open) {
+    if (!dialog.open) {
+      apiKey.value = '';
+      providerDirty = false;
+      providersLoaded = false;
       if (omNavPass) omNavPass.value = '';
       if (omJamendoId) omJamendoId.value = '';
+      omDirty = false;
+      omLoaded = false;
+      syncSecretBadges();
     }
-    if (showProvider && !providersShown) void loadProviders();
+    if (showProvider && !providersLoaded && !providerDirty) void loadProviders();
     if (showLibrary && !libraryShown) void loadLibrary();
-    if (showOnlineMusic && !omShown) void loadOnlineMusic();
+    if (showOnlineMusic && !omLoaded && !omDirty) void loadOnlineMusic();
     if (!showLibrary || !canAccess()) {
       clearTimeout(scanPoll);
       libraryRead?.abort();
@@ -457,6 +519,7 @@ function installConsoleSettings() {
     }
     if (omJamendoId) omJamendoId.placeholder = t(omHasJamId ? 'console.om_secret_saved' : 'console.om_secret_keep');
     if (omNavPass) omNavPass.placeholder = t(omHasNavPw ? 'console.om_secret_saved' : 'console.om_secret_keep');
+    syncSecretBadges();
     updateAvailability();
     renderLibrary();
   });
