@@ -313,7 +313,7 @@ async def unit_http_roundtrip(folder: Path):
 
                     # 1. Calendar create -> confirm -> query 有没有 -> cancel 把刚才的日程取消掉 -> confirm -> query empty
                     c_create = await ask("明天上午10点到11点安排日程：产品评审")
-                    assert c_create["status"] == "pending"
+                    assert c_create["status"] == "pending", f"unexpected status: c_create={c_create!r} now={datetime.now().isoformat()}"
                     code, _ = await post("/api/approve", {"turn_id": c_create["id"]})
                     assert code == 200
                     c_saved = await wait_done(c_create["id"])
