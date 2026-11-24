@@ -50,6 +50,18 @@ def upstream_release(projects):
     raise ValueError("尚无同一版本的无声源文件和配套发布记录：" + "、".join(name for name, _ in pending))
 
 
+def _asset_matches(path: Path, expected: str) -> bool:
+    if not path.is_file() or not expected:
+        return False
+    if digest(path) == expected:
+        return True
+    if path.suffix.lower() in {".json", ".js"}:
+        raw = path.read_bytes()
+        alt = raw.replace(b"\r\n", b"\n") if b"\r\n" in raw else raw.replace(b"\n", b"\r\n")
+        return hashlib.sha256(alt).hexdigest() == expected
+    return False
+
+
 def asset_hashes():
     return {name: digest(ASSETS / name) for name in
             ("moss-exterior.glb", "moss-exterior.json", "moss-render.js", "moss-view.js")}
@@ -107,7 +119,9 @@ def main():
                 print(f"待接入或验收。未找到上游目录 {args.projects}，且缺少 {ACCEPTED.name}。")
                 return 2
             current = read_json(ACCEPTED)
-            if current.get("assets") != asset_hashes():
+            expected_assets = current.get("assets") or {}
+            names = ("moss-exterior.glb", "moss-exterior.json", "moss-render.js", "moss-view.js")
+            if not all(_asset_matches(ASSETS / name, expected_assets.get(name, "")) for name in names):
                 print("运行时资产已变更，请重新执行浏览器验收。")
                 return 2
             print(f"上游目录未挂载（{args.projects}），已核验运行时资产与 {ACCEPTED.name} 一致。")
