@@ -102,6 +102,17 @@ def main():
             record(args.accept_runtime, previous["source"], previous["sourceSha256"], previous["upstreamReport"])
             print(f"已更新渲染验收 {ACCEPTED}")
             return
+        if not args.accept and not args.projects.is_dir():
+            if not ACCEPTED.is_file():
+                print(f"待接入或验收。未找到上游目录 {args.projects}，且缺少 {ACCEPTED.name}。")
+                return 2
+            current = read_json(ACCEPTED)
+            if current.get("assets") != asset_hashes():
+                print("运行时资产已变更，请重新执行浏览器验收。")
+                return 2
+            print(f"上游目录未挂载（{args.projects}），已核验运行时资产与 {ACCEPTED.name} 一致。")
+            print(f"已集成        {current['source']}\n浏览器验收    {current['qaReport']}")
+            return 0
         source, checksum, report, pending = upstream_release(args.projects.resolve())
         for name, pending_hash in pending:
             print(f"等待发布记录  {name}  SHA-256 {pending_hash}")

@@ -11,10 +11,10 @@ import secrets
 import socket
 import subprocess
 import sys
-from contextlib import AsyncExitStack, asynccontextmanager, closing
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from time import perf_counter
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import quote, urlsplit
 
 import aiohttp
 from aiohttp import web
@@ -39,8 +39,8 @@ from weather_location import browser_position
 from city_catalog import city_catalog, selected_city
 from window_image import IMAGE_MAX_JSON, prepare_window_image
 from doc_extract import IMAGE_EXTS, extract_document_bytes
-from music_prefs import load_lrc_for_media_path
-from online_music import _validate_public_url, make_pinned_connector, resolve_public_url
+from brain_iot_routes import install_brain_iot_routes
+from online_music_routes import install_online_music_routes
 
 
 ROOT = Path(__file__).resolve().parent
@@ -156,55 +156,66 @@ class _StatePayload:
         self.speech_mic_warm = speech_mic_warm
         self.speech_mic_warm_on_activity = speech_mic_warm_on_activity
         self.speech_session_warm = speech_session_warm
-        self.stamp = None
-        self.rows = {}
-        self.turns = b""
-        self.metadata = None
-        self.body = b""
+        self._caches = OrderedDict()
 
     @staticmethod
     def encode(value):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
-    def _refresh_turns(self, chat):
+    def _entry(self, owner):
+        entry = self._caches.get(owner)
+        if entry is None:
+            entry = {"stamp": None, "rows": {}, "turns": b"", "metadata": None, "body": b""}
+            self._caches[owner] = entry
+            while len(self._caches) > 32:
+                self._caches.popitem(last=False)
+        else:
+            self._caches.move_to_end(owner)
+        return entry
+
+    def _refresh_turns(self, entry, chat, owner):
         db = self.moss.db
         # total_changes sees this connection; data_version sees commits by other connections.
-        stamp = (chat, db.total_changes, db.execute("PRAGMA data_version").fetchone()[0])
-        if stamp == self.stamp:
+        stamp = (owner, chat, db.total_changes, db.execute("PRAGMA data_version").fetchone()[0])
+        if stamp == entry["stamp"]:
             return
-        previous = self.rows if self.stamp and self.stamp[0] == chat else {}
+        previous = entry["rows"] if entry["stamp"] and entry["stamp"][:2] == (owner, chat) else {}
         rows = {}
-        for key, doc, counts in self.moss._turn_rows():
+        for key, doc, counts in self.moss._turn_rows(chat):
             cached = previous.get(key)
             if cached is None or cached[:2] != (doc, counts):
-                turn = self.moss._public_turn(doc, counts)
+                turn = self.moss._public_turn(doc, counts, chat_id=chat)
                 cached = (doc, counts, self.encode(turn), bool(turn.get("transport")))
             rows[key] = cached
-        self.rows = rows
-        self.turns = b",".join(row[2] for row in rows.values())
-        self.metadata = None
-        self.stamp = stamp
+        entry["rows"] = rows
+        entry["turns"] = b",".join(row[2] for row in rows.values())
+        entry["metadata"] = None
+        entry["stamp"] = stamp
 
-    def read(self, transport_owner=None):
+    def read(self, transport_owner=None, owner_code=None):
+        owner = self.moss.normalize_owner(owner_code)
+        entry = self._entry(owner)
         # Expiration can change the visible memories without advancing the revision.
-        snapshot = self.moss._state_metadata()
+        snapshot = self.moss._state_metadata(owner_code=owner)
         snapshot["speech_prepare"] = self.speech_prepare
         snapshot["speech_mic_warm"] = self.speech_mic_warm
         snapshot["speech_mic_warm_on_activity"] = self.speech_mic_warm_on_activity
         snapshot["speech_session_warm"] = self.speech_session_warm
         snapshot["jev_handoff"] = DRAFT_HANDOFF_ENABLED
-        self._refresh_turns(snapshot["chat_id"])
-        owned = self.rows.get(transport_owner)
+        chat_id = snapshot["chat_id"]
+        self._refresh_turns(entry, chat_id, owner)
+        rows = entry["rows"]
+        owned = rows.get(transport_owner)
         if owned and owned[3]:
             # Encode the owner-only token separately, so public SSE and GET cannot reuse it.
-            owned_turn = self.encode(self.moss._public_turn(owned[0], owned[1], transport_owner))
-            turns = b",".join(owned_turn if key == transport_owner else row[2] for key, row in self.rows.items())
+            owned_turn = self.encode(self.moss._public_turn(owned[0], owned[1], transport_owner, chat_id=chat_id))
+            turns = b",".join(owned_turn if key == transport_owner else row[2] for key, row in rows.items())
             body = self.encode(snapshot)[:-1] + b',"turns":[' + turns + b"]}"
             return snapshot["revision"], body
-        if self.metadata != snapshot:
-            self.metadata = snapshot
-            self.body = self.encode(snapshot)[:-1] + b',"turns":[' + self.turns + b"]}"
-        return snapshot["revision"], self.body
+        if entry["metadata"] != snapshot:
+            entry["metadata"] = snapshot
+            entry["body"] = self.encode(snapshot)[:-1] + b',"turns":[' + entry["turns"] + b"]}"
+        return snapshot["revision"], entry["body"]
 
 
 def application(moss, local_engine, data, port, token, stopped, *, qwen_backend="auto", vulkan_device=None, allow_cpu=False,
@@ -417,8 +428,19 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
 
     moss.on_change = changed
 
-    def state_response(*, transport_owner=None, headers=None):
-        _, body = payloads.read(transport_owner)
+    def _req_owner(request):
+        ident = request.get("moss_identity")
+        if isinstance(ident, dict) and ident.get("code"):
+            return moss.normalize_owner(ident["code"])
+        auth_check = request.app.get("moss_auth_check")
+        if auth_check:
+            ok, resolved = auth_check(request)
+            if ok and isinstance(resolved, dict) and resolved.get("code"):
+                return moss.normalize_owner(resolved["code"])
+        return moss.DEFAULT_OWNER
+
+    def state_response(*, transport_owner=None, owner_code=None, headers=None):
+        _, body = payloads.read(transport_owner, owner_code=owner_code)
         return web.Response(body=body, content_type="application/json", charset="utf-8", headers=headers)
 
     _gzip_static_cache = OrderedDict()
@@ -555,7 +577,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         return response
 
     async def state(request):
-        return state_response(headers={"Cache-Control": "no-store"})
+        return state_response(owner_code=_req_owner(request), headers={"Cache-Control": "no-store"})
 
     async def jev_handoff(request):
         if request.headers.get("Origin") != f"{request.scheme}://{request.host}":
@@ -641,16 +663,17 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
 
     async def personality_endpoint(request):
         from personality import personality_list
+        owner = _req_owner(request)
         if request.method == "GET":
-            return web.json_response({"selected": moss.personality_id, "personalities": personality_list()},
+            return web.json_response({"selected": moss.owner_personality(owner), "personalities": personality_list()},
                                      headers={"Cache-Control": "no-store"})
         try:
             body = await request.json()
             preset_id = body.get("id") if isinstance(body, dict) else None
-            await moss.select_personality(preset_id)
+            await moss.select_personality(preset_id, owner_code=owner)
         except (ValueError, KeyError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        return state_response()
+        return state_response(owner_code=owner)
 
     async def ocr(request):
         try:
@@ -662,6 +685,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             return web.json_response({"error": "本机没有完成文字识别。"}, status=503)
 
     async def image_question(request):
+        owner = _req_owner(request)
         try:
             body = await request.clone(client_max_size=IMAGE_MAX_JSON).json()
             if not isinstance(body, dict) or body.get("model_id") != WINDOW_IMAGE_PROVIDER:
@@ -671,14 +695,17 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                 raise ValueError("请提供窗口画面来源和问题。")
             if len(text) > 1200 or len(text.encode("utf-8")) > 2700:
                 raise ValueError("请输入一条不超过 1200 个字符、2700 字节的问题。")
-            if chat_id != moss.chat_id or not moss.model_available(WINDOW_IMAGE_PROVIDER):
+            moss.require_chat_owner(chat_id, owner)
+            if chat_id != moss.active_chat_for(owner) or not moss.model_available(WINDOW_IMAGE_PROVIDER):
                 raise ValueError("请打开当前对话并核对百炼模型是否可用。")
             image, size = await asyncio.to_thread(prepare_window_image, body.get("image"))
-            if not await moss.message(text, chat_id, image_context=(source_id, image, size)):
+            if not await moss.message(text, chat_id, image_context=(source_id, image, size), owner_code=owner):
                 raise ValueError("请输入针对画面的问题。")
-            return state_response(headers={"Cache-Control": "no-store"})
+            return state_response(owner_code=owner, headers={"Cache-Control": "no-store"})
         except web.HTTPRequestEntityTooLarge:
             return web.json_response({"error": "截图超出 8 MiB，请选择较小的窗口。"}, status=413)
+        except PermissionError as error:
+            return web.json_response({"error": str(error)}, status=403)
         except (ValueError, KeyError) as error:
             return web.json_response({"error": str(error)}, status=409)
 
@@ -864,21 +891,23 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
 
     async def action(request):
         transport_owner = None
+        owner = _req_owner(request)
         try:
             body = await request.json()
             verb = request.match_info["verb"]
             if not isinstance(body, dict):
                 raise ValueError("需要 JSON 对象")
             if verb == "new-chat":
-                await moss.new_chat()
+                await moss.new_chat(owner_code=owner)
             elif verb == "transport-result":
-                moss.finish_transport(body)
+                moss.finish_transport(body, owner_code=owner)
             elif verb in {"media-select", "media-event"}:
                 chat, turn, media = (body.get(k) for k in ("chat_id", "turn_id", "media_id"))
                 if not all(isinstance(k, str) and k for k in (chat, turn, media)):
                     raise ValueError("缺少对话、轮次或媒体标识")
+                moss.require_chat_owner(chat, owner)
                 if verb == "media-select":
-                    await moss.select_media(chat, turn, media, body.get("index"))
+                    await moss.select_media(chat, turn, media, body.get("index"), owner_code=owner)
                 else:
                     event, play_id = body.get("event"), body.get("play_id")
                     recover = body.get("recover") is True and event == "failed"
@@ -886,13 +915,13 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                         def connected():
                             transport = request.transport
                             return transport is not None and not transport.is_closing()
-                        if await moss.resume_failed_track(chat, turn, media, play_id, body["position_s"], connected):
-                            return state_response()
+                        if chat == moss.active_chat_for(owner) and await moss.resume_failed_track(chat, turn, media, play_id, body["position_s"], connected):
+                            return state_response(owner_code=owner)
                         return web.json_response({"ok": True})
-                    moss.record_playback(chat, turn, media, event, play_id, body.get("started_at_us"))
+                    moss.record_playback(chat, turn, media, event, play_id, body.get("started_at_us"), owner_code=owner)
                     if recover:
                         if await moss.recover_failed_track(chat, turn, media):
-                            return state_response()
+                            return state_response(owner_code=owner)
                     return web.json_response({"ok": True})
             else:
                 fields = {"message": "text", "approve": "turn_id", "cancel": "turn_id", "select-model": "id",
@@ -919,9 +948,9 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                                                          reply_context_goal=body.get("reply_context_goal"),
                                                          reply_context_request_id=body.get("reply_context_request_id"),
                                                          window_context=body.get("window_context"), browser_location=position,
-                                                         configured_location=configured)
+                                                         configured_location=configured, owner_code=owner)
                 elif verb == "message":
-                    await moss.message(arg, browser_location=position, configured_location=configured)
+                    await moss.message(arg, browser_location=position, configured_location=configured, owner_code=owner)
                 elif verb in {"approve", "cancel"}:
                     draft_only = body.get("pending_draft_only") is True
                     calendar_only = body.get("pending_calendar_only") is True
@@ -932,9 +961,11 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                         if (verb != "cancel" or set(body) != {"turn_id", "chat_id", "conversation_only"}
                                 or body["conversation_only"] is not True or not isinstance(chat_id, str) or not chat_id):
                             raise ValueError("请指定当前对话及要结束的回复轮次。")
-                        await moss.cancel(arg, conversation_only=True, chat_id=chat_id)
+                        await moss.cancel(arg, conversation_only=True, chat_id=chat_id, owner_code=owner)
                     else:
-                        await getattr(moss, verb)(arg, pending_draft_only=draft_only, pending_calendar_only=calendar_only)
+                        await getattr(moss, verb)(arg, pending_draft_only=draft_only, pending_calendar_only=calendar_only, owner_code=owner)
+                elif verb in {"remember", "forget", "switch-chat", "select-personality"}:
+                    await getattr(moss, verb.replace("-", "_"))(arg, owner_code=owner)
                 else:
                     if verb == "select-model" and arg == "local":
                         await speech.release_microphone()
@@ -943,9 +974,11 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                         if hasattr(speech, "idle"):
                             await speech.idle()
                     await getattr(moss, verb.replace("-", "_"))(arg)
+        except PermissionError as exc:
+            return web.json_response({"error": str(exc)}, status=403)
         except (ValueError, KeyError) as exc:
             return web.json_response({"error": str(exc)}, status=409)
-        return state_response(transport_owner=transport_owner)
+        return state_response(transport_owner=transport_owner, owner_code=owner)
 
     async def backend_log_stream(request):
         stream = web.StreamResponse(headers={"Content-Type": "text/event-stream; charset=utf-8",
@@ -972,375 +1005,12 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
     async def runtime_log_source(request):
         return web.json_response(backend_log.source_info(), headers={"Cache-Control": "no-store"})
 
-    async def rsi_status(request):
-        return web.json_response(moss.rsi.status_snapshot(), headers={"Cache-Control": "no-store"})
-
-    async def rsi_iterate(request):
-        cycle = await moss.run_rsi_cycle(trigger="api")
-        return web.json_response({"cycle": cycle, "status": moss.rsi.status_snapshot()},
-                                 headers={"Cache-Control": "no-store"})
-
-    async def rsi_retire(request):
-        lesson_id = int(request.match_info["lesson_id"])
-        ok = moss.rsi.retire_lesson(lesson_id, reason="api_delete")
-        if not ok:
-            return web.json_response({"error": "未找到生效中的经验规则"}, status=404)
-        return web.json_response({"retired": lesson_id, "status": moss.rsi.status_snapshot()},
-                                 headers={"Cache-Control": "no-store"})
-
-    async def sag_status(request):
-        return web.json_response(moss.sag.status_snapshot(), headers={"Cache-Control": "no-store"})
-
-    async def sag_ingest(request):
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要 JSON 对象")
-            if body.get("file_path"):
-                created = moss.sag.ingest_file(Path(str(body["file_path"])))
-                return web.json_response({"ingested": len(created), "items": created, "status": moss.sag.status_snapshot()},
-                                         headers={"Cache-Control": "no-store"})
-            ev = moss.sag.upsert_event(
-                content=str(body.get("content") or ""),
-                title=str(body.get("title") or ""),
-                source=str(body.get("source") or "doc"),
-                source_ref=str(body.get("source_ref") or ""),
-            )
-            return web.json_response({"event": ev, "status": moss.sag.status_snapshot()},
-                                     headers={"Cache-Control": "no-store"})
-        except (ValueError, UnicodeDecodeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def sag_query(request):
-        try:
-            body = await request.json()
-            if not isinstance(body, dict) or not isinstance(body.get("query"), str):
-                raise ValueError("需要 query 字符串")
-            res = moss.sag.search(body["query"], limit=int(body.get("limit", 6)), hops=int(body.get("hops", 1)))
-            return web.json_response(res, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    def _brain_overview_payload():
-        return {
-            "rsi": moss.rsi.status_snapshot(),
-            "sag": moss.sag.status_snapshot(),
-            "soul": moss.soul.snapshot()["stats"],
-            "pulse": moss.pulse.status_snapshot(),
-            "world_model": moss.consolidator.latest_snapshot(),
-            "jobs": moss.jobs.list_jobs(),
-            "watchers": moss.jobs.list_watchers(),
-            "skills": moss.jobs.list_skills(),
-            "routines": moss.routines.list_tasks(),
-            "music_prefs": moss.music_prefs.snapshot(),
-            "iot": moss.iot.status_snapshot(),
-            "mobile_url": (f"https://{lan_host_list[0]}:{tls_port}/mobile" if (lan_host_list and tls_port)
-                           else f"http://{lan_host_list[0]}:{port}/mobile" if lan_host_list
-                           else f"http://127.0.0.1:{port}/mobile"),
-            "lan_urls": ([f"https://{h}:{tls_port}/" for h in lan_host_list] if tls_port else [])
-                        + [f"http://{h}:{port}/" for h in lan_host_list],
-        }
-
-    async def iot_config(request):
-        if request.method == "GET":
-            return web.json_response(moss.iot.status_snapshot(), headers={"Cache-Control": "no-store"})
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要配置对象")
-            cfg = moss.iot.update_config(body)
-            return web.json_response({"config": cfg, "iot": moss.iot.status_snapshot()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def ha_entities(request):
-        dom = request.query.get("domain", "")
-        return web.json_response(await moss.iot.ha_list_entities(dom), headers={"Cache-Control": "no-store"})
-
-    async def ha_service(request):
-        try:
-            body = await _read_json_dict(request)
-            res = await moss.iot.ha_call_service(
-                str(body.get("entity_id") or ""),
-                str(body.get("service") or ""),
-                body.get("data") if isinstance(body.get("data"), dict) else None,
-            )
-            return web.json_response(res, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def hardware_moss_command(request):
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要控制帧参数")
-            frame = moss.iot.push_hardware_frame(
-                mode=body.get("mode"),
-                yaw_deg=body.get("yaw_deg"),
-                pitch_deg=body.get("pitch_deg"),
-                gesture=body.get("gesture"),
-                screen_headline=body.get("screen_headline"),
-                screen_line1=body.get("screen_line1"),
-                screen_line2=body.get("screen_line2"),
-                screen_level=body.get("screen_level"),
-            )
-            return web.json_response({"frame": frame}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def hardware_moss_telemetry(request):
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要遥测 JSON 对象")
-            sensors = moss.iot.ingest_hardware_telemetry(body)
-            return web.json_response({"sensors": sensors}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def hardware_moss_stream(request):
-        stream = web.StreamResponse(headers={
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-        })
-        await stream.prepare(request)
-        sig = asyncio.Event()
-        moss.iot.hw_subscribers.add(sig)
-        sent_seq = -1
-        try:
-            while not stopped.is_set():
-                sig.clear()
-                if moss.iot.hw_seq != sent_seq:
-                    sent_seq = moss.iot.hw_seq
-                    payload = json.dumps(moss.iot.hw_state, ensure_ascii=False)
-                    await stream.write(f"id: {sent_seq}\nevent: hw-frame\ndata: {payload}\n\n".encode("utf-8"))
-                try:
-                    await asyncio.wait_for(sig.wait(), 15)
-                except TimeoutError:
-                    await stream.write(b": keep-alive\n\n")
-        except (ConnectionError, aiohttp.ClientConnectionError):
-            pass
-        finally:
-            moss.iot.hw_subscribers.discard(sig)
-        return stream
-
-    async def jobs_handler(request):
-        from assistant_brain import run_web_search
-        if request.method == "GET":
-            return web.json_response({"jobs": moss.jobs.list_jobs()}, headers={"Cache-Control": "no-store"})
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要任务参数对象")
-            kind = str(body.get("kind") or "web_research")
-            title = str(body.get("title") or body.get("topic") or body.get("path") or kind).strip()
-            params = {"topic": str(body.get("topic") or title)} if kind == "web_research" else {"path": str(body.get("path") or "")}
-            use_cloud = moss.model_id != "local" and moss.model_available(moss.model_id)
-            job = moss.jobs.submit_job(
-                kind=kind,
-                title=title,
-                params=params,
-                search_fn=run_web_search if kind == "web_research" else None,
-                llm_client=moss.model_client() if use_cloud else None,
-                llm_model=moss.model_name if use_cloud else "",
-            )
-            return web.json_response({"job": job, "jobs": moss.jobs.list_jobs()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def watchers_handler(request):
-        if request.method == "GET":
-            return web.json_response({"watchers": moss.jobs.list_watchers()}, headers={"Cache-Control": "no-store"})
-        if request.method == "DELETE":
-            wid = int(request.match_info["watcher_id"])
-            ok = moss.jobs.delete_watcher(wid)
-            return web.json_response({"deleted": ok, "watchers": moss.jobs.list_watchers()}, headers={"Cache-Control": "no-store"})
-        try:
-            body = await _read_json_dict(request)
-            w = moss.jobs.add_watcher(
-                name=str(body.get("name") or ""),
-                file_path=str(body.get("file_path") or ""),
-                pattern=str(body.get("pattern") or ""),
-            )
-            return web.json_response({"watcher": w, "watchers": moss.jobs.list_watchers()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def skills_handler(request):
-        if request.method == "GET":
-            return web.json_response({"skills": moss.jobs.list_skills()}, headers={"Cache-Control": "no-store"})
-        if request.method == "DELETE":
-            sid = int(request.match_info["skill_id"])
-            ok = moss.jobs.delete_skill(sid)
-            return web.json_response({"deleted": ok, "skills": moss.jobs.list_skills()}, headers={"Cache-Control": "no-store"})
-        try:
-            body = await _read_json_dict(request)
-            if body.get("mark_used"):
-                moss.jobs.mark_skill_used(int(body["mark_used"]))
-                return web.json_response({"skills": moss.jobs.list_skills()}, headers={"Cache-Control": "no-store"})
-            sk = moss.jobs.save_skill(
-                name=str(body.get("name") or ""),
-                description=str(body.get("description") or ""),
-                prompt=str(body.get("prompt") or ""),
-                category=str(body.get("category") or "custom"),
-            )
-            return web.json_response({"skill": sk, "skills": moss.jobs.list_skills()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
     async def mobile_page(request):
         if fui_public is not None:
             mfile = fui_public / "mobile.html"
             if mfile.is_file():
                 return web.FileResponse(mfile, headers={"Cache-Control": "no-cache"})
         raise web.HTTPNotFound()
-
-    async def brain_overview(request):
-        return web.json_response(_brain_overview_payload(), headers={"Cache-Control": "no-store"})
-
-    async def brain_consolidate(request):
-        result = moss.consolidator.run_consolidation(trigger="api")
-        return web.json_response({"consolidation": result, "overview": _brain_overview_payload()},
-                                 headers={"Cache-Control": "no-store"})
-
-    async def soul_snapshot(request):
-        return web.json_response(moss.soul.snapshot(), headers={"Cache-Control": "no-store"})
-
-    async def soul_profile_upsert(request):
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要画像对象")
-            trait = moss.soul.upsert_profile(
-                key=str(body.get("key") or ""),
-                value=str(body.get("value") or ""),
-                category=str(body.get("category") or "preference"),
-                confidence=float(body.get("confidence", 0.92)),
-                salience=float(body.get("salience", 1.1)),
-                source="user_edit",
-            )
-            return web.json_response({"trait": trait, "soul": moss.soul.snapshot()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def soul_profile_delete(request):
-        key = request.match_info.get("key", "")
-        removed = moss.soul.delete_profile(key)
-        if not removed:
-            return web.json_response({"error": "未找到该用户画像字段。", "removed": False}, status=404)
-        return web.json_response({"removed": True, "soul": moss.soul.snapshot()}, headers={"Cache-Control": "no-store"})
-
-    async def soul_belief_upsert(request):
-        try:
-            body = await _read_json_dict(request)
-            if "id" in body and body.get("status"):
-                raw_id = body.get("id")
-                if isinstance(raw_id, bool):
-                    raise ValueError("信念编号无效。")
-                belief = moss.soul.set_belief_status(int(raw_id), str(body["status"]))
-            else:
-                belief = moss.soul.upsert_belief(
-                    key=str(body.get("key") or ""),
-                    scope=str(body.get("scope") or "habit"),
-                    statement=str(body.get("statement") or ""),
-                    confidence=float(body.get("confidence", 0.88)),
-                )
-            return web.json_response({"belief": belief, "soul": moss.soul.snapshot()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def soul_belief_delete(request):
-        try:
-            bid = int(request.match_info["belief_id"])
-            removed = moss.soul.delete_belief(bid)
-            if not removed:
-                return web.json_response({"error": "未找到该条信念规则。", "removed": False}, status=404)
-            return web.json_response({"removed": True, "soul": moss.soul.snapshot()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def soul_distill_now(request):
-        result = moss.consolidator.run_consolidation(trigger="soul_ui")
-        return web.json_response(
-            {"consolidation": result, "soul": moss.soul.snapshot(), "overview": _brain_overview_payload()},
-            headers={"Cache-Control": "no-store"},
-        )
-
-    async def soul_export_md(request):
-        bundle = moss.soul.export_markdown_bundle()
-        combined = "\n\n---\n\n".join(bundle[name] for name in ("SOUL.md", "BELIEFS.md", "USER.md", "MEMORY.md"))
-        return web.json_response({"files": bundle, "combined_markdown": combined}, headers={"Cache-Control": "no-store"})
-
-    async def proactive_config(request):
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要配置对象")
-            cfg = moss.pulse.update_config(body)
-            return web.json_response({"config": cfg, "pulse": moss.pulse.status_snapshot()},
-                                     headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def proactive_briefing(request):
-        sample = await device_status.read()
-        wm_snap = moss.consolidator.latest_snapshot()
-        brief = moss.pulse.generate_briefing(
-            device_sample=sample,
-            timers_count=len(moss.timers.snapshot()),
-            notes_count=len((moss.notes.page("", archived=False, before=0, limit=50)).get("items") or []),
-            rsi_active=moss.rsi.status_snapshot()["active_count"],
-            sag_events=moss.sag.status_snapshot()["event_count"],
-            world_model=(wm_snap or {}).get("world_model"),
-        )
-        return web.json_response(brief, headers={"Cache-Control": "no-store"})
-
-    async def proactive_dismiss(request):
-        aid = int(request.match_info["alert_id"])
-        ok = moss.pulse.dismiss_alert(aid)
-        return web.json_response({"dismissed": ok, "pulse": moss.pulse.status_snapshot()},
-                                 headers={"Cache-Control": "no-store"})
-
-    async def vision_to_sag(request):
-        from window_image import answer_image
-        try:
-            body = await request.clone(client_max_size=IMAGE_MAX_JSON).json()
-            if not isinstance(body, dict) or not isinstance(body.get("image"), str):
-                raise ValueError("请提供 base64 PNG 图像数据")
-            png_bytes, _size = await asyncio.to_thread(prepare_window_image, body["image"])
-            custom_title = str(body.get("title") or "").strip()[:60]
-            prompt = str(body.get("prompt") or (
-                "请简洁提取画面中的核心事实信息（如单号、人名、项目名、日期、书名、待办、关键数字或白板要点），"
-                "输出 2 到 4 句结构化中文摘要，便于知识库检索。"
-            ))[:400]
-            method = "ocr"
-            summary = ""
-            if moss.model_available(WINDOW_IMAGE_PROVIDER):
-                try:
-                    client = moss.model_client(WINDOW_IMAGE_PROVIDER)
-                    model_name = moss.cloud[WINDOW_IMAGE_PROVIDER].model
-                    summary = await answer_image(client, model_name, png_bytes, prompt, None)
-                    method = f"vision:{model_name}"
-                except Exception:
-                    summary = ""
-            if not summary.strip():
-                summary = (await recognize_capture(png_bytes)).strip()
-                method = "local_ocr"
-            if not summary.strip():
-                return web.json_response({"error": "未能从画面中提取出有效文字或事实信息。"}, status=422)
-            ev = moss.sag.upsert_event(
-                content=summary,
-                title=custom_title or f"镜头识图 · {summary[:28]}",
-                source="vision",
-            )
-            return web.json_response(
-                {"method": method, "summary": summary, "event": ev, "sag": moss.sag.status_snapshot()},
-                headers={"Cache-Control": "no-store"},
-            )
-        except web.HTTPRequestEntityTooLarge:
-            return web.json_response({"error": "图像超出大小限制"}, status=413)
-        except (OSError, ValueError, KeyError) as exc:
-            return web.json_response({"error": str(exc) or "图像格式无效或无法读取。"}, status=400)
 
     async def runtime_stream(request):
         referer_path = urlsplit(request.headers.get("Referer", "")).path
@@ -1369,23 +1039,35 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         return stream
 
     async def event_stream(request):
+        stream_owner = _req_owner(request)
         stream = web.StreamResponse(headers={"Content-Type": "text/event-stream; charset=utf-8",
                                              "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         await stream.prepare(request)
         signal = asyncio.Event()
         subscribers.add(signal)
-        wake_notifications = request.path == "/api/events" and request.query.get("wake") == "1"
+        wake_notifications = (
+            request.path == "/api/events"
+            and request.query.get("wake") == "1"
+            and stream_owner == moss.DEFAULT_OWNER
+        )
         if wake_notifications:
             wake.pages[signal] = request.transport
         previous_wake = None
+        auth_check = request.app.get("moss_auth_check")
         try:
             while not stopped.is_set():
                 signal.clear()
+                if auth_check:
+                    authed, cur_ident = auth_check(request)
+                    cur_owner = moss.normalize_owner((cur_ident or {}).get("code"))
+                    if not authed or cur_owner != stream_owner:
+                        await stream.write(b"event: auth-required\ndata: {}\n\n")
+                        break
                 offer = wake.offer if wake_notifications else None
                 if offer and not offer.shown.is_set() and offer.ticket != previous_wake:
                     await stream.write(f"event: wake-offer\ndata: {offer.ticket}\n\n".encode("ascii"))
                     previous_wake = offer.ticket
-                revision, payload = payloads.read()
+                revision, payload = payloads.read(owner_code=stream_owner)
                 await stream.write(f"id: {revision}\nevent: state\ndata: ".encode("ascii") + payload + b"\n\n")
                 try:
                     await asyncio.wait_for(signal.wait(), 15)
@@ -1399,9 +1081,17 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         return stream
 
     async def file(request):
+        owner = _req_owner(request)
         name = request.match_info["name"]
         if Path(name).name != name:
             raise web.HTTPNotFound()
+        turn_id = Path(name).stem
+        owner_row = moss.db.execute(
+            "SELECT c.owner_code FROM turns t JOIN chats c ON c.id = t.chat_id WHERE t.id=?",
+            (turn_id,),
+        ).fetchone()
+        if owner_row and moss.normalize_owner(owner_row[0]) != owner:
+            raise web.HTTPForbidden()
         try:
             content = moss.read_draft(name)
         except (KeyError, ValueError, FileNotFoundError):
@@ -1436,13 +1126,16 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                                 headers={"Cache-Control": "no-cache"})
 
     async def chats_search(request):
+        owner = _req_owner(request)
         q = (request.query.get("q") or "").strip()
         if not q:
             return web.json_response({"query": "", "hits": []}, headers={"Cache-Control": "no-store"})
         needle = q.casefold()
         rows = moss.db.execute(
             "SELECT t.id, t.chat_id, c.title, t.doc FROM turns t "
-            "JOIN chats c ON c.id = t.chat_id ORDER BY t.rowid DESC LIMIT 600"
+            "JOIN chats c ON c.id = t.chat_id WHERE COALESCE(c.owner_code,'MOSS')=? "
+            "ORDER BY t.rowid DESC LIMIT 600",
+            (owner,),
         ).fetchall()
         hits = []
         matched_chats: set[str] = set()
@@ -1503,16 +1196,21 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         return web.json_response({"query": q, "hits": hits}, headers={"Cache-Control": "no-store"})
 
     async def chat_export(request):
+        owner = _req_owner(request)
         cid = request.match_info["chat_id"]
-        chat_row = moss.db.execute("SELECT id, title, created_at FROM chats WHERE id=?", (cid,)).fetchone()
+        chat_row = moss.db.execute("SELECT id, title, created_at, owner_code FROM chats WHERE id=?", (cid,)).fetchone()
         if not chat_row:
             raise web.HTTPNotFound()
-        _, title, created_at = chat_row
+        _, title, created_at, chat_owner = chat_row
+        if moss.normalize_owner(chat_owner) != owner:
+            return web.json_response({"error": "无权导出其他授权人员的对话记录。"}, status=403)
+        op_label = "OP-01" if owner == moss.DEFAULT_OWNER else f"OP-{owner}"
         turn_rows = moss.db.execute("SELECT doc FROM turns WHERE chat_id=? ORDER BY rowid ASC", (cid,)).fetchall()
         lines = [
             f"# MOSS 550W 对话记录 · {title or cid}",
             "",
             f"- 会话编号：`{cid}`",
+            f"- 所属人员：`{owner}`",
             f"- 创建时间：`{created_at}`",
             f"- 轮次数量：`{len(turn_rows)}`",
             "",
@@ -1527,7 +1225,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             ts = str(doc.get("created_at") or "")[:19].replace("T", " ")
             lines.append(f"## #{idx:02d} · {ts}")
             lines.append("")
-            lines.append(f"**OP-01**：{doc.get('user') or ''}")
+            lines.append(f"**{op_label}**：{doc.get('user') or ''}")
             lines.append("")
             body = doc.get("reply") or doc.get("error") or f"({doc.get('status') or 'pending'})"
             lines.append(f"**MOSS**：{body}")
@@ -1548,6 +1246,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         import io
         from PIL import Image
 
+        owner = _req_owner(request)
         try:
             body = await request.clone(client_max_size=16 * 1024 * 1024).json()
             if not isinstance(body, dict):
@@ -1555,7 +1254,10 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             name = Path(str(body.get("name") or "attachment.bin")).name
             mime = str(body.get("mime") or "").lower()
             prompt = str(body.get("prompt") or "").strip()
-            chat_id = str(body.get("chat_id") or moss.chat_id)
+            chat_id = str(body.get("chat_id") or moss.active_chat_for(owner))
+            moss.require_chat_owner(chat_id, owner)
+            if chat_id != moss.active_chat_for(owner):
+                raise ValueError("当前对话已切换，请刷新后在当前对话重新发送附件。")
             raw_b64 = str(body.get("data_b64") or "").strip()
             if not raw_b64:
                 raise ValueError("附件内容为空")
@@ -1577,314 +1279,39 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                 if len(q) > 1200:
                     q = q[:1200]
                 if moss.model_available(WINDOW_IMAGE_PROVIDER):
-                    await moss.message(q, chat_id, image_context=("composer_attach", png_bytes, size))
+                    await moss.message(q, chat_id, image_context=("composer_attach", png_bytes, size), owner_code=owner)
                 else:
                     ocr_text = (await recognize_capture(png_bytes)).strip()
                     combined = f"{q}\n\n【本机 OCR 识别自图片 {name}（百炼视觉未配置，仅提取文字）】\n{ocr_text or '（未识别到文字）'}"
-                    await moss.message(combined[:1150], chat_id)
-                return state_response(headers={"Cache-Control": "no-store"})
+                    await moss.message(combined[:1150], chat_id, owner_code=owner)
+                return state_response(owner_code=owner, headers={"Cache-Control": "no-store"})
 
             extracted = await asyncio.to_thread(extract_document_bytes, name, raw, max_chars=8000)
             q = prompt or f"请总结附件《{extracted['name']}》的关键要点。"
-            # Keep user message concise while injecting extracted content via SAG + message text safely
-            ev = moss.sag.upsert_event(
-                content=f"附件《{extracted['name']}》：\n{extracted['text']}",
-                title=f"附件：{extracted['name']}",
-                source="attach",
-            )
+            sag_note = ""
+            if owner == moss.DEFAULT_OWNER:
+                # Keep user message concise while injecting extracted content via SAG + message text safely
+                ev = moss.sag.upsert_event(
+                    content=f"附件《{extracted['name']}》：\n{extracted['text']}",
+                    title=f"附件：{extracted['name']}",
+                    source="attach",
+                )
+                sag_note = f"，已同步至 SAG E#{ev['id']}"
             preview_budget = max(200, 1080 - len(q) - len(extracted["name"]) - 120)
             snippet = extracted["text"][:preview_budget]
             msg = (
                 f"{q}\n"
-                f"【附件《{extracted['name']}》已解析（{extracted['bytes']}B，已同步至 SAG E#{ev['id']}，以下为只读正文摘录）】\n"
+                f"【附件《{extracted['name']}》已解析（{extracted['bytes']}B{sag_note}，以下为只读正文摘录）】\n"
                 f"{snippet}"
             )
-            await moss.message(msg[:1190], chat_id)
-            return state_response(headers={"Cache-Control": "no-store"})
+            await moss.message(msg[:1190], chat_id, owner_code=owner)
+            return state_response(owner_code=owner, headers={"Cache-Control": "no-store"})
         except web.HTTPRequestEntityTooLarge:
             return web.json_response({"error": "附件超出 15 MB 上限。"}, status=413)
+        except PermissionError as exc:
+            return web.json_response({"error": str(exc)}, status=403)
         except (OSError, ValueError, KeyError) as exc:
             return web.json_response({"error": str(exc) or "附件格式无法识别或已损坏。"}, status=400)
-
-    async def routines_handler(request):
-        if request.method == "GET":
-            return web.json_response({"routines": moss.routines.list_tasks()}, headers={"Cache-Control": "no-store"})
-        if request.method == "DELETE":
-            rid = request.match_info.get("routine_id", "")
-            removed = moss.routines.delete_task(rid)
-            if not removed:
-                raise web.HTTPNotFound()
-            return web.json_response({"deleted": removed, "routines": moss.routines.list_tasks()}, headers={"Cache-Control": "no-store"})
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要 JSON 对象")
-            if request.path.endswith("/toggle"):
-                rid = request.match_info.get("routine_id", "")
-                updated = moss.routines.toggle_task(rid, bool(body.get("enabled", True)))
-                if not updated:
-                    raise web.HTTPNotFound()
-                return web.json_response({"routine": updated, "routines": moss.routines.list_tasks()}, headers={"Cache-Control": "no-store"})
-            created = moss.routines.create_task(
-                name=str(body.get("name") or ""),
-                schedule=str(body.get("schedule") or ""),
-                action_kind=str(body.get("action_kind") or "reminder"),
-                payload=str(body.get("payload") or ""),
-            )
-            return web.json_response({"routine": created, "routines": moss.routines.list_tasks()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def music_prefs_handler(request):
-        if request.method == "GET":
-            return web.json_response(moss.music_prefs.snapshot(), headers={"Cache-Control": "no-store"})
-        try:
-            body = await request.json()
-            if not isinstance(body, dict):
-                raise ValueError("需要 JSON 对象")
-            res = moss.music_prefs.set_status(
-                str(body.get("media_id") or ""),
-                str(body.get("status") or ""),
-                title=str(body.get("title") or ""),
-                artist=str(body.get("artist") or ""),
-            )
-            return web.json_response({**res, "prefs": moss.music_prefs.snapshot()}, headers={"Cache-Control": "no-store"})
-        except (ValueError, TypeError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-
-    async def media_lyrics(request):
-        mid = request.match_info.get("media_id", "")
-        if not mid:
-            return web.json_response({"media_id": "", "lines": []}, headers={"Cache-Control": "no-store"})
-        q_title = str(request.query.get("title") or "").strip()[:120]
-        q_artist = str(request.query.get("artist") or "").strip()[:80]
-        audio_path = ""
-        if not mid.startswith("ol_"):
-            try:
-                import sqlite3 as _sq
-                if moss.media.db.is_file():
-                    with closing(_sq.connect(moss.media.db, timeout=1)) as mdb:
-                        row = mdb.execute("SELECT path, title, artist FROM media WHERE media_id=?", (mid,)).fetchone()
-                        if row:
-                            audio_path = str(row[0] or "")
-                            q_title = q_title or str(row[1] or "")
-                            q_artist = q_artist or str(row[2] or "")
-            except Exception:
-                audio_path = ""
-        lines = await asyncio.to_thread(load_lrc_for_media_path, audio_path) if audio_path else []
-        if lines:
-            return web.json_response(
-                {"media_id": mid, "has_lrc": True, "synced": True, "source": "local", "lines": lines},
-                headers={"Cache-Control": "no-store"},
-            )
-        if moss.online_music.is_active():
-            res = await moss.online_music.get_lyrics(mid, title=q_title, artist=q_artist)
-            if res.get("lines"):
-                return web.json_response(
-                    {
-                        "media_id": mid,
-                        "has_lrc": True,
-                        "synced": bool(res.get("synced")),
-                        "source": res.get("source") or "lrclib",
-                        "lines": res["lines"],
-                    },
-                    headers={"Cache-Control": "no-store"},
-                )
-        return web.json_response({"media_id": mid, "has_lrc": False, "lines": []}, headers={"Cache-Control": "no-store"})
-
-    async def _pinned_hop(cur_url: str, *, allow_internal: bool, allow_http: bool):
-        if allow_internal:
-            return cur_url, None
-        resolved_url, host, pinned_ip = await resolve_public_url(cur_url, allow_http=allow_http)
-        return resolved_url, make_pinned_connector(host, pinned_ip)
-
-    async def online_music_browse(request):
-        if moss.online_music.is_isolated():
-            return web.json_response({"error": "当前处于离线隔离模式，在线曲库浏览已禁用。"}, status=503)
-        kind = str(request.query.get("kind") or "playlists").strip().lower()
-        item_id = str(request.query.get("id") or "").strip()
-        try:
-            limit = int(request.query.get("limit") or 18)
-        except ValueError:
-            limit = 18
-        try:
-            res = await moss.online_music.browse_navidrome(kind=kind, item_id=item_id, limit=limit)
-            return web.json_response(res, headers={"Cache-Control": "no-store"})
-        except ValueError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            return web.json_response({"error": f"Navidrome 请求失败：{type(exc).__name__}"}, status=502)
-
-    async def online_music_scrobble(request):
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"ok": False, "error": "无效 JSON"}, status=400)
-        if not isinstance(body, dict):
-            return web.json_response({"ok": False, "error": "需要 JSON 对象"}, status=400)
-        mid = str(body.get("media_id") or "").strip()[:64]
-        submission = bool(body.get("submission", True))
-        res = await moss.online_music.scrobble_navidrome(mid, submission=submission)
-        return web.json_response(res, headers={"Cache-Control": "no-store"})
-
-    async def online_media_cover(request):
-        mid = request.match_info.get("media_id", "")
-        if moss.online_music.is_isolated():
-            raise web.HTTPServiceUnavailable(text="离线隔离模式已禁用在线封面加载。")
-        try:
-            target = moss.online_music.resolve_cover_target(mid)
-        except FileNotFoundError as exc:
-            raise web.HTTPNotFound(text=str(exc)) from None
-        except ValueError as exc:
-            raise web.HTTPBadRequest(text=str(exc)) from None
-
-        cur_url = target["url"]
-        allow_internal = bool(target.get("allow_internal"))
-        allow_http = bool(target.get("allow_http"))
-        allowed_netloc = str(target.get("allowed_netloc") or "")
-        timeout = aiohttp.ClientTimeout(total=8, connect=5, sock_read=5)
-        try:
-            for _ in range(4):
-                try:
-                    cur_url, connector = await _pinned_hop(cur_url, allow_internal=allow_internal, allow_http=allow_http)
-                except ValueError as exc:
-                    raise web.HTTPBadRequest(text=str(exc)) from None
-                async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-                    async with session.get(cur_url, allow_redirects=False) as upstream:
-                        if upstream.status in (301, 302, 303, 307, 308):
-                            nxt = urljoin(cur_url, upstream.headers.get("Location") or "")
-                            if allow_internal and urlsplit(nxt).netloc != allowed_netloc:
-                                raise web.HTTPBadGateway(text="拒绝跳转到配置以外的服务主机")
-                            cur_url = nxt
-                            continue
-                        if upstream.status >= 400:
-                            raise web.HTTPNotFound(text=f"封面源返回 {upstream.status}")
-                        ctype = (upstream.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-                        if not ctype.startswith("image/"):
-                            raise web.HTTPBadGateway(text="上游封面不是有效的图片格式")
-                        raw = await upstream.content.read(4 * 1024 * 1024 + 1)
-                        if len(raw) > 4 * 1024 * 1024:
-                            raise web.HTTPBadGateway(text="封面图片超过 4 MiB 限制")
-                        return web.Response(
-                            body=raw,
-                            headers={
-                                "Content-Type": ctype,
-                                "X-Content-Type-Options": "nosniff",
-                                "Cache-Control": "private, max-age=3600",
-                            },
-                        )
-            raise web.HTTPBadGateway(text="封面重定向次数过多")
-        except web.HTTPException:
-            raise
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
-            raise web.HTTPBadGateway(text="封面加载失败") from None
-
-    async def online_media_stream(request):
-        mid = request.match_info.get("media_id", "")
-        if moss.online_music.is_isolated():
-            raise web.HTTPServiceUnavailable(text="当前处于离线隔离模式，在线音频流已禁用。")
-        try:
-            target = moss.online_music.resolve_stream_target(mid)
-        except FileNotFoundError as exc:
-            raise web.HTTPNotFound(text=str(exc)) from None
-        except ValueError as exc:
-            raise web.HTTPBadRequest(text=str(exc)) from None
-
-        cur_url = target["url"]
-        allow_internal = bool(target.get("allow_internal"))
-        allow_http = bool(target.get("allow_http"))
-        allowed_netloc = str(target.get("allowed_netloc") or "")
-        is_live = bool(target.get("live"))
-        req_headers = {
-            "User-Agent": "MOSS-550W/5.5 (local companion music player)",
-            "Accept": "audio/*,*/*;q=0.8",
-        }
-        if not is_live and (rng := request.headers.get("Range")):
-            req_headers["Range"] = rng[:80]
-
-        timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_connect=10, sock_read=60)
-        prepared = False
-        resp = None
-        try:
-            for _ in range(6):
-                try:
-                    cur_url, connector = await _pinned_hop(cur_url, allow_internal=allow_internal, allow_http=allow_http)
-                except ValueError as exc:
-                    raise web.HTTPBadRequest(text=str(exc)) from None
-                async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-                    async with session.get(cur_url, headers=req_headers, allow_redirects=False) as upstream:
-                        if upstream.status in (301, 302, 303, 307, 308):
-                            loc = upstream.headers.get("Location") or ""
-                            nxt = urljoin(cur_url, loc)
-                            if allow_internal and urlsplit(nxt).netloc != allowed_netloc:
-                                raise web.HTTPBadGateway(text="拒绝跳转到配置以外的服务主机")
-                            cur_url = nxt
-                            continue
-
-                        if upstream.status >= 400 and upstream.status != 416:
-                            raise web.HTTPBadGateway(text=f"上游音频源返回 {upstream.status}")
-
-                        ctype = (upstream.headers.get("Content-Type") or "audio/mpeg").split(";", 1)[0].strip().lower()
-                        path_low = urlsplit(cur_url).path.lower()
-                        is_playlist = ctype in (
-                            "audio/x-mpegurl",
-                            "audio/mpegurl",
-                            "application/vnd.apple.mpegurl",
-                            "audio/x-scpls",
-                            "application/pls+xml",
-                        ) or path_low.endswith((".m3u", ".pls"))
-                        if is_playlist:
-                            raw_pls = (await upstream.content.read(65536)).decode("utf-8", errors="ignore")
-                            next_url = ""
-                            for ln in raw_pls.splitlines():
-                                s = ln.strip()
-                                if not s or s.startswith("#"):
-                                    continue
-                                if s.lower().startswith("file") and "=" in s:
-                                    s = s.split("=", 1)[1].strip()
-                                if s.lower().startswith(("http://", "https://")):
-                                    next_url = s
-                                    break
-                            if not next_url:
-                                raise web.HTTPBadGateway(text="电台播放列表中无有效音频地址")
-                            cur_url = next_url
-                            continue
-
-                        if ctype.startswith(("text/", "application/xhtml", "application/json", "application/xml")):
-                            raise web.HTTPBadGateway(text="上游返回的不是有效的音频流")
-
-                        out_headers = {
-                            "Content-Type": upstream.headers.get("Content-Type") or "audio/mpeg",
-                            "X-Content-Type-Options": "nosniff",
-                            "Cache-Control": "private, no-store",
-                        }
-                        for hdr in ("Content-Length", "Content-Range", "Accept-Ranges"):
-                            if val := upstream.headers.get(hdr):
-                                out_headers[hdr] = val
-
-                        resp = web.StreamResponse(status=upstream.status, headers=out_headers)
-                        await resp.prepare(request)
-                        prepared = True
-                        if request.method != "HEAD":
-                            async for chunk in upstream.content.iter_chunked(65536):
-                                if not chunk:
-                                    continue
-                                try:
-                                    await resp.write(chunk)
-                                except (ConnectionError, aiohttp.ClientConnectionError, RuntimeError):
-                                    break
-                        return resp
-            raise web.HTTPBadGateway(text="音频流重定向次数过多")
-        except web.HTTPException:
-            if prepared and resp is not None:
-                resp.force_close()
-                return resp
-            raise
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            if prepared and resp is not None:
-                resp.force_close()
-                return resp
-            raise web.HTTPBadGateway(text=f"在线音频流连接中断：{type(exc).__name__}") from None
 
     app = web.Application(middlewares=[local_requests], client_max_size=16 * 1024 * 1024)
     app.on_startup.append(start_log_tail)
@@ -1898,40 +1325,6 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     web.get("/api/device-status", device_readings),
                     web.get("/api/runtime-log/stream", backend_log_stream),
                     web.get("/api/runtime-log/source", runtime_log_source),
-                    web.get("/api/rsi", rsi_status),
-                    web.post("/api/rsi/iterate", rsi_iterate),
-                    web.delete(r"/api/rsi/lessons/{lesson_id:[0-9]{1,9}}", rsi_retire),
-                    web.get("/api/sag", sag_status),
-                    web.post("/api/sag/ingest", sag_ingest),
-                    web.post("/api/sag/query", sag_query),
-                    web.get("/api/brain/overview", brain_overview),
-                    web.post("/api/brain/consolidate", brain_consolidate),
-                    web.get("/api/soul", soul_snapshot),
-                    web.post("/api/soul/profile", soul_profile_upsert),
-                    web.delete(r"/api/soul/profile/{key:.+}", soul_profile_delete),
-                    web.post("/api/soul/beliefs", soul_belief_upsert),
-                    web.delete(r"/api/soul/beliefs/{belief_id:[0-9]{1,9}}", soul_belief_delete),
-                    web.post("/api/soul/distill", soul_distill_now),
-                    web.get("/api/soul/export", soul_export_md),
-                    web.post("/api/proactive/config", proactive_config),
-                    web.post("/api/proactive/briefing", proactive_briefing),
-                    web.post(r"/api/proactive/alerts/{alert_id:[0-9]{1,9}}/dismiss", proactive_dismiss),
-                    web.post("/api/context/vision-to-sag", vision_to_sag),
-                    web.get("/api/jobs", jobs_handler),
-                    web.post("/api/jobs", jobs_handler),
-                    web.get("/api/watchers", watchers_handler),
-                    web.post("/api/watchers", watchers_handler),
-                    web.delete(r"/api/watchers/{watcher_id:[0-9]{1,9}}", watchers_handler),
-                    web.get("/api/skills", skills_handler),
-                    web.post("/api/skills", skills_handler),
-                    web.delete(r"/api/skills/{skill_id:[0-9]{1,9}}", skills_handler),
-                    web.get("/api/iot/config", iot_config),
-                    web.post("/api/iot/config", iot_config),
-                    web.get("/api/ha/entities", ha_entities),
-                    web.post("/api/ha/service", ha_service),
-                    web.get("/api/hardware/moss/stream", hardware_moss_stream),
-                    web.post("/api/hardware/moss/command", hardware_moss_command),
-                    web.post("/api/hardware/moss/telemetry", hardware_moss_telemetry),
                     web.get("/api/cities", cities), web.post("/api/weather/current", weather_readings),
                     web.post("/api/context/ocr", ocr), web.post("/api/context/image-question", image_question),
                     web.post("/api/context/jev-handoff", jev_handoff),
@@ -1942,17 +1335,6 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     web.get("/api/chats/search", chats_search),
                     web.get(r"/api/chats/{chat_id:[A-Za-z0-9_-]{1,64}}/export", chat_export),
                     web.post("/api/chat/attach", chat_attach),
-                    web.get("/api/routines", routines_handler),
-                    web.post("/api/routines", routines_handler),
-                    web.delete(r"/api/routines/{routine_id:[A-Za-z0-9_-]{1,32}}", routines_handler),
-                    web.post(r"/api/routines/{routine_id:[A-Za-z0-9_-]{1,32}}/toggle", routines_handler),
-                    web.get("/api/music/prefs", music_prefs_handler),
-                    web.post("/api/music/prefs", music_prefs_handler),
-                    web.get("/api/online-music/browse", online_music_browse),
-                    web.post("/api/online-music/scrobble", online_music_scrobble),
-                    web.get(r"/api/media/online-cover/{media_id:[A-Za-z0-9_-]{1,64}}", online_media_cover),
-                    web.get(r"/api/media/online-stream/{media_id:[A-Za-z0-9_-]{1,64}}", online_media_stream),
-                    web.get(r"/api/media/{media_id:[A-Za-z0-9_-]{1,64}}/lyrics", media_lyrics),
                     web.get("/api/events", event_stream), web.post("/api/shutdown", shutdown),
                     web.post(r"/api/wake/{wake_action:activate|status|claim|shown}", wake.handle),
                     web.get("/api/models", models), web.get("/api/personality", personality_endpoint),
@@ -1965,6 +1347,21 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     web.get("/conversation-assets/moss-view.js", model_view),
                     web.static("/conversation-assets", ROOT / "static/conversation-assets"),
                     web.static("/static", ROOT / "static")])
+    install_brain_iot_routes(
+        app,
+        moss,
+        stopped,
+        device_status=device_status,
+        prepare_window_image=prepare_window_image,
+        recognize_capture=recognize_capture,
+        image_max_json=IMAGE_MAX_JSON,
+        window_image_provider=WINDOW_IMAGE_PROVIDER,
+        read_json_dict=_read_json_dict,
+        lan_host_list=lan_host_list,
+        port=port,
+        tls_port=tls_port,
+    )
+    install_online_music_routes(app, moss)
     if fui_public is not None:
         from console_settings import install_console_settings
         from fui_routes import install_fui

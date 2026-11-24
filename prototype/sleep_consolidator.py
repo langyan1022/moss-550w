@@ -147,7 +147,8 @@ class SleepConsolidator:
         artist_counts: Counter = Counter()
         try:
             turn_docs = self.db.execute(
-                "SELECT doc FROM turns ORDER BY rowid DESC LIMIT 120"
+                "SELECT t.doc FROM turns t LEFT JOIN chats c ON c.id = t.chat_id "
+                "WHERE COALESCE(c.owner_code, 'MOSS')='MOSS' ORDER BY t.rowid DESC LIMIT 120"
             ).fetchall()
         except sqlite3.OperationalError:
             turn_docs = []

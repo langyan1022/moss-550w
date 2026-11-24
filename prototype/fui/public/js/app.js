@@ -1445,10 +1445,10 @@ void authPrefs.init().then((ident) => {
   if (ident?.role === 'CS') void authPrefs.refreshUsersList();
 });
 window.addEventListener('moss-auth-switched', () => {
-  api.reconnect();
+  api.reconnect({ reset: true });
 });
 window.addEventListener('moss-auth-required', () => {
-  authPrefs?.openGate();
+  authPrefs?.openGate({ forceRequired: true });
 });
 setTimeout(() => void brainDeck.refresh(), 1500);
 const savedCity = cityPicker.getManualCity();

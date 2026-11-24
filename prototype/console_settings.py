@@ -324,7 +324,8 @@ def install_console_settings(app, moss):
         _, info = _resolve_identity(request)
         if info.get("authorized") and info.get("code"):
             user = _ensure_user(info["code"])
-            info = {**info, "last_chat_id": user["last_chat_id"], "prefs": _user_prefs(info["code"])}
+            active_cid = moss.active_chat_for(info["code"])
+            info = {**info, "last_chat_id": active_cid or user["last_chat_id"], "prefs": _user_prefs(info["code"])}
         users_count = moss.db.execute("SELECT COUNT(*) FROM auth_users").fetchone()[0]
         info["registered_users"] = int(users_count)
         return reply(info)
@@ -343,17 +344,19 @@ def install_console_settings(app, moss):
             code, role = user["code"], user["role"]
             sig = _sign_session(cfg["secret"], code, role)
             prefs = _user_prefs(code)
-            # Restore this operator's saved companion personality seamlessly
+            # Ensure this operator has an isolated active chat without leaking other operators' sessions.
+            active_cid = moss.active_chat_for(code)
+            # Restore this operator's saved companion personality scoped to their own identity
             saved_pers = prefs.get("personality_id")
             if isinstance(saved_pers, str) and saved_pers:
                 try:
-                    await moss.select_personality(saved_pers)
+                    await moss.select_personality(saved_pers, owner_code=code)
                 except Exception:
                     pass
             resp = reply({
                 "ok": True, "authorized": True, "enabled": bool(cfg.get("enabled", True)),
                 "scope": cfg.get("scope", "lan"), "code": code, "role": role,
-                "is_admin": role == "CS", "last_chat_id": user["last_chat_id"], "prefs": prefs,
+                "is_admin": role == "CS", "last_chat_id": active_cid or user["last_chat_id"], "prefs": prefs,
             })
             resp.set_cookie(
                 "moss_auth", sig, max_age=30 * 86400, httponly=True, samesite="Lax",
@@ -407,7 +410,13 @@ def install_console_settings(app, moss):
                 return reply({"error": "不可删除终极管理员授权码 MOSS。"}, status=400)
             moss.db.execute("DELETE FROM auth_users WHERE code=?", (target,))
             moss.db.execute("DELETE FROM console_prefs WHERE key LIKE ?", (f"user:{target}:%",))
+            moss.db.execute("DELETE FROM operator_chats WHERE owner_code=?", (target,))
+            moss.db.execute("DELETE FROM turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_code=?)", (target,))
+            moss.db.execute("DELETE FROM chats WHERE owner_code=?", (target,))
+            moss.db.execute("DELETE FROM memories WHERE COALESCE(owner_code,'MOSS')=?", (target,))
+            moss.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
             moss.db.commit()
+            moss._notify()
             return reply({"deleted": target, "users": _list_auth_users()})
         try:
             body = await body_for(request)

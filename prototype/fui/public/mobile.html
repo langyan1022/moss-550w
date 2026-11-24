@@ -203,6 +203,7 @@
     <header class="m-head">
       <div class="m-brand">
         <strong>550W · MOSS</strong>
+        <button class="fui-badge" id="m-auth-chip" type="button" data-state="intel" title="点击切换 4 位授权码" style="cursor: pointer">MOSS</button>
         <span class="fui-badge" id="m-link" data-state="ok">SYNC</span>
       </div>
       <a class="fui-key fui-key--sm" href="/">主控台</a>
@@ -295,6 +296,7 @@
     const authForm = document.getElementById('m-auth-form');
     const authInput = document.getElementById('m-auth-input');
     const authErr = document.getElementById('m-auth-err');
+    const authChip = document.getElementById('m-auth-chip');
 
     let vizCtx = null;
     let vizAnalyser = null;
@@ -407,17 +409,24 @@
     let activeSpeakAudio = null;
     let activeSpeakUrl = '';
     let isAdminRole = true;
+    let activeOwnerCode = 'MOSS';
+    let authRequiredMode = true;
     let es = null;
 
-    function openAuthPrompt(msg) {
-      if (es) { es.close(); es = null; }
+    function openAuthPrompt(msg, { switchMode = false } = {}) {
+      authRequiredMode = !switchMode;
+      if (!switchMode && es) { es.close(); es = null; }
       authOverlay.hidden = false;
-      if (msg) {
-        authErr.textContent = msg;
-        authErr.hidden = false;
-      }
-      authInput?.focus();
+      authErr.textContent = msg || '';
+      authErr.hidden = !msg;
+      if (authInput) { authInput.value = ''; authInput.focus(); }
     }
+    authOverlay?.addEventListener('click', (ev) => {
+      if (!authRequiredMode && ev.target === authOverlay) authOverlay.hidden = true;
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (!authRequiredMode && ev.key === 'Escape' && !authOverlay.hidden) authOverlay.hidden = true;
+    });
 
     function flashLinkError(msg) {
       linkEl.dataset.state = 'warn';
@@ -674,7 +683,8 @@
       for (const turn of turns) {
         const u = document.createElement('li');
         u.className = 'm-msg m-msg--user';
-        u.innerHTML = '<div class="m-msg__role fui-num">OP-01</div><p class="m-msg__text"></p>';
+        const opTag = activeOwnerCode === 'MOSS' ? 'OP-01' : `OP-${activeOwnerCode}`;
+        u.innerHTML = `<div class="m-msg__role fui-num">${opTag}</div><p class="m-msg__text"></p>`;
         u.querySelector('.m-msg__text').textContent = turn.user || '';
         feed.append(u);
 
@@ -690,14 +700,18 @@
             okBtn.type = 'button';
             okBtn.className = 'fui-btn fui-btn--primary';
             okBtn.textContent = '确认执行';
-            okBtn.addEventListener('click', () => void postJson('/api/approve', { turn_id: turn.id }));
+            okBtn.addEventListener('click', () => {
+              void postJson('/api/approve', { turn_id: turn.id }).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
+            });
             actions.append(okBtn);
           }
           const cancelBtn = document.createElement('button');
           cancelBtn.type = 'button';
           cancelBtn.className = 'fui-btn';
           cancelBtn.textContent = '取消';
-          cancelBtn.addEventListener('click', () => void postJson('/api/cancel', { turn_id: turn.id }));
+          cancelBtn.addEventListener('click', () => {
+            void postJson('/api/cancel', { turn_id: turn.id }).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
+          });
           actions.append(cancelBtn);
           a.append(actions);
         }
@@ -715,10 +729,13 @@
       const clean = String(text || '').trim();
       if (!clean) return false;
       const res = await postJson('/api/message', { text: clean, chat_id: chatId || undefined });
+      if (res && Array.isArray(res.turns)) render(res);
       return Boolean(res);
     }
 
-    persSel.addEventListener('change', () => void postJson('/api/select-personality', { id: persSel.value }));
+    persSel.addEventListener('change', () => {
+      void postJson('/api/select-personality', { id: persSel.value }).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
+    });
     modelSel.addEventListener('change', () => void postJson('/api/select-model', { id: modelSel.value }));
     ttsBtn.addEventListener('click', () => {
       ttsOn = !ttsOn;
@@ -775,7 +792,9 @@
         }).catch(() => {});
       }
     });
-    newChatBtn.addEventListener('click', () => void postJson('/api/new-chat', {}));
+    newChatBtn.addEventListener('click', () => {
+      void postJson('/api/new-chat', {}).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
+    });
 
     function encodeWav16k(floatBuf, inRate) {
       const ratio = inRate / 16000;
@@ -900,6 +919,9 @@
         linkEl.textContent = 'ONLINE';
         try { render(JSON.parse(ev.data)); } catch { /* ignore */ }
       });
+      es.addEventListener('auth-required', () => {
+        openAuthPrompt('授权已变更，请重新验证 4 位授权码');
+      });
       es.onerror = async () => {
         linkEl.dataset.state = 'warn';
         linkEl.textContent = 'RETRY';
@@ -919,9 +941,23 @@
 
     function applyRole(info) {
       isAdminRole = info?.role === 'CS' || (Boolean(info?.is_admin) && info?.role !== 'C');
+      const nextCode = String(info?.code || (isAdminRole ? 'MOSS' : '')).toUpperCase() || 'MOSS';
+      if (nextCode !== activeOwnerCode) {
+        activeOwnerCode = nextCode;
+        chatId = '';
+        lastSpokenTurn = '';
+        feed.replaceChildren();
+        syncMedia([]);
+      }
+      if (authChip) {
+        authChip.textContent = `${isAdminRole ? 'CS' : 'C'} · ${activeOwnerCode}`;
+        authChip.dataset.state = isAdminRole ? 'intel' : 'data';
+      }
       modelSel.disabled = !isAdminRole;
       modelSel.title = isAdminRole ? '推理模型（管理级权限可切换）' : '仅系统管理员有权切换推理模型';
     }
+
+    authChip?.addEventListener('click', () => openAuthPrompt('', { switchMode: true }));
 
     authForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();

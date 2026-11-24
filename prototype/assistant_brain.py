@@ -1532,7 +1532,9 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
     earlier = next(moss._recent_turns(turn["chat_id"], before=turn["id"]), {}) if not required else {}
     pending = active_weather_clarification(earlier, turn)
     ignore_memory = ignore_personal_memory(text)
-    allow_personal = not (ignore_memory or other_person_query(text))
+    turn_owner = moss.chat_owner(turn["chat_id"]) if hasattr(moss, "chat_owner") else "MOSS"
+    is_host_owner = (turn_owner or "MOSS") == "MOSS"
+    allow_personal = is_host_owner and not (ignore_memory or other_person_query(text))
     previous_weather, choices, weather_versions = weather_input(moss, earlier, ignore_memory)
     location = None
     follow_forecast = False
@@ -2047,33 +2049,35 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
             retired_texts = []
             retired_ids = []
             if replace_kw:
-                for old_m in moss.list_memories():
+                for old_m in moss.list_memories(turn_owner):
                     if replace_kw.casefold() in old_m["text"].casefold() and old_m["text"].strip() != fact:
                         retired_ids.append(old_m["id"])
                         retired_texts.append(old_m["text"])
             with moss.db:
                 for old_id in retired_ids:
-                    remove_memory(moss.db, old_id)
-                key, change = save_memory(moss.db, fact, source="chat", chat=turn["chat_id"], turn=turn["id"])
+                    remove_memory(moss.db, old_id, owner_code=turn_owner)
+                key, change = save_memory(moss.db, fact, source="chat", chat=turn["chat_id"], turn=turn["id"], owner_code=turn_owner)
                 moss.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
-            saved_mem = find_memory(moss.db, key)
-            try:
-                for old_id in retired_ids:
-                    moss.sag.delete_by_source_ref("memory", f"memory:{old_id}")
-                moss.sag.upsert_event(content=saved_mem["text"], title=f"长期记忆 {saved_mem['text'][:32]}",
-                                      source="memory", source_ref=f"memory:{key}", importance=1.25, pointer_ref=f"memory:{key}")
-                soul = getattr(moss, "soul", None)
-                if soul is not None:
-                    if replace_kw:
-                        kw_low = replace_kw.casefold()
-                        for tr in soul.list_profile(limit=48):
-                            if tr.get("source") == "distill" and (kw_low in tr["value"].casefold() or kw_low in tr["key"].casefold()):
-                                soul.delete_profile(tr["key"])
-                    soul.sync_memories_to_sag_and_profile()
-            except Exception:
-                pass
+            saved_mem = find_memory(moss.db, key, owner_code=turn_owner)
+            if is_host_owner:
+                try:
+                    for old_id in retired_ids:
+                        moss.sag.delete_by_source_ref("memory", f"memory:{old_id}")
+                    moss.sag.upsert_event(content=saved_mem["text"], title=f"长期记忆 {saved_mem['text'][:32]}",
+                                          source="memory", source_ref=f"memory:{key}", importance=1.25, pointer_ref=f"memory:{key}")
+                    soul = getattr(moss, "soul", None)
+                    if soul is not None:
+                        if replace_kw:
+                            kw_low = replace_kw.casefold()
+                            for tr in soul.list_profile(limit=48):
+                                if tr.get("source") == "distill" and (kw_low in tr["value"].casefold() or kw_low in tr["key"].casefold()):
+                                    soul.delete_profile(tr["key"])
+                        soul.sync_memories_to_sag_and_profile()
+                except Exception:
+                    pass
             moss._notify()
-            await moss._sync_index()
+            if is_host_owner:
+                await moss._sync_index()
             # Keep current turn provenance aligned with self-initiated memory mutations
             # so the turn's follow-up reply request isn't rejected as an external edit (F65).
             cur_row = moss._get(turn["id"])
@@ -2103,7 +2107,7 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
             kw = str(args.get("keyword") or "").strip()
             if len(kw) < 1:
                 return "请提供要遗忘的记忆关键词。"
-            all_mems = moss.list_memories()
+            all_mems = moss.list_memories(turn_owner)
             matched = [m for m in all_mems if kw.casefold() in m["text"].casefold()]
             if not matched:
                 terms = [tok.casefold() for tok in re.findall(r"[\u4e00-\u9fff]{2,}|[A-Za-z0-9]{2,}", kw)]
@@ -2116,20 +2120,22 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
                 return f"关键词「{kw}」匹配到 {len(matched)} 条长期记忆（{preview}），请给出更具体的关键词避免误删。"
             with moss.db:
                 for item in matched:
-                    remove_memory(moss.db, item["id"])
+                    remove_memory(moss.db, item["id"], owner_code=turn_owner)
                 moss.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
-            for item in matched:
+            if is_host_owner:
+                for item in matched:
+                    try:
+                        moss.sag.delete_by_source_ref("memory", f"memory:{item['id']}")
+                    except Exception:
+                        pass
                 try:
-                    moss.sag.delete_by_source_ref("memory", f"memory:{item['id']}")
+                    if getattr(moss, "soul", None) is not None:
+                        moss.soul.sync_memories_to_sag_and_profile()
                 except Exception:
                     pass
-            try:
-                if getattr(moss, "soul", None) is not None:
-                    moss.soul.sync_memories_to_sag_and_profile()
-            except Exception:
-                pass
             moss._notify()
-            await moss._sync_index()
+            if is_host_owner:
+                await moss._sync_index()
             cur_row = moss._get(turn["id"])
             mv = dict(cur_row.get("_memory_versions") or {})
             mids = list(cur_row.get("memory_ids") or [])
@@ -2145,10 +2151,10 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
             if ignore_memory:
                 return "本轮要求忽略个人记忆。"
             q = str(args.get("query") or "").strip()
-            all_mems = moss.list_memories()
+            all_mems = moss.list_memories(turn_owner)
             matched = select_memories(q, all_mems) if q else all_mems
             lines = [f"- [固定记忆] {m['text']}" for m in matched[:10]]
-            soul = getattr(moss, "soul", None)
+            soul = getattr(moss, "soul", None) if is_host_owner else None
             if soul is not None:
                 traits = soul.list_profile(limit=24)
                 q_low = q.casefold()
@@ -2176,15 +2182,16 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
                 if (ignore_memory or not allow_personal) and row[1] in {"memory", "profile", "episode", "note"}:
                     return "本轮不读取私人记忆详情。"
                 return f"[E#{row[0]}/{row[1]} {row[4]}] {row[2]}\n原文：{row[3]}"
-            if ignore_memory or not allow_personal:
+            if ignore_memory:
                 return "本轮不回查历史私人对话原文。"
             tid_prefix = re.sub(r"^turn[:#]?", "", ptr, flags=re.I).strip()
             if not re.fullmatch(r"[a-f0-9]{4,32}", tid_prefix, re.I):
                 return f"指针格式无效：{ptr}"
             esc = tid_prefix.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             rows = moss.db.execute(
-                "SELECT id, doc FROM turns WHERE id LIKE ? ESCAPE '\\' ORDER BY rowid DESC LIMIT 2",
-                (esc + "%",),
+                "SELECT t.id, t.doc FROM turns t LEFT JOIN chats c ON c.id = t.chat_id "
+                "WHERE t.id LIKE ? ESCAPE '\\' AND COALESCE(c.owner_code, 'MOSS')=? ORDER BY t.rowid DESC LIMIT 2",
+                (esc + "%", turn_owner),
             ).fetchall()
             if not rows:
                 return f"未找到前缀为 {tid_prefix} 的历史对话。"
@@ -2194,6 +2201,8 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
                 out.append(f"[turn:{tid[:8]} {doc.get('created_at', '')}]\n问：{doc.get('user', '')}\n答：{doc.get('reply', '')}")
             return "\n---\n".join(out)
         if name == "record_self_lesson":
+            if not is_host_owner:
+                return "当前为非管理员授权身份，未修改系统级经验准则。"
             action, lesson = moss.rsi.promote_lesson(
                 scope=str(args.get("scope") or "fact"),
                 trigger=str(args.get("trigger") or text[:48]),
@@ -2615,7 +2624,7 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
             moss._notify()
             return calendar_reply(receipt)
         if name == "list_media_catalog":
-            catalog_text, _ = await moss.media.execute({"action": "catalog"}, moss._media_context(), turn)
+            catalog_text, _ = await moss.media.execute({"action": "catalog"}, moss._media_context(turn.get("chat_id")), turn)
             return catalog_text
         if name == "list_capabilities":
             return ("可以播放本机或 NAS 的音乐和视频，以及在线开源曲库（Audius、Internet Archive）、中文与国际音乐电台及私有 Navidrome 曲库、查看曲库分类和歌手、实时联网搜索公开资讯、查时间、区县天气，设置、查询或取消提醒与本机日程。"
@@ -2754,7 +2763,7 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
             local_check_text = f"只查本地 {text}" if raw_source == "local" else text
             moss._update(current(), media_in_flight=True)
             try:
-                reply, view = await moss.resolve_media_execution(intent, moss._media_context(), turn, user_text=local_check_text)
+                reply, view = await moss.resolve_media_execution(intent, moss._media_context(turn.get("chat_id")), turn, user_text=local_check_text)
             finally:
                 if not moss.closing:
                     moss._update(moss._get(turn["id"]), media_in_flight=False)
@@ -2814,7 +2823,7 @@ async def answer(moss, turn, token, *, history, instructions, named=None, jev=No
         if applied_rsi_ids:
             moss.rsi.mark_applied(applied_rsi_ids)
             moss._update(current(), _rsi_applied_ids=applied_rsi_ids)
-    personality_id = getattr(moss, "personality_id", "partner")
+    personality_id = turn.get("personality_id") or getattr(moss, "personality_id", "partner")
     personality_block = personality_prompt(personality_id) if not literal_repeat else ""
     cadence = (
         conversational_cadence_guidance(text, personality_id=personality_id)

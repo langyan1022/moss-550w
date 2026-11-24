@@ -339,10 +339,15 @@ export function createMossApi({
     } catch { /* ignore */ }
   }
 
-  async function connectLive() {
+  async function connectLive({ reset = false } = {}) {
     stopLiveStreams();
     simFeed.pause();
     const leavingSimulation = mode === 'simulated';
+    if (reset) {
+      currentState = { revision: -1, chat_id: '', owner_code: '', turns: [], chats: [], memories: [], timers: [] };
+      streamInitial = true;
+      onState?.(currentState, { simulated: false, initial: true });
+    }
     if (leavingSimulation) {
       currentState = { revision: -1, chat_id: '', turns: [], chats: [], memories: [], timers: [] };
       latestDevice = null;
@@ -399,15 +404,20 @@ export function createMossApi({
     eventSource.addEventListener('state', (ev) => {
       try {
         const next = JSON.parse(ev.data);
-        if (streamInitial || next.revision > currentState.revision) {
+        const ownerChanged = Boolean(next.owner_code && currentState.owner_code && next.owner_code !== currentState.owner_code);
+        if (streamInitial || ownerChanged || next.revision > currentState.revision) {
           currentState = next;
-          const initial = streamInitial;
+          const initial = streamInitial || ownerChanged;
           streamInitial = false;
           onState?.(next, { simulated: false, initial });
         }
       } catch (err) {
         onError?.(err.message);
       }
+    });
+    eventSource.addEventListener('auth-required', () => {
+      stopLiveStreams();
+      window.dispatchEvent(new CustomEvent('moss-auth-required'));
     });
     eventSource.addEventListener('wake-offer', (ev) => {
       onWakeOffer?.(ev.data);
@@ -483,7 +493,8 @@ export function createMossApi({
 
   function acceptState(data) {
     if (mode === 'live' && Array.isArray(data.turns) && Number.isFinite(data.revision) &&
-        data.revision >= currentState.revision) {
+        ((data.owner_code && currentState.owner_code && data.owner_code !== currentState.owner_code) ||
+         data.revision >= currentState.revision)) {
       currentState = data;
       onState?.(data, { simulated:false });
     }

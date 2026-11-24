@@ -195,6 +195,15 @@ export function createModalsController({
     renderHistoryChats(state);
   }
 
+  window.addEventListener('moss-auth-switched', () => {
+    ++historySearchSeq;
+    clearTimeout(historySearchTimer);
+    if (historySearchInput) historySearchInput.value = '';
+    if (historySearchClear) historySearchClear.hidden = true;
+    if (historySearchStatus) { historySearchStatus.hidden = true; historySearchStatus.textContent = ''; }
+    renderHistoryChats(api.getState());
+  });
+
   /* ── Memory Dialog ── */
   const memoryDlg = document.getElementById('dlg-memory');
   const memoryList = document.getElementById('memory-list');

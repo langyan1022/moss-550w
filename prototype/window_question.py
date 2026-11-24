@@ -4,11 +4,12 @@ from time import monotonic
 from holo_kernel import run_holo
 
 
-def window_excerpt(moss, request):
+def window_excerpt(moss, request, *, chat_id=None):
     if not isinstance(request, dict) or not isinstance(request.get("turn_id"), str):
         raise ValueError("请重新选择当前对话的窗口识别结果。")
     origin = moss._get(request["turn_id"])
-    if (origin.get("chat_id") != moss.chat_id or origin.get("source") != "context"
+    expected_chat = chat_id or moss.chat_id
+    if (origin.get("chat_id") != expected_chat or origin.get("source") != "context"
             or origin.get("context_action") != "screen_text" or origin.get("status") != "replied"):
         raise ValueError("窗口识别结果不属于当前对话。")
     if request.get("model_id") != moss.model_id:

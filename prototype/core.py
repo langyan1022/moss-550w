@@ -25,7 +25,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import UsageLimits
 
 from memory_store import (
-    chat_title, find_memory, ignore_personal_memory, install_schema, limits, memories, memory_command, now, remove_memory, save_memory,
+    chat_title, find_memory, ignore_personal_memory, install_schema, limits, memories, memory_command,
+    normalize_owner_code, now, remove_memory, save_memory,
     check_memory, local_recall_only, music_preference, other_person_query, recall_saved, seat_advice, seat_correction, select_memories,
 )
 from semantic_memory import LocalMemoryIndex
@@ -213,6 +214,104 @@ class DraftWriteDeferred(Exception):
 
 
 class Moss:
+    DEFAULT_OWNER = "MOSS"
+
+    @staticmethod
+    def normalize_owner(owner_code=None) -> str:
+        return normalize_owner_code(owner_code)
+
+    def chat_owner(self, chat_id: str) -> str | None:
+        row = self.db.execute("SELECT owner_code FROM chats WHERE id=?", (chat_id,)).fetchone()
+        return self.normalize_owner(row[0]) if row else None
+
+    def _sync_operator_chat(self, owner: str, chat_id: str):
+        self.db.execute(
+            "INSERT INTO operator_chats(owner_code, active_chat) VALUES(?, ?) "
+            "ON CONFLICT(owner_code) DO UPDATE SET active_chat=excluded.active_chat",
+            (owner, chat_id),
+        )
+        if owner == self.DEFAULT_OWNER:
+            self.db.execute("UPDATE state SET active_chat=? WHERE id=1", (chat_id,))
+            self.chat_id = chat_id
+        try:
+            self.db.execute("UPDATE auth_users SET last_chat_id=? WHERE code=?", (chat_id, owner))
+        except sqlite3.OperationalError:
+            pass
+
+    def active_chat_for(self, owner_code=None) -> str:
+        owner = self.normalize_owner(owner_code)
+        if owner == self.DEFAULT_OWNER:
+            return self.chat_id
+        row = self.db.execute(
+            "SELECT oc.active_chat FROM operator_chats oc "
+            "JOIN chats c ON c.id = oc.active_chat "
+            "WHERE oc.owner_code=? AND COALESCE(c.owner_code,'MOSS')=?",
+            (owner, owner),
+        ).fetchone()
+        if row and row[0]:
+            return row[0]
+        existing = self.db.execute(
+            "SELECT id FROM chats WHERE COALESCE(owner_code,'MOSS')=? ORDER BY rowid DESC LIMIT 1",
+            (owner,),
+        ).fetchone()
+        if existing and existing[0]:
+            with self.db:
+                self._sync_operator_chat(owner, existing[0])
+            return existing[0]
+        key = uuid4().hex
+        with self.db:
+            self.db.execute("INSERT INTO chats(id,title,created_at,owner_code) VALUES(?,?,?,?)", (key, "新对话", now(), owner))
+            self._sync_operator_chat(owner, key)
+            self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
+        return key
+
+    def require_chat_owner(self, chat_id: str, owner_code=None) -> str:
+        owner = self.normalize_owner(owner_code)
+        row_owner = self.chat_owner(chat_id)
+        if row_owner is None:
+            raise ValueError("找不到这段对话")
+        if row_owner != owner:
+            raise PermissionError("无权访问其他授权人员的对话记录。")
+        return owner
+
+    def owner_personality(self, owner_code=None) -> str:
+        owner = self.normalize_owner(owner_code)
+        if owner == self.DEFAULT_OWNER:
+            return self.personality_id
+        try:
+            row = self.db.execute("SELECT value FROM console_prefs WHERE key=?", (f"user:{owner}:personality_id",)).fetchone()
+            if row:
+                return valid_personality(json.loads(row[0]))
+        except (sqlite3.OperationalError, ValueError, TypeError):
+            pass
+        return self.personality_id
+
+    def set_owner_personality(self, preset_id: str, owner_code=None) -> str:
+        if not isinstance(preset_id, str) or preset_id not in PERSONALITIES:
+            raise ValueError("未知性格预设，可选：" + " / ".join(PERSONALITIES))
+        owner = self.normalize_owner(owner_code)
+        if owner == self.DEFAULT_OWNER:
+            if preset_id != self.personality_id:
+                with self.db:
+                    self.db.execute("UPDATE personality_selection SET preset=? WHERE id=1", (preset_id,))
+                    self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
+                self.personality_id = preset_id
+                self._notify()
+            return preset_id
+        now_s = datetime.now().isoformat(timespec="seconds")
+        with self.db:
+            self.db.execute(
+                "CREATE TABLE IF NOT EXISTS console_prefs(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+            )
+            self.db.execute(
+                "INSERT INTO console_prefs(key, value, updated_at) VALUES(?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (f"user:{owner}:personality_id", json.dumps(preset_id, ensure_ascii=False), now_s),
+            )
+            self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
+        self._notify()
+        return preset_id
+
     def __init__(self, data_dir: Path, base_url: str, model: str, write_delay: float = 0, memory_url=None,
                  prefer_cloud=False, start_local=None, draft_model_reply=False):
         if urlsplit(base_url).hostname not in {"localhost", "127.0.0.1", "::1"}:
@@ -365,16 +464,8 @@ class Moss:
             self._notify()
         return key
 
-    async def select_personality(self, preset_id):
-        if not isinstance(preset_id, str) or preset_id not in PERSONALITIES:
-            raise ValueError("未知性格预设，可选：" + " / ".join(PERSONALITIES))
-        if preset_id != self.personality_id:
-            with self.db:
-                self.db.execute("UPDATE personality_selection SET preset=? WHERE id=1", (preset_id,))
-                self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
-            self.personality_id = preset_id
-            self._notify()
-        return preset_id
+    async def select_personality(self, preset_id, *, owner_code=None):
+        return self.set_owner_personality(preset_id, owner_code=owner_code)
 
     async def _prepare_draft(self, ctx: RunContext[str], definition):
         turn = self._get(ctx.deps)
@@ -399,16 +490,18 @@ class Moss:
             raise ModelRetry("用户已要求播放。请按用户条件选一个匹配的候选，调用 play_audio，然后报告结果。")
         return verified_media_answer(answer, media)
 
-    def _media_context(self):
+    def _media_context(self, chat_id=None):
+        target_chat = chat_id or self.chat_id
+        owner = self.chat_owner(target_chat) or self.DEFAULT_OWNER
         row = self.db.execute("""SELECT doc FROM turns WHERE chat_id=?
                         AND json_type(doc,'$.media')='object' AND json_extract(doc,'$.status') NOT IN ('cancelled','error')
-                        ORDER BY rowid DESC LIMIT 1""", (self.chat_id,)).fetchone()
+                        ORDER BY rowid DESC LIMIT 1""", (target_chat,)).fetchone()
         recent = json.loads(row[0]) if row else {}
-        data = recent.get("media", {}) if self._memory_current(recent) else {}
+        data = recent.get("media", {}) if self._memory_current(recent, owner_code=owner) else {}
         if data and recent.get("_music_preference_versions"):
             data["_music_preference_versions"] = recent["_music_preference_versions"]
         data.pop("browser_playback", None)
-        if source := self._latest_started_turn(self.chat_id):
+        if source := self._latest_started_turn(target_chat):
             receipt = source["browser_playback"]
             item = self.playback_item(source, receipt["media_id"])
             if item:
@@ -441,9 +534,9 @@ class Moss:
                     break
         return tuple(titles)
 
-    def _music_preferences(self):
+    def _music_preferences(self, owner_code=None):
         preferred = {}
-        for item in sorted(self.list_memories(), key=lambda row: row["updated_at"], reverse=True):
+        for item in sorted(self.list_memories(owner_code), key=lambda row: row["updated_at"], reverse=True):
             if item["source"] in {"chat", "panel"} and (artist := music_preference(item["text"])):
                 if key := compact(artist):
                     preferred.setdefault(key, (artist, item))
@@ -464,8 +557,10 @@ class Moss:
                 return next((i for i in result.get("matches", []) if i.get("media_id") == media_id), None)
         return None
 
-    def record_playback(self, chat, turn_id, media_id, event, play_id, started_at_us):
-        if chat != self.chat_id or event not in ("started", "blocked", "failed"):
+    def record_playback(self, chat, turn_id, media_id, event, play_id, started_at_us, *, owner_code=None):
+        owner = self.normalize_owner(owner_code)
+        self.require_chat_owner(chat, owner)
+        if chat != self.active_chat_for(owner) or event not in ("started", "blocked", "failed"):
             raise ValueError("播放回执与当前对话不符")
         turn = self._get(turn_id)
         if media_id and (turn.get("media") or {}).get("recovered_from") == media_id:
@@ -494,7 +589,10 @@ class Moss:
                 self._prepare_track_resume(chat, turn_id, media_id, play_id)
 
     def _recoverable_track(self, chat, turn_id, media_id):
-        if self.closing or self.chat_id != chat:
+        if self.closing:
+            return None
+        owner = self.chat_owner(chat)
+        if owner is None or self.active_chat_for(owner) != chat:
             return None
         row = self.db.execute("SELECT doc FROM turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1", (chat,)).fetchone()
         turn = json.loads(row[0]) if row else {}
@@ -512,7 +610,10 @@ class Moss:
                 and selected.get("source_kind") in {"local", "nas"} and bool(selected.get("artist")))
 
     def _current_playback_turn(self, chat, turn_id, media_id, play_id):
-        if self.closing or self.chat_id != chat:
+        if self.closing:
+            return None
+        owner = self.chat_owner(chat)
+        if owner is None or self.active_chat_for(owner) != chat:
             return None
         turn = self._latest_started_turn(chat) or {}
         receipt = turn.get("browser_playback") or {}
@@ -537,7 +638,7 @@ class Moss:
         return False
 
     def _can_resume_track(self, turn, chat, media_id):
-        if not self._is_recoverable_track(turn, media_id) or self._has_active_turn():
+        if not self._is_recoverable_track(turn, media_id) or self._has_active_turn(chat):
             return False
         newer = self.db.execute("""SELECT doc FROM turns WHERE chat_id=?
                                  AND rowid>(SELECT rowid FROM turns WHERE chat_id=? AND id=?)
@@ -635,7 +736,7 @@ class Moss:
             changes["previous_browser_playback"] = turn["browser_playback"]
         self._update(turn, media=view, browser_playback=None, **changes)
 
-    def page_playback(self, snapshot, *, include_audio=False):
+    def page_playback(self, snapshot, *, include_audio=False, chat_id=None):
         if not isinstance(snapshot, dict):
             raise ValueError("播放器现场信息无效")
         state = snapshot.get("state")
@@ -645,26 +746,28 @@ class Moss:
             raise ValueError("播放器状态无效")
         turn = self._get(snapshot["turn_id"])
         item = self.playback_item(turn, snapshot.get("media_id"))
-        if turn["chat_id"] != self.chat_id or not item:
+        target_chat = chat_id or self.chat_id
+        if turn["chat_id"] != target_chat or not item:
             raise ValueError("播放器现场与这段对话的音轨不符")
         playback = {"state": state, "title": item["title"], "artist": item.get("artist")}
         if include_audio and item.get("kind") == "audio" and item.get("source_kind") in {"local", "nas", "online"}:
             playback["_audio"] = item
         return playback
 
-    def _reminder_media(self, timer, player):
+    def _reminder_media(self, timer, player, chat_id=None):
         label = timer.get("label", "")
         match = re.search(r"(?:这|刚才那)(?:一)?(首|段|个)(歌曲?|音乐|曲子|视频|影片|片段)?", label)
         if not match or (match[1] != "首" and not match[2]):
             return None
         kind = "audio" if match[1] == "首" or match[2] in {"歌", "歌曲", "音乐", "曲子"} else "video"
-        if player and player.get("state") != "idle" and self.page_playback(player):
+        target_chat = chat_id or self.chat_id
+        if player and player.get("state") != "idle" and self.page_playback(player, chat_id=target_chat):
             turn = self._get(player["turn_id"])
             selected = self.playback_item(turn, player["media_id"])
         else:
             row = self.db.execute("""SELECT doc FROM turns WHERE chat_id=? AND json_type(doc,'$.media')='object'
                                   AND json_extract(doc,'$.status') NOT IN ('cancelled','error')
-                                  ORDER BY rowid DESC LIMIT 1""", (self.chat_id,)).fetchone()
+                                  ORDER BY rowid DESC LIMIT 1""", (target_chat,)).fetchone()
             if not row:
                 return None
             turn = json.loads(row[0])
@@ -674,7 +777,7 @@ class Moss:
         for i, item in enumerate((turn.get("media") or {}).get("items") or (), 1):
             if (item.get("media_id") == selected.get("media_id") and item.get("subtitle") == selected.get("subtitle")
                     and item.get("source_kind") in {"local", "nas"}):
-                return {"chat_id": self.chat_id, "turn_id": turn["id"], "media_id": item["media_id"],
+                return {"chat_id": target_chat, "turn_id": turn["id"], "media_id": item["media_id"],
                         "index": i, "title": item["title"]}
         return None
 
@@ -743,12 +846,12 @@ class Moss:
         reply, _ = await self._media_tool(ctx, {"action": "select", "index": index, "play": True, "mode": mode})
         return reply
 
-    def _turn_rows(self):
-        return self.db.execute("SELECT id,doc,cloud_requests FROM turns WHERE chat_id=? ORDER BY rowid", (self.chat_id,))
+    def _turn_rows(self, chat_id=None):
+        return self.db.execute("SELECT id,doc,cloud_requests FROM turns WHERE chat_id=? ORDER BY rowid", (chat_id or self.chat_id,))
 
-    def _public_turn(self, doc, counts, transport_owner=None):
+    def _public_turn(self, doc, counts, transport_owner=None, chat_id=None):
         turn = json.loads(doc)
-        turn["chat_id"] = self.chat_id
+        turn["chat_id"] = chat_id or self.chat_id
         usage = json.loads(counts) if counts is not None else None
         if usage is not None:
             usage["total"] = sum(usage["by_provider"].values())
@@ -780,36 +883,41 @@ class Moss:
             turn["transport"].pop("request_id", None)
         return turn
 
-    def _state_metadata(self):
+    def _state_metadata(self, owner_code=None):
+        owner = self.normalize_owner(owner_code)
+        active_chat = self.active_chat_for(owner)
         revision, = self.db.execute("SELECT revision FROM state WHERE id=1").fetchone()
         chats = [{"id": key, "title": title, "created_at": date} for key, title, date in
-                 self.db.execute("SELECT id,title,created_at FROM chats ORDER BY rowid DESC")]
-        items = self.list_memories()
-        return {"revision": revision, "chats": chats, "chat_id": self.chat_id,
+                 self.db.execute("SELECT id,title,created_at FROM chats WHERE COALESCE(owner_code,'MOSS')=? ORDER BY rowid DESC", (owner,))]
+        items = self.list_memories(owner)
+        return {"revision": revision, "owner_code": owner, "chats": chats, "chat_id": active_chat,
                 "memories": items, "memory_limits": limits(items), "model_id": self.model_id, "model": self.model_name,
-                "personality_id": self.personality_id, "personalities": personality_list(),
+                "personality_id": self.owner_personality(owner), "personalities": personality_list(),
                 "vision_model": self.vision_model(),
                 "agent_mode": "holojarvis", "media_resume": True, "timers": self.timers.snapshot(),
                 "timer_windows_error": self.timers.windows_error,
                 "memory_backend": "mem0" if self.index else "sqlite",
                 "memory_index_error": self.index.error if self.index else None}
 
-    def state(self, *, transport_owner=None):
-        snapshot = self._state_metadata()
-        snapshot["turns"] = [self._public_turn(doc, counts, transport_owner) for _, doc, counts in self._turn_rows()]
+    def state(self, *, transport_owner=None, owner_code=None):
+        snapshot = self._state_metadata(owner_code=owner_code)
+        chat_id = snapshot["chat_id"]
+        snapshot["turns"] = [self._public_turn(doc, counts, transport_owner, chat_id=chat_id)
+                             for _, doc, counts in self._turn_rows(chat_id)]
         return snapshot
 
-    def list_memories(self):
-        return memories(self.db)
+    def list_memories(self, owner_code=None):
+        return memories(self.db, owner_code=self.normalize_owner(owner_code))
 
-    def _memory_provenance(self, turn, version_field="_memory_versions"):
+    def _memory_provenance(self, turn, version_field="_memory_versions", owner_code=None):
         versions = turn.get(version_field, turn.get("_memory_versions"))
         if versions == {} or (versions is None and not turn.get("memory_ids")):
             return {}
-        return valid_memory_versions(turn, memory_versions(self.list_memories()), version_field)
+        owner = owner_code or (self.chat_owner(turn["chat_id"]) if turn.get("chat_id") else None) or self.DEFAULT_OWNER
+        return valid_memory_versions(turn, memory_versions(self.list_memories(owner)), version_field)
 
-    def _memory_current(self, turn):
-        return self._memory_provenance(turn) is not None
+    def _memory_current(self, turn, owner_code=None):
+        return self._memory_provenance(turn, owner_code=owner_code) is not None
 
     async def sync_reminders(self):
         previous_error = self.timers.windows_error
@@ -861,26 +969,30 @@ class Moss:
             if not completed:
                 self._index_failed("本机语义索引同步较慢，已保存到本地记忆。")
 
-    async def remember(self, text):
+    async def remember(self, text, *, owner_code=None):
+        owner = self.normalize_owner(owner_code)
         with self.db:
-            key, change = save_memory(self.db, text, source="panel")
+            key, change = save_memory(self.db, text, source="panel", owner_code=owner)
             if change != "unchanged":
                 self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
         if change != "unchanged":
-            try:
-                self.soul.sync_memories_to_sag_and_profile()
-            except Exception:
-                pass
+            if owner == self.DEFAULT_OWNER:
+                try:
+                    self.soul.sync_memories_to_sag_and_profile()
+                except Exception:
+                    pass
             self._notify()
-        await self._sync_index()
+        if owner == self.DEFAULT_OWNER:
+            await self._sync_index()
         return key
 
-    async def _relevant_memories(self, question):
+    async def _relevant_memories(self, question, *, owner_code=None):
         if ignore_personal_memory(question):
             return []
-        items = self.list_memories()
+        owner = self.normalize_owner(owner_code)
+        items = self.list_memories(owner)
         related = select_memories(question, items)
-        if (not self.index or asyncio.get_running_loop().time() < self._index_retry_after or
+        if (owner != self.DEFAULT_OWNER or not self.index or asyncio.get_running_loop().time() < self._index_retry_after or
                 (self._index_sync_job is not None and not self._index_sync_job.done())):
             return related
         snapshot = tuple((item["id"], item["text"]) for item in items)
@@ -891,7 +1003,7 @@ class Moss:
                     selected = await self.index.select(question, self.list_memories)
             except (TimeoutError, ValueError) as exc:
                 self._index_failed(str(exc) or "本机语义检索响应较慢，本轮已使用本地记忆。")
-                return select_memories(question, self.list_memories())
+                return select_memories(question, self.list_memories(owner))
             self._indexed_memories = snapshot
             self._publish_index_status()
             return selected
@@ -899,40 +1011,62 @@ class Moss:
             await self._sync_index(foreground=False)
         return related
 
-    async def forget(self, key):
+    async def forget(self, key, *, owner_code=None):
+        owner = self.normalize_owner(owner_code)
         with self.db:
-            remove_memory(self.db, key)
+            remove_memory(self.db, key, owner_code=owner)
             self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
-        try:
-            self.sag.delete_by_source_ref("memory", f"memory:{key}")
-            self.soul.sync_memories_to_sag_and_profile()
-        except Exception:
-            pass
+        if owner == self.DEFAULT_OWNER:
+            try:
+                self.sag.delete_by_source_ref("memory", f"memory:{key}")
+                self.soul.sync_memories_to_sag_and_profile()
+            except Exception:
+                pass
         self._notify()
-        await self._sync_index()
+        if owner == self.DEFAULT_OWNER:
+            await self._sync_index()
         return key
 
-    async def new_chat(self):
-        self._check_idle()
-        self._cancel_track_resume()
+    def _check_owner_idle(self, owner: str):
+        if self.closing:
+            raise ValueError("服务正在退出")
+        if self.job and not self.job.done():
+            task_chat = None
+            if self.task_turn:
+                row = self.db.execute("SELECT chat_id FROM turns WHERE id=?", (self.task_turn,)).fetchone()
+                task_chat = row[0] if row else None
+            task_owner = self.chat_owner(task_chat) if task_chat else self.DEFAULT_OWNER
+            if task_owner == owner:
+                raise ValueError("上一轮仍在结束，请稍候再试")
+
+    async def new_chat(self, *, owner_code=None):
+        owner = self.normalize_owner(owner_code)
+        self._check_owner_idle(owner)
+        if owner == self.DEFAULT_OWNER:
+            self._cancel_track_resume()
         key = uuid4().hex
         with self.db:
-            self.db.execute("INSERT INTO chats VALUES(?,?,?)", (key, "新对话", now()))
-            self.db.execute("UPDATE state SET active_chat=?,revision=revision+1 WHERE id=1", (key,))
-        self.chat_id = key
+            self.db.execute("INSERT INTO chats(id,title,created_at,owner_code) VALUES(?,?,?,?)", (key, "新对话", now(), owner))
+            self._sync_operator_chat(owner, key)
+            self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
         self._notify()
         return key
 
-    async def switch_chat(self, key):
-        if self.chat_id == key:
+    async def switch_chat(self, key, *, owner_code=None):
+        owner = self.normalize_owner(owner_code)
+        if self.active_chat_for(owner) == key:
             return key
-        self._check_idle()
-        if not self.db.execute("SELECT 1 FROM chats WHERE id=?", (key,)).fetchone():
+        self._check_owner_idle(owner)
+        row = self.db.execute("SELECT owner_code FROM chats WHERE id=?", (key,)).fetchone()
+        if not row:
             raise ValueError("找不到这段对话")
-        self._cancel_track_resume()
+        if self.normalize_owner(row[0]) != owner:
+            raise PermissionError("无权切换到其他授权人员的对话")
+        if owner == self.DEFAULT_OWNER:
+            self._cancel_track_resume()
         with self.db:
-            self.db.execute("UPDATE state SET active_chat=?,revision=revision+1 WHERE id=1", (key,))
-        self.chat_id = key
+            self._sync_operator_chat(owner, key)
+            self.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
         self._notify()
         return key
 
@@ -951,13 +1085,14 @@ class Moss:
         for doc, in self.db.execute(query + " ORDER BY rowid DESC", params):
             yield {**json.loads(doc), "chat_id": chat_id}
 
-    def _note_list_origin(self, last):
+    def _note_list_origin(self, last, chat_id=None):
         # Only an uninterrupted list/ordinal exchange can refer to the earlier result order.
         if not last or last.get("source") != "notes" or last["status"] != "replied":
             return None, None
+        target_chat = chat_id or last.get("chat_id") or self.chat_id
         if list_id := last.get("_note_list_turn_id"):
             row = self.db.execute("SELECT doc FROM turns WHERE id=? AND chat_id=?",
-                                  (list_id, self.chat_id)).fetchone()
+                                  (list_id, target_chat)).fetchone()
             if not row:
                 return None, None
             last = json.loads(row[0])
@@ -990,21 +1125,21 @@ class Moss:
             ORDER BY rowid DESC LIMIT 1""", (chat_id, before, chat_id, kind, kind)).fetchone()
         return json.loads(row[0]) if row else {}
 
-    def _last_system_media_pause(self):
+    def _last_system_media_pause(self, chat_id=None):
         row = self.db.execute("""
             SELECT json_extract(doc,'$.system_media_pause') FROM turns
             WHERE chat_id=? AND json_extract(doc,'$.status')='replied'
               AND json_type(doc,'$.system_media_pause') IS NOT NULL
-            ORDER BY rowid DESC LIMIT 1""", (self.chat_id,)).fetchone()
+            ORDER BY rowid DESC LIMIT 1""", (chat_id or self.chat_id,)).fetchone()
         return json.loads(row[0]) if row and row[0] is not None else None
 
-    def _active_turn(self):
+    def _active_turn(self, chat_id=None):
         row = self.db.execute("""SELECT doc FROM turns WHERE chat_id=?
-            AND json_extract(doc,'$.status') IN ('thinking','pending','saving') LIMIT 1""", (self.chat_id,)).fetchone()
+            AND json_extract(doc,'$.status') IN ('thinking','pending','saving') LIMIT 1""", (chat_id or self.chat_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def _has_active_turn(self):
-        return self._active_turn() is not None
+    def _has_active_turn(self, chat_id=None):
+        return self._active_turn(chat_id) is not None
 
     def _update(self, turn, pending=None, **changes):
         updated = {**turn, **changes}
@@ -1199,8 +1334,10 @@ class Moss:
                 ]
         return ordered, inherited
 
-    async def select_media(self, chat_id, turn_id, media_id, index=None):
-        if chat_id != self.chat_id:
+    async def select_media(self, chat_id, turn_id, media_id, index=None, *, owner_code=None):
+        owner = self.normalize_owner(owner_code)
+        self.require_chat_owner(chat_id, owner)
+        if chat_id != self.active_chat_for(owner):
             raise ValueError("请先切换到这份候选列表所属的对话")
         source = self._get(turn_id)
         if source["chat_id"] != chat_id or source["status"] in {"cancelled", "error"}:
@@ -1212,7 +1349,7 @@ class Moss:
             if ((index is None or n == index) and item.get("media_id") == media_id and media_id and item.get("kind") in {"audio", "video"}
                     and item.get("source_kind") in {"local", "nas"}):
                 unit = "个视频" if item["kind"] == "video" else "首"
-                return await self.message(f"播放第 {n} {unit}", chat_id=chat_id, _selection=(n, context))
+                return await self.message(f"播放第 {n} {unit}", chat_id=chat_id, _selection=(n, context), owner_code=owner)
             if ((index is None or n == index) and item.get("media_id") == media_id and media_id
                     and item.get("kind") == "audio" and item.get("source_kind") == "online"):
                 updated = {**context, "selected": item, "autoplay": True, "play_mode": "track",
@@ -1432,11 +1569,13 @@ class Moss:
                     return online_res
         return reply, view
 
-    def finish_transport(self, report):
+    def finish_transport(self, report, *, owner_code=None):
         turn_id = report.get("turn_id")
         if not isinstance(turn_id, str):
             raise ValueError("缺少播放控制轮次")
         turn = self._get(turn_id)
+        if owner_code is not None:
+            self.require_chat_owner(turn["chat_id"], owner_code)
         if turn["chat_id"] != report.get("chat_id") or not turn.get("transport"):
             raise ValueError("找不到这次播放控制")
         instruction = turn["transport"]
@@ -1450,6 +1589,7 @@ class Moss:
                                 "cancelled_queue": report.get("cancelled_queue") is True})
 
     def _record_transport(self, turn, command, player, request_id, queued_player):
+        target_chat = turn["chat_id"]
         if request_id is not None and not isinstance(request_id, str):
             raise ValueError("播放器请求标识无效")
         queued = None
@@ -1465,14 +1605,14 @@ class Moss:
             if not scheduled and replacement_selected:
                 # The page may have requested cancellation while the copy was being replaced.
                 scheduled = media.get("selected")
-            if origin["chat_id"] != self.chat_id or not scheduled:
+            if origin["chat_id"] != target_chat or not scheduled:
                 raise ValueError("待播放目标与当前对话不符")
             pending_replacement = (replacement_selected and media.get("resume_position_s") is not None
                                    and isinstance(player, dict) and player.get("state") == "failed"
                                    and player.get("turn_id") == origin["id"] and player.get("media_id") == queued_id)
             queued = {"turn_id": origin["id"], "media_id": queued_id,
                       "title": scheduled["title"], "kind": scheduled.get("kind", "audio")}
-        snapshot = {"state": "idle"} if pending_replacement else self.page_playback(player) if player is not None else None
+        snapshot = {"state": "idle"} if pending_replacement else self.page_playback(player, chat_id=target_chat) if player is not None else None
         item = self.playback_item(self._get(player["turn_id"]), player["media_id"]) if snapshot and snapshot["state"] != "idle" else None
         turn.update(status="replied", source="transport")
         turn.update(prepare_transport(*command, snapshot, item, player, request_id, queued))
@@ -1485,11 +1625,16 @@ class Moss:
 
     async def message(self, text, chat_id=None, *, _selection=None, player=None, transport_request_id=None, queued_player=None,
                       reply_context_turn=None, reply_context_goal=None, reply_context_request_id=None,
-                      window_context=None, image_context=None, browser_location=None, configured_location=None):
+                      window_context=None, image_context=None, browser_location=None, configured_location=None,
+                      owner_code=None):
+        owner = self.normalize_owner(owner_code)
+        target_chat = self.active_chat_for(owner)
         if not isinstance(text, str) or not text.strip() or len(text) > 1200 or len(text.encode("utf-8")) > 2700:
             raise ValueError("请输入一条不超过 1200 个字符、2700 字节的消息")
-        if chat_id is not None and chat_id != self.chat_id:
-            raise ValueError("当前对话已切换，请检查消息所在的对话后再发送")
+        if chat_id is not None:
+            self.require_chat_owner(chat_id, owner)
+            if chat_id != target_chat:
+                raise ValueError("当前对话已切换，请检查消息所在的对话后再发送")
         if reply_context_goal is not None or reply_context_request_id is not None:
             if not chat_id or not reply_context_turn or window_context is not None or image_context is not None:
                 raise ValueError("拟回复需要绑定当前对话的来信。")
@@ -1512,7 +1657,7 @@ class Moss:
                 return reply_context_request_id
         if not text.strip(" \t\r\n.。…"):
             return None
-        active = self._active_turn()
+        active = self._active_turn(target_chat)
         player_state = player.get("state") if isinstance(player, dict) else None
         transport = parse_transport(text, player_state not in ("idle", None), explicit=active is not None,
                                     stoppable=player_state in ("playing", "buffering") or isinstance(queued_player, dict))
@@ -1523,8 +1668,8 @@ class Moss:
             raise ValueError("请先确认或取消当前请求")
         self._check_idle(allow_running=active is not None)
         turn_id = reply_context_request_id or uuid4().hex
-        turn = dict(id=turn_id, chat_id=self.chat_id, user=text, status="thinking", created_at=now(), preview=None,
-                    model_id=self.model_id, model=self.model_name, personality_id=self.personality_id,
+        turn = dict(id=turn_id, chat_id=target_chat, user=text, status="thinking", created_at=now(), preview=None,
+                    model_id=self.model_id, model=self.model_name, personality_id=self.owner_personality(owner),
                     receipt=None, reply=None, error=None, call_id=None, approved_at=None,
                     tool_started_at=None, receipt_at=None, replied_at=None, receipt_ms=None, reply_ms=None)
         if active:
@@ -1548,7 +1693,7 @@ class Moss:
         if window_context is not None:
             if not chat_id or reply_context_turn is not None:
                 raise ValueError("请指定窗口文字所属的对话和一种提交方式。")
-            excerpt = window_excerpt(self, window_context)
+            excerpt = window_excerpt(self, window_context, chat_id=target_chat)
             turn.update(source="window_question", kernel="holojarvis", window_context={
                 "turn_id":window_context["turn_id"], "action":"screen_text", "characters":len(excerpt)})
             with self.db:
@@ -1563,14 +1708,14 @@ class Moss:
                     or not text.endswith("”") or not incoming):
                 raise ValueError("拟回复需要提供来源和选定的来信。")
             origin = self._get(reply_context_turn)
-            if (origin["chat_id"] != self.chat_id or origin.get("source") != "context" or
+            if (origin["chat_id"] != target_chat or origin.get("source") != "context" or
                     origin.get("status") != "replied" or origin.get("context_action") not in {"screen_text", "clipboard"}):
                 raise ValueError("拟回复来源不属于当前对话的读屏或剪贴板结果。")
             turn["reply_context"] = {"turn_id":reply_context_turn, "action":origin["context_action"]}
             if reply_context_goal:
                 turn["reply_context"]["goal"] = reply_context_goal
             context_reply = {"incoming": incoming, "relationship": "未指定", "goal": reply_context_goal or ""}
-        recent = self._recent_turns(self.chat_id)
+        recent = self._recent_turns(target_chat)
         previous = list(islice(recent, 4))
         last = previous[0] if previous else None
         reminder_listing = last.get("_reminder_list_rows") if last and last["status"] == "replied" else None
@@ -1589,7 +1734,7 @@ class Moss:
                    and (last.get("jev") or {}).get("selector") == "awaiting_message")
         alias = None if _selection or context_reply or waiting else handoff_alias(text)
         if alias is not None:
-            recent = self._recent_turns(self.chat_id)
+            recent = self._recent_turns(target_chat)
             try:
                 origin = next((item for item in recent if not (item.get("_jev_contact_request") or is_thanks_turn(item))), None)
             finally:
@@ -1625,7 +1770,7 @@ class Moss:
         if not (_selection or command or jev or drop_reply or note or timer or calendar):
             context_turn = next((item for item in reversed(previous) if not is_thanks_turn(item)), None)
             context = parse_context(text, context_turn, nearby_location=configured_location or browser_location)
-            if not (context or transport) and last and last.get("_calendar_list_windows") and self._memory_current(last):
+            if not (context or transport) and last and last.get("_calendar_list_windows") and self._memory_current(last, owner_code=owner):
                 calendar, context = continue_calendar(text, last, configured_location=configured_location)
         if context and context["action"] == "local_overview" and reminder_listing is not None:
             context["reminder_listing"] = reminder_listing
@@ -1637,9 +1782,9 @@ class Moss:
                 WHERE turns.chat_id=:chat AND json_extract(turns.doc, '$.status')='replied'
                   AND (reading.value IS NOT NULL OR json_extract(turns.doc, '$.mcp_receipt')=:receipt)
                 ORDER BY turns.rowid DESC LIMIT 1
-            """, {"chat":self.chat_id, "receipt":context["receipt"]}).fetchone()
+            """, {"chat": target_chat, "receipt": context["receipt"]}).fetchone()
         if context and context["action"] == "system_media" and context["operation"] == "resume_paused":
-            context["target"] = self._last_system_media_pause()
+            context["target"] = self._last_system_media_pause(target_chat)
         desktop = None if _selection or command or jev or drop_reply or note or timer or context or calendar else parse_desktop(text)
         desktop_confirmation = confirmation(desktop, self.drafts.parent / "desktop-work") if (
             desktop and desktop["action"] in CONFIRMED_ACTIONS) else None
@@ -1662,7 +1807,7 @@ class Moss:
                             and last.get("source") in {"media", "memory", "acknowledgement"}
                             and not (last.get("media") or {}).get("suggested")
                             and not (last.get("reply") or "").rstrip().endswith(("?", "？")))
-        media_context = self._media_context()
+        media_context = self._media_context(target_chat)
         media_declined = bool(last and last.get("media_declined"))
         focused = bool(previous and not media_declined
                        and (previous[-1].get("media") or previous[-1].get("media_context_used") or previous[-1].get("source") == "transport"
@@ -1673,7 +1818,7 @@ class Moss:
         if not (command or acknowledged or special or _selection or weather_retry or LOCAL_CLOCK.fullmatch(text.strip())):
             media_previous = [
                 {**item, "media": None, "media_context_used": False}
-                if item.get("_music_preference_versions") and not self._memory_current(item) else item
+                if item.get("_music_preference_versions") and not self._memory_current(item, owner_code=owner) else item
                 for item in previous
             ]
             after_thanks = bool(last and is_thanks_turn(last))
@@ -1681,7 +1826,7 @@ class Moss:
                              if after_thanks and media_context else None)
             audio_origin = courtesy_turn or last
             identified_audio = (audio_origin or {}).get("_identified_audio")
-            if identified_audio and (audio_origin["status"] != "replied" or not self._memory_current(audio_origin)):
+            if identified_audio and (audio_origin["status"] != "replied" or not self._memory_current(audio_origin, owner_code=owner)):
                 identified_audio = None
             courteous_reference = None
             if not focused and courtesy_turn and courtesy_turn.get("source") == "media":
@@ -1690,7 +1835,7 @@ class Moss:
                     courteous_reference = media_reference(text, media_context, focused=True)
             if not (focused or courteous_reference) and media_context and media_context.get("suggested"):
                 media_context = {k: v for k, v in media_context.items() if k != "suggested"}
-            recovery = recover_artist_request(text, media_previous, self.chat_id, (media_context or {}).get("browser_playback"))
+            recovery = recover_artist_request(text, media_previous, target_chat, (media_context or {}).get("browser_playback"))
             direct_turns = (courtesy_turn,) if courtesy_turn and identified_audio else media_previous
             direct_reference = None if media_declined else followup_song(
                 text, media_context, direct_turns, player, queued_player, identified_audio=identified_audio)
@@ -1716,7 +1861,7 @@ class Moss:
                 turn["retried_artist_turn"] = media_intent["retried_artist_turn"]
                 media_context = {"browser_playback": (media_context or {}).get("browser_playback")}
             if media_intent and media_intent.get("playback_question") == "current" and player is not None:
-                media_intent["player"] = self.page_playback(player, include_audio=True)
+                media_intent["player"] = self.page_playback(player, include_audio=True, chat_id=target_chat)
             if (media_intent and media_intent["action"] == "select"
                     and media_intent.get("current") and not media_intent.get("cue_navigation")):
                 if identified_audio:
@@ -1741,8 +1886,8 @@ class Moss:
                 self._check_idle()
                 latest = self.db.execute("SELECT id FROM turns WHERE chat_id=? ORDER BY rowid DESC LIMIT 1",
                                          (turn["chat_id"],)).fetchone()
-                if (self.chat_id != turn["chat_id"] or (latest[0] if latest else None) != (last["id"] if last else None)
-                        or self._has_active_turn()):
+                if (self.active_chat_for(owner) != turn["chat_id"] or (latest[0] if latest else None) != (last["id"] if last else None)
+                        or self._has_active_turn(turn["chat_id"])):
                     raise ValueError("对话状态已更新，请在当前对话重试。")
         if _selection is not None:
             n, media_context = _selection
@@ -1786,28 +1931,29 @@ class Moss:
                     if action == "edit":
                         target, value = value
                     elif action == "seat_edit":
-                        target, value = seat_correction(self.db, value, self.chat_id)
-                    key, change = save_memory(self.db, value, source="chat", chat=self.chat_id, turn=turn_id, target=target)
-                    saved = find_memory(self.db, key)
+                        target, value = seat_correction(self.db, value, target_chat, owner_code=owner)
+                    key, change = save_memory(self.db, value, source="chat", chat=target_chat, turn=turn_id, target=target, owner_code=owner)
+                    saved = find_memory(self.db, key, owner_code=owner)
                     reply = {"created": "已记住：", "updated": "已更新记忆：", "unchanged": "这条记忆已经保存："}[change] + saved["text"]
                     turn["memory_id"] = key
                 elif action == "forget":
-                    target_mem_id = find_memory(self.db, value)["id"]
-                    remove_memory(self.db, target_mem_id)
-                    self.sag.delete_by_source_ref("memory", f"memory:{target_mem_id}")
+                    target_mem_id = find_memory(self.db, value, owner_code=owner)["id"]
+                    remove_memory(self.db, target_mem_id, owner_code=owner)
+                    if owner == self.DEFAULT_OWNER:
+                        self.sag.delete_by_source_ref("memory", f"memory:{target_mem_id}")
                     reply = "已删除这条长期记忆。"
                 elif action == "recall":
-                    items = select_memories(value, self.list_memories())
+                    items = select_memories(value, self.list_memories(owner))
                     turn["memory_ids"] = [item["id"] for item in items]
                     reply = "\n".join(item["text"] for item in items) or "目前没有相关的有效记忆。"
                 elif action == "check":
-                    turn["memory_ids"], reply = check_memory(value, self.list_memories())
+                    turn["memory_ids"], reply = check_memory(value, self.list_memories(owner))
                 elif action == "recall_saved":
-                    turn["memory_ids"], reply = recall_saved(value, self.list_memories())
+                    turn["memory_ids"], reply = recall_saved(value, self.list_memories(owner))
                 elif action == "seat_advice":
-                    turn["memory_ids"], reply = seat_advice(self.list_memories(), value)
+                    turn["memory_ids"], reply = seat_advice(self.list_memories(owner), value)
                 else:
-                    items = self.list_memories()
+                    items = self.list_memories(owner)
                     reply = "\n".join(f"{i}. {m['text']}（{m['id']}）" for i, m in enumerate(items, 1)) or "目前没有长期记忆。"
                 turn.update(status="replied", reply=reply, replied_at=now(), source="memory")
             elif drop_reply:
@@ -1843,11 +1989,11 @@ class Moss:
                 turn.update(status="replied", source="narration", reply=narration["text"], replied_at=now(),
                             narration={"category": narration["category"], "cues": narration["cues"]})
             elif timer:
-                target = self._reminder_media(timer, player) if timer["action"] == "create" else None
+                target = self._reminder_media(timer, player, chat_id=target_chat) if timer["action"] == "create" else None
                 if timer["action"] == "list" and not timer.get("countdown"):
                     reply, turn["_reminder_list_rows"] = self.timers.listing(timer)
                 else:
-                    reply = self.timers.execute(timer, chat_id=self.chat_id, turn_id=turn_id, media=target, listing=reminder_listing)
+                    reply = self.timers.execute(timer, chat_id=target_chat, turn_id=turn_id, media=target, listing=reminder_listing)
                 turn.update(status="replied", reply=reply, replied_at=now())
             elif note:
                 reply, speech, result_ids = self.notes.reply(note, result_ids=note_ids)
@@ -1859,7 +2005,7 @@ class Moss:
                 if note_list_id is not None:
                     turn["_note_list_turn_id"] = note_list_id
             self._insert_turn(turn)
-        if command and command[0] in {"remember", "edit", "seat_edit", "forget"}:
+        if owner == self.DEFAULT_OWNER and command and command[0] in {"remember", "edit", "seat_edit", "forget"}:
             try:
                 self.soul.sync_memories_to_sag_and_profile()
             except Exception:
@@ -1882,7 +2028,7 @@ class Moss:
             self._start(turn, user_prompt=text, _media_summary=summary, _named=named, _jev=jev,
                         _browser_location=browser_location, _configured_location=configured_location,
                         _retry_weather=weather_retry == "retry")
-        elif command[0] in {"remember", "edit", "seat_edit", "forget"}:
+        elif owner == self.DEFAULT_OWNER and command[0] in {"remember", "edit", "seat_edit", "forget"}:
             await self._sync_index()
         return turn_id
 
@@ -1908,9 +2054,11 @@ class Moss:
         if turn["status"] != "pending" or (turn.get("desktop_confirmation") or {}).get("action") not in CALENDAR_CONFIRMATIONS:
             raise ValueError("这条日程已经不在等待确认。")
 
-    async def approve(self, turn_id, *, pending_draft_only=False, pending_calendar_only=False):
+    async def approve(self, turn_id, *, pending_draft_only=False, pending_calendar_only=False, owner_code=None):
+        owner = self.normalize_owner(owner_code)
         turn = self._get(turn_id)
-        if turn["chat_id"] != self.chat_id:
+        self.require_chat_owner(turn["chat_id"], owner)
+        if turn["chat_id"] != self.active_chat_for(owner):
             raise ValueError("请先切换到本轮请求所属的对话")
         if pending_draft_only:
             self._require_pending_draft(turn)
@@ -2134,11 +2282,12 @@ class Moss:
                 return
             if "media_intent" in kwargs:
                 turn = self._get(turn_id)
+                chat_owner = self.chat_owner(turn["chat_id"]) or self.DEFAULT_OWNER
                 intent = kwargs["media_intent"]
                 context = kwargs["media_context"]
                 provenance = {}
                 if intent.get("contextual_pick"):
-                    preferred = self._music_preferences()
+                    preferred = self._music_preferences(chat_owner)
                     intent = {**intent, "recent_audio": self._recent_audio(turn["chat_id"])}
                     preferred_artists = tuple(artist for artist, _ in preferred.values())
                     reply, media = await self.resolve_media_execution(
@@ -2148,7 +2297,7 @@ class Moss:
                     used = [item for key, (_, item) in preferred.items() if key in ranked]
                     if used and not token.cancelled and not self.closing:
                         provenance = memory_versions(used)
-                        current = memory_versions(self.list_memories())
+                        current = memory_versions(self.list_memories(chat_owner))
                         if any(current.get(key) != version for key, version in provenance.items()):
                             reply, media = await self.resolve_media_execution(intent, context, turn, user_text=turn["user"])
                             provenance = {}
@@ -2180,7 +2329,9 @@ class Moss:
                                  reply=jev["literal_reply"], replied_at=now())
                     return
                 skip_history = bool(kwargs.pop("_retry_weather", False) or named or jev)
-                selected = [] if skip_history else await self._relevant_memories(question)
+                turn = self._get(turn_id)
+                chat_owner = self.chat_owner(turn["chat_id"]) or self.DEFAULT_OWNER
+                selected = [] if skip_history else await self._relevant_memories(question, owner_code=chat_owner)
                 if self.closing or token.cancelled:
                     return
                 turn = self._get(turn_id)
@@ -2380,17 +2531,20 @@ class Moss:
         await asyncio.shield(asyncio.gather(job, return_exceptions=True))
 
     async def cancel(self, turn_id, *, pending_draft_only=False, pending_calendar_only=False,
-                     conversation_only=False, chat_id=None):
+                     conversation_only=False, chat_id=None, owner_code=None):
+        owner = self.normalize_owner(owner_code)
         turn = self._get(turn_id)
-        if turn["chat_id"] != self.chat_id:
+        self.require_chat_owner(turn["chat_id"], owner)
+        active_chat = self.active_chat_for(owner)
+        if turn["chat_id"] != active_chat:
             raise ValueError("请先切换到这轮请求所属的对话")
         if conversation_only:
-            active = self._active_turn()
+            active = self._active_turn(active_chat)
             job = self.job
             action_fields = ("preview", "call_id", "approved_at", "tool_started_at", "receipt", "holo_tools",
                              "desktop_confirmation", "media", "media_in_flight", "transport", "mcp_request",
                              "_directory_read_request", "_local_overview_request")
-            if (self.closing or pending_draft_only or pending_calendar_only or chat_id != self.chat_id
+            if (self.closing or pending_draft_only or pending_calendar_only or chat_id != active_chat
                     or not active or active["id"] != turn_id or self.task_turn != turn_id or not job or job.done()
                     or job.cancelling() or not self.token or self.token.cancelled or turn["status"] != "thinking"
                     or turn.get("source") != "holo" or turn.get("kernel") != "holojarvis"
@@ -2444,6 +2598,8 @@ class Moss:
 
     def _schedule_rsi_learning(self, finished_turn):
         if self.closing or not finished_turn:
+            return
+        if (self.chat_owner(finished_turn.get("chat_id") or "") or self.DEFAULT_OWNER) != self.DEFAULT_OWNER:
             return
         try:
             u_txt = finished_turn.get("user", "")

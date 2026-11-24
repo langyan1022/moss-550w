@@ -89,8 +89,14 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
     }
   }
 
-  function openGate({ switchMode = false } = {}) {
+  function openGate({ switchMode = false, forceRequired = false } = {}) {
     if (!gateDlg) return;
+    if (forceRequired) {
+      identity.authorized = false;
+      identity.code = '';
+      identity.role = '';
+      identity.is_admin = false;
+    }
     if (gateErr) { gateErr.hidden = true; gateErr.textContent = ''; }
     if (gateInput) gateInput.value = '';
     if (gateSwitchHint) {
@@ -98,7 +104,7 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
         ? t('auth.gate_switch_hint')
         : t('auth.gate_hint');
     }
-    gateDlg.dataset.required = String(!identity.authorized && !switchMode);
+    gateDlg.dataset.required = String(forceRequired || (!identity.authorized && !switchMode));
     if (!gateDlg.open) gateDlg.showModal();
     setTimeout(() => gateInput?.focus(), 40);
   }

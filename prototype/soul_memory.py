@@ -438,7 +438,11 @@ class SoulEngine:
         """Deterministically distill Persona traits and Episodic events from completed turns with redaction + turn pointers."""
         if turns is None:
             try:
-                rows = self.db.execute("SELECT id, doc FROM turns ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
+                rows = self.db.execute(
+                    "SELECT t.id, t.doc FROM turns t LEFT JOIN chats c ON c.id = t.chat_id "
+                    "WHERE COALESCE(c.owner_code, 'MOSS')='MOSS' ORDER BY t.rowid DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
             except sqlite3.OperationalError:
                 return {"scanned": 0, "traits_updated": 0, "episodes_indexed": 0}
             turns = []

@@ -385,6 +385,126 @@ def test_secret_store_and_iot_encryption():
     return "DPAPI/Fernet + IoT ha_token encryption OK"
 
 
+async def test_operator_conversation_isolation():
+    import socket
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    from core import Moss
+    from serve import application
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    fui_public = Path(__file__).resolve().parent / "fui" / "public"
+    with tempfile.TemporaryDirectory(prefix="moss-v56-isolation-") as td:
+        data_dir = Path(td)
+        moss = Moss(data_dir, "http://127.0.0.1:19999/v1", "mock-local", prefer_cloud=False)
+        stopped = asyncio.Event()
+        app = application(moss, lambda: "standby", data_dir, port, "tok-iso", stopped, fui_public=fui_public)
+        server = TestServer(app, port=port)
+        try:
+            async with TestClient(server) as cs_cli:
+                hdr = {"Origin": f"http://127.0.0.1:{port}"}
+                # Authenticate CS explicitly as MOSS
+                assert (await cs_cli.post("/api/auth/verify", json={"code": "MOSS"}, headers=hdr)).status == 200
+                r_m1 = await cs_cli.post("/api/message", json={"text": "记住：我是总控老丁"}, headers=hdr)
+                assert r_m1.status == 200
+                m_state = await r_m1.json()
+                moss_chat_id = m_state["chat_id"]
+                assert m_state["owner_code"] == "MOSS"
+                assert any("总控老丁" in m["text"] for m in m_state["memories"])
+
+                # Separate HTTP session for C operator OP02 (unsafe=True allows aiohttp CookieJar on 127.0.0.1 IP)
+                async with aiohttp.ClientSession(
+                    base_url=f"http://127.0.0.1:{port}",
+                    trust_env=False,
+                    cookie_jar=aiohttp.CookieJar(unsafe=True),
+                ) as op2_cli:
+                    r_v2 = await op2_cli.post("/api/auth/verify", json={"code": "OP02"}, headers=hdr)
+                    assert r_v2.status == 200
+                    d_v2 = await r_v2.json()
+                    op2_chat_id = d_v2["last_chat_id"]
+                    assert op2_chat_id and op2_chat_id != moss_chat_id
+
+                    # /api/state MUST isolate turns, chats, and memories
+                    st2 = await (await op2_cli.get("/api/state")).json()
+                    assert st2["owner_code"] == "OP02"
+                    assert st2["chat_id"] == op2_chat_id and st2["chat_id"] != moss_chat_id
+                    assert st2["turns"] == [], f"Leaked MOSS turns to OP02: {st2['turns']}"
+                    assert st2["memories"] == [], f"Leaked MOSS memories to OP02: {st2['memories']}"
+                    assert all(c["id"] != moss_chat_id for c in st2["chats"])
+
+                    # /api/events initial SSE state frame MUST be isolated to OP02
+                    async with op2_cli.get("/api/events") as sse_resp:
+                        assert sse_resp.status == 200
+                        raw_evt = b""
+                        for _ in range(12):
+                            chunk = await sse_resp.content.readline()
+                            raw_evt += chunk
+                            if chunk == b"\n":
+                                break
+                        evt_txt = raw_evt.decode("utf-8")
+                        assert '"owner_code":"OP02"' in evt_txt and "总控老丁" not in evt_txt, evt_txt
+
+                    # /api/chats/search MUST NOT expose MOSS turns to OP02
+                    sr2 = await (await op2_cli.get("/api/chats/search?q=总控老丁")).json()
+                    assert sr2["hits"] == [], f"Search leaked MOSS turns: {sr2}"
+                    sr_moss = await (await cs_cli.get("/api/chats/search?q=总控老丁")).json()
+                    assert len(sr_moss["hits"]) == 1 and sr_moss["hits"][0]["chat_id"] == moss_chat_id
+
+                    # Cross-operator export, switch-chat, message MUST return 403
+                    assert (await op2_cli.get(f"/api/chats/{moss_chat_id}/export")).status == 403
+                    assert (await op2_cli.post("/api/switch-chat", json={"id": moss_chat_id}, headers=hdr)).status == 403
+                    assert (await op2_cli.post("/api/message", json={"chat_id": moss_chat_id, "text": "在吗"}, headers=hdr)).status == 403
+
+                    # OP02 writes their own turn, memory, and personality without clobbering MOSS
+                    r_p2 = await op2_cli.post("/api/select-personality", json={"id": "sassy"}, headers=hdr)
+                    assert r_p2.status == 200
+                    r_op2_mem = await op2_cli.post("/api/message", json={"chat_id": op2_chat_id, "text": "记住：我是访客小王"}, headers=hdr)
+                    assert r_op2_mem.status == 200
+                    st2_after = await r_op2_mem.json()
+                    assert any("访客小王" in m["text"] for m in st2_after["memories"])
+                    assert not any("总控老丁" in m["text"] for m in st2_after["memories"])
+                    assert st2_after["personality_id"] == "sassy"
+
+                    # Meanwhile MOSS still has its own chat, turns, memories, and partner personality!
+                    st_moss = await (await cs_cli.get("/api/state")).json()
+                    assert st_moss["chat_id"] == moss_chat_id
+                    assert st_moss["personality_id"] == "partner"
+                    assert not any("访客小王" in (t.get("user") or "") for t in st_moss["turns"])
+                    assert not any("访客小王" in m["text"] for m in st_moss["memories"])
+
+                    # OP02 new-chat does NOT hijack MOSS's active chat_id
+                    r_nc2 = await op2_cli.post("/api/new-chat", json={}, headers=hdr)
+                    assert r_nc2.status == 200
+                    st2_nc = await r_nc2.json()
+                    assert st2_nc["chat_id"] != op2_chat_id and len(st2_nc["chats"]) == 2
+                    st_moss2 = await (await cs_cli.get("/api/state")).json()
+                    assert st_moss2["chat_id"] == moss_chat_id
+
+                    # Third operator OP03 cannot see MOSS or OP02
+                    async with aiohttp.ClientSession(
+                        base_url=f"http://127.0.0.1:{port}",
+                        trust_env=False,
+                        cookie_jar=aiohttp.CookieJar(unsafe=True),
+                    ) as op3_cli:
+                        assert (await op3_cli.post("/api/auth/verify", json={"code": "OP03"}, headers=hdr)).status == 200
+                        st3 = await (await op3_cli.get("/api/state")).json()
+                        assert st3["turns"] == [] and st3["memories"] == [] and len(st3["chats"]) == 1
+                        sr3 = await (await op3_cli.get("/api/chats/search?q=访客小王")).json()
+                        assert sr3["hits"] == []
+
+                    # CS deleting OP02 wipes OP02's chats, turns, and memories
+                    assert (await cs_cli.delete("/api/auth/users/OP02", headers=hdr)).status == 200
+                    assert (await op2_cli.get("/api/state")).status == 401
+                    assert moss.db.execute("SELECT COUNT(*) FROM chats WHERE owner_code='OP02'").fetchone()[0] == 0
+                    assert moss.db.execute("SELECT COUNT(*) FROM memories WHERE owner_code='OP02'").fetchone()[0] == 0
+        finally:
+            await moss.close()
+    return "Multi-operator chats/turns/search/export/SSE/memories isolation OK"
+
+
 async def main():
     res = {
         "parallel_tools": await test_parallel_tools_and_trace(),
@@ -394,6 +514,7 @@ async def main():
         "recurring_tasks": test_recurring_tasks(),
         "music_prefs_lrc_sleep": test_music_prefs_lrc_sleep(),
         "auth_cs_c_rbac": await test_auth_rbac_and_persistence_http(),
+        "operator_isolation": await test_operator_conversation_isolation(),
         "voice_process_guards": await test_voice_process_guards(),
         "secret_store_iot": test_secret_store_and_iot_encryption(),
     }

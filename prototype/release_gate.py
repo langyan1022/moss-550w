@@ -184,11 +184,10 @@ def audit_js_contracts():
         raise RuntimeError("Missing HTML DOM IDs:\n  " + "\n  ".join(missing_ids))
 
     # 3. Check every static /api/... endpoint referenced in fui/public/js/*.js exists in backend route files
-    route_sources = "\n".join(
-        (ROOT / p).read_text(encoding="utf-8")
-        for p in ("serve.py", "console_settings.py", "fui_routes.py")
-        if (ROOT / p).is_file()
-    )
+    route_paths = [
+        ROOT / p for p in ("serve.py", "console_settings.py") if (ROOT / p).is_file()
+    ] + sorted(ROOT.glob("*_routes.py"))
+    route_sources = "\n".join(p.read_text(encoding="utf-8") for p in route_paths)
     missing_routes = []
     for js_file in sorted(js_dir.glob("*.js")):
         src = js_file.read_text(encoding="utf-8")

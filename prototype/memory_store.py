@@ -17,14 +17,25 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def normalize_owner_code(owner_code=None):
+    norm = str(owner_code or "").strip().upper()
+    return norm if norm else "MOSS"
+
+
 def install_schema(db):
     with db:
         db.execute("BEGIN EXCLUSIVE")
         db.execute("CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS turns(id TEXT PRIMARY KEY, doc TEXT NOT NULL, pending BLOB)")
-        db.execute("CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, owner_code TEXT NOT NULL DEFAULT 'MOSS')")
+        chat_columns = {row[1] for row in db.execute("PRAGMA table_info(chats)")}
+        if "owner_code" not in chat_columns:
+            db.execute("ALTER TABLE chats ADD COLUMN owner_code TEXT NOT NULL DEFAULT 'MOSS'")
+        db.execute("CREATE INDEX IF NOT EXISTS chats_by_owner ON chats(owner_code)")
+        db.execute("CREATE TABLE IF NOT EXISTS operator_chats(owner_code TEXT PRIMARY KEY, active_chat TEXT REFERENCES chats(id))")
         db.execute("""CREATE TABLE IF NOT EXISTS memories(
-                   id TEXT PRIMARY KEY, text TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)""")
+                   id TEXT PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL,
+                   owner_code TEXT NOT NULL DEFAULT 'MOSS', UNIQUE(owner_code, text))""")
         columns = {row[1] for row in db.execute("PRAGMA table_info(memories)")}
         for column in ("topic", "updated_at", "source", "source_chat", "source_turn", "expires_at"):
             if column not in columns:
@@ -32,6 +43,20 @@ def install_schema(db):
         if "topic" not in columns:
             for key, text in db.execute("SELECT id,text FROM memories").fetchall():
                 db.execute("UPDATE memories SET topic=? WHERE id=?", (memory_topic(text), key))
+        if "owner_code" not in columns:
+            # Rebuild existing memories once so uniqueness is scoped per (owner_code, text) instead of global.
+            db.execute("""CREATE TABLE memories_v2(
+                       id TEXT PRIMARY KEY, text TEXT NOT NULL, created_at TEXT NOT NULL,
+                       topic TEXT, updated_at TEXT, source TEXT, source_chat TEXT,
+                       source_turn TEXT, expires_at TEXT,
+                       owner_code TEXT NOT NULL DEFAULT 'MOSS', UNIQUE(owner_code, text))""")
+            db.execute("""INSERT INTO memories_v2(
+                       id,text,created_at,topic,updated_at,source,source_chat,source_turn,expires_at,owner_code)
+                       SELECT id,text,created_at,topic,updated_at,source,source_chat,source_turn,expires_at,'MOSS'
+                       FROM memories""")
+            db.execute("DROP TABLE memories")
+            db.execute("ALTER TABLE memories_v2 RENAME TO memories")
+        db.execute("CREATE INDEX IF NOT EXISTS memories_by_owner ON memories(owner_code)")
         turn_columns = {row[1] for row in db.execute("PRAGMA table_info(turns)")}
         if "cloud_requests" not in turn_columns:
             db.execute("ALTER TABLE turns ADD COLUMN cloud_requests TEXT")
@@ -46,9 +71,10 @@ def install_schema(db):
             first = db.execute("SELECT doc FROM turns ORDER BY rowid LIMIT 1").fetchone()
             turn = json.loads(first[0]) if first else {}
             title = chat_title(turn["user"]) if first else "新对话"
-            db.execute("INSERT INTO chats VALUES(?,?,?)", (chat_id, title, turn.get("created_at") or now()))
+            db.execute("INSERT INTO chats(id,title,created_at,owner_code) VALUES(?,?,?,'MOSS')", (chat_id, title, turn.get("created_at") or now()))
             db.execute("UPDATE turns SET chat_id=? WHERE chat_id IS NULL", (chat_id,))
             db.execute("UPDATE state SET active_chat=?, revision=revision+1 WHERE id=1", (chat_id,))
+        db.execute("INSERT OR IGNORE INTO operator_chats(owner_code, active_chat) VALUES('MOSS', ?)", (chat_id,))
         db.execute("CREATE INDEX IF NOT EXISTS turns_by_chat ON turns(chat_id)")
         db.execute("""CREATE INDEX IF NOT EXISTS active_turns_by_chat ON turns(chat_id)
                    WHERE json_extract(doc,'$.status') IN ('thinking','pending','saving')""")
@@ -64,11 +90,13 @@ def chat_title(text):
     return " ".join(text.split())[:24] or "新对话"
 
 
-def memories(db):
+def memories(db, owner_code=None):
+    owner = normalize_owner_code(owner_code)
     fields = ("id", "text", "created_at", "updated_at", "source", "source_chat", "source_turn", "expires_at", "topic")
     rows = db.execute("""SELECT id,text,created_at,COALESCE(updated_at,created_at),COALESCE(source,'legacy'),
                          source_chat,source_turn,expires_at,topic FROM memories
-                         WHERE expires_at IS NULL OR expires_at>? ORDER BY rowid""", (now(),))
+                         WHERE COALESCE(owner_code,'MOSS')=? AND (expires_at IS NULL OR expires_at>?) ORDER BY rowid""",
+                      (owner, now()))
     return [dict(zip(fields, row)) for row in rows]
 
 
@@ -384,9 +412,9 @@ def with_expiry(text):
     return text[:match.start()].strip(), cutoff.isoformat(timespec="microseconds")
 
 
-def find_memory(db, target):
+def find_memory(db, target, owner_code=None):
     target = target.strip()
-    items = memories(db)
+    items = memories(db, owner_code=owner_code)
     exact = [item for item in items if target in (item["id"], item["text"])]
     if not exact:
         aliases = {"座位偏好": "seat", "高铁座位偏好": "seat.rail", "火车座位偏好": "seat.rail",
@@ -399,12 +427,13 @@ def find_memory(db, target):
     return exact[0]
 
 
-def save_memory(db, text, *, source, chat=None, turn=None, target=None):
+def save_memory(db, text, *, source, chat=None, turn=None, target=None, owner_code=None):
+    owner = normalize_owner_code(owner_code)
     text, expires = with_expiry(valid_text(text))
     text = valid_text(text)
     topic = memory_topic(text)
-    old = find_memory(db, target) if target else None
-    items = memories(db)
+    old = find_memory(db, target, owner_code=owner) if target else None
+    items = memories(db, owner_code=owner)
     same = next((item for item in items if item["text"] == text), None)
     if old is None:
         candidates = [item for item in items if topic and item["topic"] == topic]
@@ -416,20 +445,22 @@ def save_memory(db, text, *, source, chat=None, turn=None, target=None):
     if old and old["text"] == text and (expires is None or expires == old["expires_at"]):
         return old["id"], "unchanged"
     stamp = now()
-    db.execute("DELETE FROM memories WHERE text=? AND expires_at<=?", (text, stamp))
+    db.execute("DELETE FROM memories WHERE COALESCE(owner_code,'MOSS')=? AND text=? AND expires_at<=?", (owner, text, stamp))
     if old:
         db.execute("""UPDATE memories SET text=?,topic=?,updated_at=?,source=?,source_chat=?,source_turn=?,expires_at=?
-                      WHERE id=?""", (text, topic, stamp, source, chat, turn, expires or old["expires_at"], old["id"]))
+                      WHERE id=? AND COALESCE(owner_code,'MOSS')=?""",
+                   (text, topic, stamp, source, chat, turn, expires or old["expires_at"], old["id"], owner))
         return old["id"], "updated"
     key = uuid4().hex
-    db.execute("""INSERT INTO memories(id,text,created_at,updated_at,source,source_chat,source_turn,expires_at,topic)
-                  VALUES(?,?,?,?,?,?,?,?,?)""", (key, text, stamp, stamp, source, chat, turn, expires, topic))
+    db.execute("""INSERT INTO memories(id,text,created_at,updated_at,source,source_chat,source_turn,expires_at,topic,owner_code)
+                  VALUES(?,?,?,?,?,?,?,?,?,?)""", (key, text, stamp, stamp, source, chat, turn, expires, topic, owner))
     return key, "created"
 
 
-def seat_correction(db, change, chat):
+def seat_correction(db, change, chat, owner_code=None):
     mode, position = change
-    candidates = [item for item in memories(db) if item["topic"] in SEAT_NAMES and (not mode or item["topic"] == mode)]
+    candidates = [item for item in memories(db, owner_code=owner_code)
+                  if item["topic"] in SEAT_NAMES and (not mode or item["topic"] == mode)]
     if not mode and len(candidates) > 1:
         scoped = [item for item in candidates if item["source_chat"] == chat]
         if len(scoped) == 1:
@@ -440,10 +471,11 @@ def seat_correction(db, change, chat):
     return memory["id"], SEAT.sub(position, memory["text"], count=1)
 
 
-def remove_memory(db, key):
+def remove_memory(db, key, owner_code=None):
     if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{32}", key):
         raise ValueError("需要完整的记忆 ID")
-    if db.execute("DELETE FROM memories WHERE id=?", (key,)).rowcount != 1:
+    owner = normalize_owner_code(owner_code)
+    if db.execute("DELETE FROM memories WHERE id=? AND COALESCE(owner_code,'MOSS')=?", (key, owner)).rowcount != 1:
         raise ValueError("找不到这条记忆")
 
 
