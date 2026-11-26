@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 from time import perf_counter
 from uuid import uuid4
 import wave
@@ -89,13 +90,29 @@ class MossSpeech:
         self.idle_seconds = idle_seconds
         self.standby_seconds = standby_seconds
         self.lines = OrderedDict()
+        self._lines_lock = threading.RLock()
         self._used_worker = False
-        self._mic_key = self._mic_timer = self._mic_task = None
+        self._mic_key = self._mic_timer = self._mic_task = self._mic_cancel = None
         self._closed_mics = OrderedDict()
         self._session_key = self._session_task = self._session_eligible = self._session_cancel = None
         self._session_ttl = SESSION_WARM_SECONDS
         self._session_warm_ready = False
         self._closed_sessions = OrderedDict()
+        self._active_cancel_event: asyncio.Event | None = None
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    def _spawn_bg(self, coro) -> asyncio.Task:
+        t = asyncio.get_running_loop().create_task(coro)
+        self._bg_tasks.add(t)
+
+        def _done(task: asyncio.Task):
+            self._bg_tasks.discard(task)
+            if not task.cancelled():
+                with suppress(Exception):
+                    task.exception()
+
+        t.add_done_callback(_done)
+        return t
 
     @property
     def batch_capable(self):
@@ -144,7 +161,7 @@ class MossSpeech:
         self._mic_key = key
         loop = asyncio.get_running_loop()
         self._mic_timer = loop.call_later(
-            MIC_WARM_SECONDS, lambda: loop.create_task(self.release_microphone(key)))
+            MIC_WARM_SECONDS, lambda: self._spawn_bg(self.release_microphone(key)))
         task = self._mic_task = loop.create_task(self._load_for_microphone(key, eligible, prime))
         try:
             return await asyncio.shield(task)
@@ -159,34 +176,41 @@ class MossSpeech:
                 return False
             ready = False
             imports_only = False
+            yielded = False
             try:
                 if not eligible():
                     return False
                 self._cancel_release()
                 await self._start()
                 with tempfile.TemporaryDirectory(prefix="moss-mic-warm-") as folder:
+                    cancel = Path(folder) / "cancel"
+                    self._mic_cancel = cancel
                     request = {"request_id": uuid4().hex, "device": "cuda", "steps": SPEECH_STEPS,
-                               "prepare": True, "prime": prime, "cuda_min_free_mib": MIC_CUDA_MIN_FREE_MIB}
-                    result = await self._worker_reply(request, Path(folder) / "cancel", lambda: False,
+                               "prepare": True, "prime": prime, "cuda_min_free_mib": MIC_CUDA_MIN_FREE_MIB,
+                               "cancel_file": str(cancel)}
+                    result = await self._worker_reply(request, cancel, cancel.exists,
                                                       timeout=MIC_WARM_SECONDS)
                 ready = result["code"] == 0 and result["info"].get("device") == "cuda"
                 imports_only = not prime and result.get("preload_refused") is True
+                yielded = not ready and result.get("code") == 130 and not self.closing and bool(eligible())
                 if ready:
                     self._batch_capable = result["info"].get("batch_capable") is True
             except (RuntimeError, OSError, TimeoutError):
                 pass
             finally:
+                self._mic_cancel = None
                 if not ready:
                     if self._mic_key == key:
                         self._forget_microphone()
                     if imports_only and not self.closing:
                         self._release_after(IMPORT_PREPARE_SECONDS)
-                    else:
+                    elif not yielded:
                         await self._stop()
             return ready
 
     def _forget_microphone(self):
         self._mic_key = None
+        self._mic_cancel = None
         if self._mic_timer:
             self._mic_timer.cancel()
             self._mic_timer = None
@@ -270,6 +294,7 @@ class MossSpeech:
                     self._forget_session()
                 return False
             ready = False
+            yielded = False
             try:
                 self._cancel_release()
                 await self._start()
@@ -283,6 +308,8 @@ class MossSpeech:
                         request, cancel, lambda: self._session_key != key or self.closing, timeout=45)
                 ready = (result["code"] == 0 and result["info"].get("device") == "cuda"
                          and self._session_key == key and not self.closing and eligible())
+                yielded = (not ready and result.get("code") == 130
+                           and self._session_key == key and not self.closing and bool(eligible()))
                 if ready:
                     self._batch_capable = result["info"].get("batch_capable") is True
                     self._session_warm_ready = True
@@ -293,7 +320,7 @@ class MossSpeech:
                 self._session_cancel = None
                 if self._session_task is asyncio.current_task():
                     self._session_task = None
-                if not ready:
+                if not ready and not yielded:
                     if self._session_key == key:
                         self._forget_session()
                     await self._stop()
@@ -314,7 +341,7 @@ class MossSpeech:
             return
         if self._session_cancel:
             with suppress(OSError):
-                self._session_cancel.touch()
+                await asyncio.to_thread(self._session_cancel.touch)
         task, self._session_task = self._session_task, None
         if task and not task.done():
             task.cancel()
@@ -332,7 +359,7 @@ class MossSpeech:
     def _release_after(self, seconds, *, standby=False, standby_deadline=None, session_deadline=None):
         self._cancel_release()
         loop = asyncio.get_running_loop()
-        timer = loop.call_later(seconds, lambda: loop.create_task(
+        timer = loop.call_later(seconds, lambda: self._spawn_bg(
             self._release_if_due(timer, standby, standby_deadline, session_deadline)))
         self.release = timer
 
@@ -391,8 +418,12 @@ class MossSpeech:
             return
         self._batch_capable = False
         models = self.studio / "models/models--k2-fsa--OmniVoice"
-        self._status_worker_stamp = self._status_voice_stamp()
-        snapshot = (models / "refs/main").read_text(encoding="utf-8").strip()
+        self._status_worker_stamp, snapshot = await asyncio.to_thread(
+            lambda: (
+                self._status_voice_stamp(),
+                (models / "refs/main").read_text(encoding="utf-8").strip(),
+            )
+        )
         if self.worker_group:
             self.worker_group.Close()
         name = "MossSpeech-" + uuid4().hex
@@ -478,9 +509,10 @@ class MossSpeech:
     def _cached(self, key):
         status_path, _ = self._status_cache_path(key)
         cache_key = status_path if status_path else key
-        if cache_key in self.lines:
-            self.lines.move_to_end(cache_key)
-            return self.lines[cache_key]
+        with self._lines_lock:
+            if cache_key in self.lines:
+                self.lines.move_to_end(cache_key)
+                return self.lines[cache_key]
         category, text, room_amount = key
         if name := RECORDED_LINES.get((category, text)):
             try:
@@ -532,10 +564,11 @@ class MossSpeech:
         self._remember(status_path if status_path else key, data)
 
     def _remember(self, key, data):
-        self.lines[key] = data
-        self.lines.move_to_end(key)
-        while len(self.lines) > LINE_CACHE_LIMIT:
-            self.lines.popitem(last=False)
+        with self._lines_lock:
+            self.lines[key] = data
+            self.lines.move_to_end(key)
+            while len(self.lines) > LINE_CACHE_LIMIT:
+                self.lines.popitem(last=False)
 
     async def render(self, text, disconnected, category="reply", cached_only=False, *, timings=None, room_amount=100):
         started = perf_counter()
@@ -564,17 +597,20 @@ class MossSpeech:
         if self.closing or disconnected():
             raise ConnectionAbortedError()
         keys = [(category, text, room_amount) for text in texts]
-        ready = {key: self._cached(key) for key in dict.fromkeys(keys)}
+        ready = {key: await asyncio.to_thread(self._cached, key) for key in dict.fromkeys(keys)}
         if cached_only or all(data is not None for data in ready.values()):
             return [ready[key] for key in keys], "cached"
         if self._mic_key:
-            # From now on the real synthesis request, rather than the mic, owns the worker.
+            # Yield immediately when real synthesis arrives so mic warmup exits cleanly instead of holding lock
+            if self._mic_cancel:
+                with suppress(OSError):
+                    await asyncio.to_thread(self._mic_cancel.touch)
             self._forget_microphone()
             self._release_after(MIC_WARM_SECONDS)
         if self._session_cancel:
             # Yield background kernel priming immediately so the real reply takes the warm CUDA weights.
             with suppress(OSError):
-                self._session_cancel.touch()
+                await asyncio.to_thread(self._session_cancel.touch)
         queued = perf_counter()
         async with self.lock:
             if timings is not None:
@@ -583,7 +619,7 @@ class MossSpeech:
                 raise ConnectionAbortedError()
             for key, data in ready.items():
                 if data is None:
-                    ready[key] = self._cached(key)
+                    ready[key] = await asyncio.to_thread(self._cached, key)
             missing = [key for key, data in ready.items() if data is None]
             if not missing:
                 return [ready[key] for key in keys], "cached"
@@ -598,6 +634,8 @@ class MossSpeech:
                 with tempfile.TemporaryDirectory(prefix="moss-agent-speech-") as folder:
                     paths = [Path(folder) / f"{i}.wav" for i in range(len(missing))]
                     cancel = Path(folder) / "request.cancel"
+                    cancel_event = asyncio.Event()
+                    self._active_cancel_event = cancel_event
                     req = {"request_id": uuid4().hex, "cancel_file": str(cancel),
                            "device": "auto", "steps": SPEECH_STEPS, "room": room_amount > 0, "room_amount": room_amount,
                            "speed": SPEECH_RATES[category],
@@ -608,7 +646,13 @@ class MossSpeech:
                     else:
                         req["lines"] = [[key[1], str(path)] for key, path in zip(missing, paths)]
                     started = perf_counter()
-                    reply = await self._worker_reply(req, cancel, disconnected, timeout=150 * len(missing))
+                    try:
+                        reply = await self._worker_reply(
+                            req, cancel, disconnected, timeout=150 * len(missing), cancel_event=cancel_event,
+                        )
+                    finally:
+                        if self._active_cancel_event is cancel_event:
+                            self._active_cancel_event = None
                     self._batch_capable = reply["code"] == 0 and reply["info"].get("batch_capable") is True
                     if reply["code"] == 130 or disconnected():
                         raise ConnectionAbortedError()
@@ -630,12 +674,13 @@ class MossSpeech:
                                              ("place_decoder_s", "place_codec")):
                             if source in info["load_durations_s"]:
                                 timings[name] = info["load_durations_s"][source] * 1000
-                    output = [path.read_bytes() for path in paths]
+                    output = await asyncio.to_thread(lambda: [path.read_bytes() for path in paths])
                     if any(len(data) < 45 or data[:4] != b"RIFF" or data[8:12] != b"WAVE" for data in output):
                         raise RuntimeError("MOSS 语音进程没有输出有效音频")
+                    persist_ok = reply["info"].get("fallback") is None
                     for key, data in zip(missing, output):
                         ready[key] = data
-                        self._store(key, data, persist_status=reply["info"].get("fallback") is None)
+                        await asyncio.to_thread(self._store, key, data, persist_status=persist_ok)
                     generated = True
                     self._used_worker = True
                     return [ready[key] for key in keys], reply["info"]["mode"]
@@ -649,19 +694,27 @@ class MossSpeech:
                     else:
                         self._release_after(self.idle_seconds, standby=generated)
 
-    async def _worker_reply(self, req, cancel, disconnected, timeout):
+    async def _worker_reply(self, req, cancel, disconnected, timeout, cancel_event: asyncio.Event | None = None):
         try:
             self.worker.stdin.write(json.dumps(req, ensure_ascii=False).encode("utf-8") + b"\n")
             await self.worker.stdin.drain()
             async with asyncio.timeout(timeout):
                 reading = asyncio.create_task(self.worker.stdout.readline())
+                cancel_wait = asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
                 try:
                     while not reading.done():
-                        await asyncio.wait({reading}, timeout=.2)
-                        if disconnected() and not cancel.exists():
-                            cancel.touch()
+                        wait_set = {reading, cancel_wait} if (cancel_wait is not None and not cancel_wait.done()) else {reading}
+                        await asyncio.wait(wait_set, timeout=.2, return_when=asyncio.FIRST_COMPLETED)
+                        if reading.done():
+                            break
+                        if (disconnected() or (cancel_event is not None and cancel_event.is_set())) and not cancel.exists():
+                            with suppress(OSError):
+                                await asyncio.to_thread(cancel.touch)
                     line = reading.result()
                 finally:
+                    if cancel_wait is not None and not cancel_wait.done():
+                        cancel_wait.cancel()
+                        await asyncio.gather(cancel_wait, return_exceptions=True)
                     if not reading.done():
                         reading.cancel()
                         await asyncio.gather(reading, return_exceptions=True)
@@ -688,31 +741,33 @@ class MossSpeech:
         self._batch_capable = False
         self._used_worker = False
         self._session_warm_ready = False
-        if self.worker_group:
-            self.worker_group.Close()
-            self.worker_group = None
-        if worker and worker.returncode is None:
-            with suppress(OSError):
-                worker.stdin.close()
-            try:
-                await asyncio.wait_for(worker.wait(), 3)
-            except TimeoutError:
+        group, self.worker_group = self.worker_group, None
+        try:
+            if worker and worker.returncode is None:
                 with suppress(OSError):
-                    worker.terminate()
+                    worker.stdin.close()
                 try:
-                    await asyncio.wait_for(worker.wait(), 2)
+                    await asyncio.wait_for(worker.wait(), 0.8)
                 except TimeoutError:
                     with suppress(OSError):
-                        worker.kill()
-                    await worker.wait()
-            except asyncio.CancelledError:
-                with suppress(OSError):
-                    worker.terminate()
-                raise
-            finally:
-                if worker.returncode is None:
+                        worker.terminate()
+                    try:
+                        await asyncio.wait_for(worker.wait(), 1.2)
+                    except TimeoutError:
+                        with suppress(OSError):
+                            worker.kill()
+                        await worker.wait()
+                except asyncio.CancelledError:
                     with suppress(OSError):
                         worker.terminate()
+                    raise
+                finally:
+                    if worker.returncode is None:
+                        with suppress(OSError):
+                            worker.terminate()
+        finally:
+            if group:
+                group.Close()
 
     async def idle(self):
         async with self.lock:
@@ -720,13 +775,15 @@ class MossSpeech:
 
     async def close(self):
         self.closing = True
+        if self._active_cancel_event is not None:
+            self._active_cancel_event.set()
         self._cancel_release()
         self._forget_microphone()
         self._forget_session()
         if self._session_cancel:
             with suppress(OSError):
-                self._session_cancel.touch()
-        for pending in (self._mic_task, self._session_task):
+                await asyncio.to_thread(self._session_cancel.touch)
+        for pending in (self._mic_task, self._session_task, *list(self._bg_tasks)):
             if pending and not pending.done():
                 pending.cancel()
                 await asyncio.gather(pending, return_exceptions=True)

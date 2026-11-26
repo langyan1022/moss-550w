@@ -84,8 +84,14 @@ function installConsoleSettings() {
 
   const locationOptions = new URLSearchParams(location.search);
   const demo = locationOptions.get('sim') === '1' || locationOptions.has('beat');
-  const canAccess = () => !demo && document.body.dataset.backend !== 'simulated';
-  const visible = section => dialog.open && section.open && !section.closest('[hidden]') && !document.hidden;
+  const canAccess = () => !demo && document.body.dataset.backend !== 'simulated' && document.body.dataset.authRole !== 'C';
+  const visible = section => (
+    dialog.open
+    && section.open
+    && !section.closest('[hidden]')
+    && (!section.closest('[data-cs-only="true"]') || document.body.dataset.authRole !== 'C')
+    && !document.hidden
+  );
   const scanning = () => ['queued', 'running', 'scanning'].includes(library?.scan?.state);
   const statusText = new Map();
 
@@ -478,6 +484,38 @@ function installConsoleSettings() {
   omPingNav?.addEventListener('click', () => { void pingOnlineMusic('navidrome'); });
   omPingPub?.addEventListener('click', () => { void pingOnlineMusic('public'); });
 
+  const cascadeCheck = get('set-local-cascade');
+  let cascadeLoaded = false;
+  let cascadeSaving = false;
+
+  async function syncCascade() {
+    if (!cascadeCheck || cascadeLoaded || !canAccess()) return;
+    try {
+      const data = await request('providers');
+      cascadeCheck.checked = Boolean(data?.local_cloud_cascade);
+      cascadeLoaded = true;
+    } catch { /* wait for manual retry */ }
+  }
+
+  cascadeCheck?.addEventListener('change', async () => {
+    if (!canAccess() || cascadeSaving) return;
+    cascadeSaving = true;
+    cascadeCheck.disabled = true;
+    const nextVal = cascadeCheck.checked;
+    feedback(providerFeedback, 'console.saving');
+    try {
+      const res = await request('providers', { local_cloud_cascade: nextVal });
+      cascadeCheck.checked = Boolean(res?.local_cloud_cascade);
+      feedback(providerFeedback, 'console.saved');
+    } catch (error) {
+      cascadeCheck.checked = !nextVal;
+      feedback(providerFeedback, null, { reason: error.message, error: true });
+    } finally {
+      cascadeSaving = false;
+      cascadeCheck.disabled = !canAccess();
+    }
+  });
+
   function syncVisibility() {
     const showProvider = visible(providerSection);
     const showLibrary = visible(librarySection);
@@ -486,6 +524,7 @@ function installConsoleSettings() {
       apiKey.value = '';
       providerDirty = false;
       providersLoaded = false;
+      cascadeLoaded = false;
       if (omNavPass) omNavPass.value = '';
       if (omJamendoId) omJamendoId.value = '';
       omDirty = false;
@@ -493,6 +532,7 @@ function installConsoleSettings() {
       syncSecretBadges();
     }
     if (showProvider && !providersLoaded && !providerDirty) void loadProviders();
+    if (showProvider && !cascadeLoaded) void syncCascade();
     if (showLibrary && !libraryShown) void loadLibrary();
     if (showOnlineMusic && !omLoaded && !omDirty) void loadOnlineMusic();
     if (!showLibrary || !canAccess()) {
@@ -501,6 +541,7 @@ function installConsoleSettings() {
       libraryRead = null;
     }
     providerFields.disabled = !canAccess() || loadingProviders || savingProvider || !providers.length;
+    if (cascadeCheck) cascadeCheck.disabled = !canAccess() || cascadeSaving;
     if (omFields) omFields.disabled = !canAccess() || omLoading || omSaving || !omHasConfig;
     providersShown = showProvider;
     libraryShown = showLibrary;

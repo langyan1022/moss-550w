@@ -38,6 +38,7 @@ from urllib.parse import quote, urlencode, urljoin, urlsplit
 import aiohttp
 
 from music_prefs import parse_lrc_text
+from cognitive_utils import is_truly_public_ip
 from secret_store import protect_secret as _seal_secret, unprotect_secret as _unseal_secret
 
 
@@ -187,7 +188,22 @@ def _media_id(provider: str, external_id: str) -> str:
 
 
 def _is_truly_public_ip(ip_val) -> bool:
-    return bool(ip_val.is_global and not ip_val.is_multicast)
+    return is_truly_public_ip(ip_val)
+
+
+def _norm_host_idna(hostname: str) -> str:
+    clean = (hostname or "").strip("[]").lower()
+    if not clean:
+        return ""
+    try:
+        ip_address(clean)
+        return clean
+    except ValueError:
+        pass
+    try:
+        return clean.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return clean
 
 
 def _host_is_public(hostname: str) -> bool:
@@ -272,11 +288,14 @@ class _PinnedResolver(aiohttp.abc.AbstractResolver):
     """Pin one validated DNS resolution result inside aiohttp to stop DNS-rebinding TOCTOU."""
 
     def __init__(self, expected_host: str, resolved_ip: str):
-        self._expected_host = (expected_host or "").strip("[]").lower()
+        self._expected_raw = (expected_host or "").strip("[]").lower()
+        self._expected_idna = _norm_host_idna(expected_host)
         self._resolved_ip = resolved_ip
 
     async def resolve(self, host: str, port: int = 0, family: int = socket.AF_UNSPEC):
-        if host.strip("[]").lower() != self._expected_host:
+        cand_raw = (host or "").strip("[]").lower()
+        cand_idna = _norm_host_idna(host)
+        if cand_raw not in {self._expected_raw, self._expected_idna} and cand_idna != self._expected_idna:
             raise OSError(f"Refusing unpinned DNS resolution for {host}")
         addr_family = socket.AF_INET6 if ":" in self._resolved_ip else socket.AF_INET
         return [{
@@ -329,10 +348,33 @@ class OnlineMusicHub:
         self.config_path = self.data_dir / "online-music.json"
         self.cache_db_path = self.data_dir / "online_music_cache.sqlite3"
         self._fetcher = fetcher  # Optional injected async JSON/bytes callable for offline unit tests
+        self._session: aiohttp.ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
         self._init_db()
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        loop = asyncio.get_running_loop()
+        if (
+            self._session is None
+            or self._session.closed
+            or self._session_loop is not loop
+            or self._session_loop.is_closed()
+        ):
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8))
+            self._session_loop = loop
+        return self._session
+
+    async def close(self) -> None:
+        if self._session is not None and not self._session.closed:
+            if self._session_loop is None or self._session_loop is asyncio.get_running_loop():
+                await self._session.close()
+        self._session = None
+        self._session_loop = None
 
     def _init_db(self) -> None:
         with closing(sqlite3.connect(self.cache_db_path, timeout=5)) as db, db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=NORMAL")
             db.execute(
                 """CREATE TABLE IF NOT EXISTS online_tracks (
                     media_id TEXT PRIMARY KEY,
@@ -538,18 +580,25 @@ class OnlineMusicHub:
         headers = {"User-Agent": "MOSS-550W/5.5 (local companion music player)"}
         timeout = aiohttp.ClientTimeout(total=timeout_s)
         for _ in range(4):
-            connector = None
-            if not allow_internal:
-                cur_url, host, pinned_ip = await resolve_public_url(cur_url, allow_http=False)
-                connector = make_pinned_connector(host, pinned_ip)
+            if allow_internal:
+                sess = self._get_session()
+                async with sess.get(cur_url, headers=headers, timeout=timeout, allow_redirects=False) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("Location") or ""
+                        nxt = urljoin(cur_url, loc)
+                        if urlsplit(nxt).netloc != urlsplit(cur_url).netloc:
+                            raise ValueError("拒绝跳转到配置以外的服务主机")
+                        cur_url = nxt
+                        continue
+                    resp.raise_for_status()
+                    return await resp.json(content_type=None)
+            cur_url, host, pinned_ip = await resolve_public_url(cur_url, allow_http=False)
+            connector = make_pinned_connector(host, pinned_ip)
             async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                 async with session.get(cur_url, headers=headers, allow_redirects=False) as resp:
                     if resp.status in (301, 302, 303, 307, 308):
                         loc = resp.headers.get("Location") or ""
-                        nxt = urljoin(cur_url, loc)
-                        if allow_internal and urlsplit(nxt).netloc != urlsplit(cur_url).netloc:
-                            raise ValueError("拒绝跳转到配置以外的服务主机")
-                        cur_url = nxt
+                        cur_url = urljoin(cur_url, loc)
                         continue
                     resp.raise_for_status()
                     return await resp.json(content_type=None)
@@ -912,7 +961,7 @@ class OnlineMusicHub:
                 continue
             stream_url = str(st.get("url_resolved") or st.get("url") or "").strip()
             try:
-                _validate_public_url(stream_url, allow_http=True)
+                await resolve_public_url(stream_url, allow_http=True)
             except ValueError:
                 continue
             uuid = str(st.get("stationuuid") or stream_url)
@@ -960,7 +1009,7 @@ class OnlineMusicHub:
             if not tid or not audio_url:
                 continue
             try:
-                _validate_public_url(audio_url, allow_http=False)
+                await resolve_public_url(audio_url, allow_http=False)
             except ValueError:
                 continue
             art_url = str(tr.get("album_image") or tr.get("image") or "").strip()
@@ -1051,7 +1100,7 @@ class OnlineMusicHub:
                 if dedup_key in seen_keys:
                     continue
                 seen_keys.add(dedup_key)
-                merged.append(self._cache_track(item))
+                merged.append(await asyncio.to_thread(self._cache_track, item))
                 if len(merged) >= limit:
                     break
             if len(merged) >= limit:
@@ -1063,13 +1112,13 @@ class OnlineMusicHub:
             for item in await self._search_radiobrowser(q, limit):
                 mid = item["media_id"]
                 if mid not in blocked and mid != exclude_media_id:
-                    merged.append(self._cache_track(item))
+                    merged.append(await asyncio.to_thread(self._cache_track, item))
                 if len(merged) >= limit:
                     break
 
         return {"items": merged, "providers_consulted": consulted}
 
-    def resolve_stream_target(self, media_id: str) -> dict:
+    def resolve_stream_target(self, media_id: str, validate_url: bool = True) -> dict:
         """Resolve server-side upstream URL & SSRF policy for /api/media/online-stream/{media_id}."""
         cached = self.get_cached_track(media_id)
         if not cached:
@@ -1089,7 +1138,8 @@ class OnlineMusicHub:
                 "provider": provider,
             }
         allow_http = provider == "radiobrowser"
-        _validate_public_url(cached["raw_url"], allow_http=allow_http)
+        if validate_url:
+            _validate_public_url(cached["raw_url"], allow_http=allow_http)
         return {
             "url": cached["raw_url"],
             "allow_internal": False,
@@ -1098,7 +1148,7 @@ class OnlineMusicHub:
             "provider": provider,
         }
 
-    def resolve_cover_target(self, media_id: str) -> dict:
+    def resolve_cover_target(self, media_id: str, validate_url: bool = True) -> dict:
         """Resolve server-side artwork URL & SSRF policy for /api/media/online-cover/{media_id}."""
         cached = self.get_cached_track(media_id)
         if not cached:
@@ -1115,7 +1165,8 @@ class OnlineMusicHub:
                 "allowed_netloc": urlsplit(base).netloc,
                 "allow_http": False,
             }
-        _validate_public_url(cover_ref, allow_http=False)
+        if validate_url:
+            _validate_public_url(cover_ref, allow_http=False)
         return {
             "url": cover_ref,
             "allow_internal": False,
@@ -1185,7 +1236,7 @@ class OnlineMusicHub:
             for s in (pl.get("entry") or [])[:max_n]:
                 item = self._navidrome_song_to_track(s)
                 if item:
-                    tracks.append(self._cache_track(item))
+                    tracks.append(await asyncio.to_thread(self._cache_track, item))
             return {
                 "kind": "playlist",
                 "id": clean_id,
@@ -1202,7 +1253,7 @@ class OnlineMusicHub:
             for s in (al.get("song") or [])[:max_n]:
                 item = self._navidrome_song_to_track(s)
                 if item:
-                    tracks.append(self._cache_track(item))
+                    tracks.append(await asyncio.to_thread(self._cache_track, item))
             return {
                 "kind": "album",
                 "id": clean_id,
@@ -1216,9 +1267,9 @@ class OnlineMusicHub:
         """Report playback start or completion back to Navidrome via Subsonic scrobble.view."""
         cfg = self._load_raw_config()
         cfg_nav = cfg["navidrome"]
-        if self.is_isolated() or not cfg.get("enabled", True) or not cfg_nav.get("enabled"):
+        if not cfg.get("enabled", True) or not cfg_nav.get("enabled"):
             return {"ok": False, "skipped": True}
-        cached = self.get_cached_track(media_id)
+        cached = await asyncio.to_thread(self.get_cached_track, media_id)
         if not cached or cached.get("provider") != "navidrome":
             return {"ok": False, "skipped": True}
         try:
@@ -1242,7 +1293,7 @@ class OnlineMusicHub:
         if self.is_isolated() or not cfg.get("lyrics_lrclib", True):
             return {"lines": [], "has_lrc": False, "source": "disabled"}
 
-        cached_track = self.get_cached_track(media_id)
+        cached_track = await asyncio.to_thread(self.get_cached_track, media_id)
         raw_title = (title or (cached_track or {}).get("title") or "").strip()
         raw_artist = (artist or (cached_track or {}).get("artist") or "").strip()
         q_title = re.sub(r"^\d{1,3}[\s._-]+", "", raw_title).strip() or raw_title
@@ -1268,11 +1319,15 @@ class OnlineMusicHub:
                 pass
 
         cache_key = hashlib.sha256(f"{q_title.casefold()}|{q_artist.casefold()}".encode("utf-8")).hexdigest()[:24]
-        with closing(sqlite3.connect(self.cache_db_path, timeout=5)) as db:
-            row = db.execute(
-                "SELECT synced, lines_json, source, updated_at FROM online_lyrics_cache WHERE cache_key=?",
-                (cache_key,),
-            ).fetchone()
+
+        def _read_lyrics_cache():
+            with closing(sqlite3.connect(self.cache_db_path, timeout=5)) as db:
+                return db.execute(
+                    "SELECT synced, lines_json, source, updated_at FROM online_lyrics_cache WHERE cache_key=?",
+                    (cache_key,),
+                ).fetchone()
+
+        row = await asyncio.to_thread(_read_lyrics_cache)
         if row:
             lines = json.loads(row[1] or "[]")
             if lines:
@@ -1308,12 +1363,16 @@ class OnlineMusicHub:
             synced = False
 
         now_s = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with closing(sqlite3.connect(self.cache_db_path, timeout=5)) as db, db:
-            db.execute(
-                """INSERT INTO online_lyrics_cache(cache_key, synced, lines_json, source, updated_at)
-                   VALUES (?, ?, ?, 'lrclib', ?)
-                   ON CONFLICT(cache_key) DO UPDATE SET
-                       synced=excluded.synced, lines_json=excluded.lines_json, updated_at=excluded.updated_at""",
-                (cache_key, 1 if synced else 0, json.dumps(lines, ensure_ascii=False), now_s),
-            )
+
+        def _write_lyrics_cache():
+            with closing(sqlite3.connect(self.cache_db_path, timeout=5)) as db, db:
+                db.execute(
+                    """INSERT INTO online_lyrics_cache(cache_key, synced, lines_json, source, updated_at)
+                       VALUES (?, ?, ?, 'lrclib', ?)
+                       ON CONFLICT(cache_key) DO UPDATE SET
+                           synced=excluded.synced, lines_json=excluded.lines_json, updated_at=excluded.updated_at""",
+                    (cache_key, 1 if synced else 0, json.dumps(lines, ensure_ascii=False), now_s),
+                )
+
+        await asyncio.to_thread(_write_lyrics_cache)
         return {"lines": lines, "has_lrc": bool(lines), "synced": synced, "source": "lrclib" if lines else "none"}

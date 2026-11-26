@@ -4,6 +4,7 @@
  * Uses vendor/fui-geo.js (dot-matrix globe, flyTo, attachGlobeControls) and
  * vendor/fui-audio.js (drawEnvelope, pushEnvelope, level).
  */
+import { escapeHtml } from './hud/utils.js';
 import { attachGlobeControls, drawGlobe, flyTo } from '../vendor/fui-geo.js';
 import { createOrbit, drawEnvelope, drawOrbit, drawSpectrum, holdPeaks, pushEnvelope, toBands } from '../vendor/fui-audio.js';
 import { fixed, formatClock, formatCoord, t, weatherCondition } from './i18n.js';
@@ -925,6 +926,14 @@ export function createTelemetryController({
       lastEl.textContent = `${formatClock(newest.time)} ${newest.source}`;
     }
   }
+  function clearLogs() {
+    logRows = [];
+    if (logBody) logBody.replaceChildren();
+    if (logSourceBadge) {
+      logSourceBadge.textContent = 'LIVE';
+      logSourceBadge.title = '';
+    }
+  }
   syncFollowBtn();
 
   function renderReminders(timers = []) {
@@ -959,12 +968,14 @@ export function createTelemetryController({
         openBtn.addEventListener('click', () => onOpenTimerSource?.(item));
         actions.append(openBtn);
       }
-      const dismissBtn = document.createElement('button');
-      dismissBtn.type = 'button';
-      dismissBtn.className = 'fui-btn';
-      dismissBtn.textContent = t('rem.dismiss');
-      dismissBtn.addEventListener('click', () => onDismissTimer?.(item.id));
-      actions.append(dismissBtn);
+      if (document.body?.dataset?.authRole !== 'C') {
+        const dismissBtn = document.createElement('button');
+        dismissBtn.type = 'button';
+        dismissBtn.className = 'fui-btn';
+        dismissBtn.textContent = t('rem.dismiss');
+        dismissBtn.addEventListener('click', () => onDismissTimer?.(item.id));
+        actions.append(dismissBtn);
+      }
       li.append(main, actions);
       remListEl.append(li);
     }
@@ -1018,6 +1029,7 @@ export function createTelemetryController({
     getOledPreset: () => oledPreset,
     setMossMuted,
     addLog,
+    clearLogs,
     refreshLogSource,
     renderReminders,
     renderMediaQueue,
@@ -1058,12 +1070,4 @@ export function computeDebouncedCpuState(cpuPercent, streak = {}, { live = false
   const critStreak = advance ? (rawState === 'crit' ? prevCrit + 1 : 0) : prevCrit;
   const state = critStreak >= thresholdSamples ? 'crit' : warnStreak >= thresholdSamples ? 'warn' : 'idle';
   return { state, rawState, warnStreak, critStreak };
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

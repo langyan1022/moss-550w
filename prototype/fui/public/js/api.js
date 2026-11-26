@@ -375,7 +375,7 @@ export function createMossApi({
     mode = 'live';
     streamInitial = true;
     onLink?.({ mode: 'live', online: true, beatId: 'live' });
-    onLog?.({ time: Date.now(), source: 'LINK', text: 'Connected to MOSS backend 127.0.0.1:18221', level: 'ok' });
+    onLog?.({ time: Date.now(), source: 'LINK', text: `Connected to MOSS backend ${location.host}`, level: 'ok' });
 
     // Initial state + models + hardware readings
     fetch('/api/state', { cache: 'no-store' })
@@ -396,6 +396,10 @@ export function createMossApi({
     // Primary SSE state stream
     eventSource = new EventSource('/api/events?wake=1');
     eventSource.addEventListener('open', () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       if (mode === 'offline') streamInitial = true;
       mode = 'live';
       onLink?.({ mode: 'live', online: true, beatId: 'live' });
@@ -422,8 +426,22 @@ export function createMossApi({
     eventSource.addEventListener('wake-offer', (ev) => {
       onWakeOffer?.(ev.data);
     });
+    eventSource.addEventListener('brain-alert', (ev) => {
+      try {
+        const alert = JSON.parse(ev.data);
+        window.dispatchEvent(new CustomEvent('moss-brain-alert', { detail: alert }));
+      } catch {}
+    });
     eventSource.addEventListener('error', () => {
       mode = 'offline';
+      if (eventSource) {
+        try { eventSource.close(); } catch {}
+        eventSource = null;
+      }
+      if (runtimeLogSource) {
+        try { runtimeLogSource.close(); } catch {}
+        runtimeLogSource = null;
+      }
       onDevice?.(latestDevice, { stale: true });
       onLink?.({ mode, online: false, beatId: 'live' });
       onLog?.({ time: Date.now(), source: 'SSE', text: 'Connection interrupted · retrying', level: 'warn' });
@@ -442,22 +460,24 @@ export function createMossApi({
         });
     });
 
-    // Real-time backend log stream (operational logs + real file tail)
-    runtimeLogSource = new EventSource('/api/runtime-log/stream');
-    runtimeLogSource.onmessage = (ev) => {
-      try {
-        const entry = JSON.parse(ev.data);
-        if (typeof entry.text === 'string') {
-          onLog?.({
-            time: entry.time || Date.now(),
-            source: entry.source || 'CORE',
-            text: entry.text,
-            level: entry.level || (entry.error ? 'warn' : 'info'),
-            file: entry.file || null,
-          });
-        }
-      } catch { /* ignore */ }
-    };
+    // Real-time backend log stream (CS admin only; prevents C-role HTTP 403 noise)
+    if (document.body.dataset.authRole === 'CS') {
+      runtimeLogSource = new EventSource('/api/runtime-log/stream');
+      runtimeLogSource.onmessage = (ev) => {
+        try {
+          const entry = JSON.parse(ev.data);
+          if (typeof entry.text === 'string') {
+            onLog?.({
+              time: entry.time || Date.now(),
+              source: entry.source || 'CORE',
+              text: entry.text,
+              level: entry.level || (entry.error ? 'warn' : 'info'),
+              file: entry.file || null,
+            });
+          }
+        } catch { /* ignore */ }
+      };
+    }
   }
 
   async function tryProbeLive() {
@@ -486,6 +506,7 @@ export function createMossApi({
       body: JSON.stringify(body),
     });
     const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401) window.dispatchEvent(new CustomEvent('moss-auth-required'));
     if (!resp.ok) throw new Error(data.error || data.detail || `HTTP ${resp.status}`);
     acceptState(data);
     return data;
@@ -731,7 +752,9 @@ export function createMossApi({
   }
 
   async function getRuntimeLogSource() {
-    if (mode !== 'live') return { runtime_log: 'simulated.log', extra_path: '', extra_exists: false };
+    if (mode !== 'live' || (document.body?.dataset?.authRole && document.body.dataset.authRole !== 'CS')) {
+      return { runtime_log: mode !== 'live' ? 'simulated.log' : 'restricted (C)', extra_path: '', extra_exists: false };
+    }
     const r = await fetch('/api/runtime-log/source', { cache: 'no-store' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();

@@ -5,6 +5,7 @@
  * HIGHER PRIORITY than automatic browser geolocation / IP coordinates until the operator
  * explicitly restores automatic location.
  */
+import { escapeHtml } from './hud/utils.js';
 import { LAND } from '../vendor/fui-geo.js';
 import { CITIES, REGIONS, findCityById, findNearestCity, getCitiesByRegion, installCityCatalog, searchCities } from './cities.js';
 import { formatCoord, getLocale, t } from './i18n.js';
@@ -540,12 +541,4 @@ export function createCityPickerController({ onSelectManualCity, onRestoreAuto }
       requestAnimationFrame(() => drawMap()); // fui-lint-ignore: R15 one-shot post-open canvas redraw
     },
   };
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

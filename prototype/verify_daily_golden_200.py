@@ -1,18 +1,18 @@
-"""MOSS 550W Tiered 230-Sample Golden Daily Usage Benchmark Suite (v5.4+).
+"""MOSS 550W Tiered 260-Sample Golden Daily Usage Benchmark Suite (v6.0+).
 
 Directly closes the everyday-coverage sample gap across 6 real-world dimensions:
-  - Category A (45 samples): Colloquial Chinese & Erhua everyday routing
+  - Category A (55 samples): Colloquial Chinese, Erhua & Intent-Aware Local/Cloud Tool Routing
   - Category B (40 samples): Local ASR hotword & Mandarin homophone tolerance
-  - Category C (35 samples): Anti-hallucination, safety, SSRF, injection & boundary guards
-  - Category D (30 samples): 3-Personality tone, cadence & voice delivery hygiene matrix
+  - Category C (45 samples): Anti-hallucination, safety, SSRF, paraphrase memory & boundary guards
+  - Category D (40 samples): 4-Personality (incl. sassy) tone, cadence & voice delivery hygiene matrix
   - Category E (25 samples): Spoken numbers, dates, times, coordinates & verse normalization
   - Category F (55 samples): 5 continuous 11-turn mixed-context daily sessions against
                              an isolated in-process MOSS instance + loopback OpenAI server
-  Total: 230 deterministic daily samples (plus optional --live-models cloud/local check).
+  Total: 260 deterministic daily samples (plus optional --live-models cloud/local check).
 
 Modes:
   python verify_daily_golden_200.py --tier fast    # 55-sample stratified fast check (~2s)
-  python verify_daily_golden_200.py --tier full    # All 230/230 samples (~6s)
+  python verify_daily_golden_200.py --tier full    # All 260/260 samples (~6s)
   python verify_daily_golden_200.py --tier full --live-models aliyun,deepseek,kimi
 """
 
@@ -43,8 +43,10 @@ from assistant_brain import (
     conversational_cadence_guidance,
     filter_unverified_media_reply,
     is_emotion_vent,
+    select_tools_for_turn,
     strip_echoed_user_prefix,
 )
+from memory_store import select_memories
 from assistant_timers import parse_timer
 from colloquial_zh import normalize_colloquial_days, normalize_colloquial_erhua, normalize_weather_erhua
 from core import Moss, requests_draft
@@ -152,7 +154,20 @@ def build_cat_a() -> list[tuple[str, callable]]:
     for idx, (q, must_keep) in enumerate(protected, 1):
         add(f"protect_{idx:02d}", lambda q=q, mk=must_keep: mk in normalize_colloquial_erhua(q))
 
-    assert len(samples) == 45, f"Cat A expected 45, got {len(samples)}"
+    # 46-55: Intent-aware routing & local 4B tool parity
+    tool_names = lambda pid, q, **kw: {t["name"] for t in select_tools_for_turn(pid, q, **kw)}
+    add("route_local_url", lambda: "fetch_web_page" in tool_names("local", "帮我抓 https://example.com 正文"))
+    add("route_local_dir", lambda: {"list_local_directory", "read_local_file"} <= tool_names("local", r"看下 F:\logs 目录"))
+    add("route_local_date", lambda: "calculate_date" in tool_names("local", "距离春节还有几天？"))
+    add("route_local_mem", lambda: {"save_user_memory", "forget_user_memory"} <= tool_names("local", "忘掉那条旧记忆"))
+    add("route_local_note_manage", lambda: "manage_note" in tool_names("local", "归档刚才那条便签"))
+    add("route_local_ptr", lambda: "recall_turn_context" in tool_names("local", "回查 turn:a1b2c3d4 详情"))
+    add("route_cloud_lean", lambda: 10 <= len(tool_names("aliyun", "今天天气真不错")) <= 18)
+    add("route_cloud_bye_zero", lambda: len(tool_names("aliyun", "拜拜，先撤了", plain_prose=True)) == 0)
+    add("route_cloud_compound", lambda: {"create_timer", "calculate_math"} <= tool_names("aliyun", "20分钟后提醒，顺便算128*15", compound_request=True))
+    add("route_colloq_cal_erhua", lambda: (parse_calendar("明儿上午九点半到十点半安排日程：对齐") or {}).get("action") == "calendar_create")
+
+    assert len(samples) == 55, f"Cat A expected 55, got {len(samples)}"
     return samples
 
 
@@ -302,11 +317,33 @@ def build_cat_c() -> list[tuple[str, callable]]:
     add("draft_neg_3", lambda: not requests_draft("别保存，就聊两句"))
     add("draft_neg_4", lambda: not requests_draft("什么是本地草稿？"))
 
-    assert len(samples) == 35, f"Cat C expected 35, got {len(samples)}"
+    # 36-45: Chinese paraphrase recall, concept bridge & zero-leak memory boundary
+    sample_mems = [
+        {"id": "m1", "text": "我平时完全不吃香菜和折耳根", "topic": None},
+        {"id": "m2", "text": "我对青霉素和花生严重过敏", "topic": None},
+        {"id": "m3", "text": "我偏爱喝不加糖冰美式黑咖啡", "topic": "preference.咖啡"},
+        {"id": "m4", "text": "我坐高铁喜欢靠过道座位", "topic": "seat.rail"},
+        {"id": "m5", "text": "日常使用 Python 编写量化后端", "topic": None},
+        {"id": "m6", "text": "取件码 SF-90128", "topic": None},
+        {"id": "m7", "text": "我长期定居在苏州工业园区", "topic": None},
+        {"id": "m8", "text": "同事老张爱喝乌龙茶", "topic": None},
+    ]
+    add("para_spice", lambda: any("香菜" in m["text"] for m in select_memories("点外卖要注意去掉什么调料？", sample_mems)))
+    add("para_allergy", lambda: any("青霉素" in m["text"] for m in select_memories("去医院看病有什么药物禁忌？", sample_mems)))
+    add("para_coffee", lambda: any("冰美式" in m["text"] for m in select_memories("下午茶给我点杯提神咖啡", sample_mems)))
+    add("para_rail", lambda: any("过道" in m["text"] for m in select_memories("买火车票应该挑哪一侧？", sample_mems)))
+    add("para_dev", lambda: any("Python" in m["text"] for m in select_memories("我平时写代码主要用什么语言？", sample_mems)))
+    add("para_city", lambda: any("苏州" in m["text"] for m in select_memories("我现在常驻哪个城市？", sample_mems)))
+    add("exact_code_sf", lambda: any("SF-90128" in m["text"] for m in select_memories("我的取件码 SF-90128 呢", sample_mems)))
+    add("other_isolated", lambda: all("香菜" not in m["text"] for m in select_memories("同事老张喝什么茶？", sample_mems)))
+    add("general_zero_leak", lambda: select_memories("为什么树叶秋天会变黄？介绍科学原理", sample_mems) == [])
+    add("ignore_mem_zero", lambda: select_memories("不用我的个人记忆，推荐晚上吃啥", sample_mems) == [])
+
+    assert len(samples) == 45, f"Cat C expected 45, got {len(samples)}"
     return samples
 
 
-# ── Category D: 30 3-Personality Tone & Voice Delivery Matrix ─────────────────
+# ── Category D: 40 4-Personality Tone & Voice Delivery Matrix ─────────────────
 
 def build_cat_d() -> list[tuple[str, callable]]:
     samples: list[tuple[str, callable]] = []
@@ -314,17 +351,19 @@ def build_cat_d() -> list[tuple[str, callable]]:
     def add(name, fn):
         samples.append((f"D:{name}", fn))
 
-    # 1-9: Personality prompt differentiation across all 3 presets
-    for pid in ("partner", "rational", "lively"):
+    # 1-16: Personality prompt differentiation across all 4 presets (incl. sassy)
+    for pid in ("partner", "rational", "lively", "sassy"):
         add(f"valid_{pid}", lambda p=pid: valid_personality(p) == p and len(personality_prompt(p)) >= 40)
         add(f"vent_guid_{pid}", lambda p=pid: bool(conversational_cadence_guidance("今天加班累死了", personality_id=p)))
         add(f"bye_guid_{pid}", lambda p=pid: bool(conversational_cadence_guidance("先撤了，回头聊", personality_id=p)))
+        add(f"banter_guid_{pid}", lambda p=pid: bool(conversational_cadence_guidance("聊两句呗", personality_id=p)))
 
     add("invalid_fallback", lambda: valid_personality("nonexistent") == "partner")
     add("rational_differs_lively", lambda: personality_prompt("rational") != personality_prompt("lively"))
+    add("sassy_has_honesty_guard", lambda: "真实" in personality_prompt("sassy") and "倔" not in personality_prompt("sassy") and "嘴硬心热" in personality_prompt("sassy"))
     add("rational_voice_mode", lambda: PERSONALITIES["rational"]["voice_mode"] == "rational")
 
-    # 13-30: 18 speech-delivery.js JS runtime assertions (run cleanly in one Node batch!)
+    # 21-40: 20 speech-delivery.js JS runtime assertions across all 4 personalities!
     js_cases = [
         # (id, user, reply, personality, expect_cat, forbid_substrings)
         ("sd_01", "今儿累死了", "辛苦一天啦，先瘫会儿歇一歇吧。", "partner", "warm", []),
@@ -345,6 +384,8 @@ def build_cat_d() -> list[tuple[str, callable]]:
         ("sd_16", "失眠睡不着", "别盯着时间看，放空脑子慢慢缓。", "partner", "warm", []),
         ("sd_17", "被老板批评了", "先别往心里去，歇会儿再复盘。", "partner", "warm", []),
         ("sd_18", "忙得团团转", "先放下手头杂事喘口气吧。", "lively", "warm", []),
+        ("sd_19", "今天好累啊", "行吧行吧，看你这副垮掉的样子，先瘫会儿别撑着了。", "sassy", "warm", []),
+        ("sd_20", "拜拜先撤", "少了你刚好清净~ 😏 有事再喊我吧。", "sassy", "reply", ["~", "😏"]),
     ]
     node_code = (
         "import { conversationSpeech, speechSegments } from './static/speech-delivery.js';"
@@ -366,7 +407,7 @@ def build_cat_d() -> list[tuple[str, callable]]:
     for cid, *_ in js_cases:
         add(cid, lambda c=cid: bool(js_results.get(c)))
 
-    assert len(samples) == 30, f"Cat D expected 30, got {len(samples)}"
+    assert len(samples) == 40, f"Cat D expected 40, got {len(samples)}"
     return samples
 
 

@@ -23,7 +23,7 @@ export const CAMERAS = [
 
 export function createStageController({ onPose, onStatusChange } = {}) {
   const qs = new URLSearchParams(location.search);
-  const canvas = document.getElementById('moss-model');
+  let canvas = document.getElementById('moss-model');
   const loadBox = document.getElementById('model-loading');
   const standbyNotice = document.getElementById('stage-standby-notice');
   const reload3dBtn = document.getElementById('stage-reload-3d');
@@ -87,6 +87,13 @@ export function createStageController({ onPose, onStatusChange } = {}) {
   let mediaAudioCtx = null;
   let mediaAnalyser = null;
   let mediaFrameRaf = 0;
+  let loadWatchTimer = 0;
+  let loadEpoch = 0;
+  let canvasTransferred = false;
+  let mountMossViewFn = null;
+  let unmountScene = null;
+  let canvasObserver = null;
+  let orbitObserver = null;
 
   /* ── Build 6-position Rounded Key Matrix + Top-of-Stage Dashed Column Headings ── */
   function buildCameraMatrix() {
@@ -167,47 +174,121 @@ export function createStageController({ onPose, onStatusChange } = {}) {
     onStatusChange?.();
   }
 
-  function load3DScene() {
-    showStandbyNotice(false);
-    if (sceneLoaded) return;
-    sceneLoaded = true;
-    if (loadBox) loadBox.hidden = false;
-    import('/conversation-assets/moss-view.js?entry=fui-console').catch(() => {
-      sceneLoaded = false;
-      if (loadBox) loadBox.hidden = true;
-      showStandbyNotice(true);
-    });
+  function clearLoadWatch() {
+    if (loadWatchTimer) {
+      clearTimeout(loadWatchTimer);
+      loadWatchTimer = 0;
+    }
   }
 
-  if (canvas) {
-    new MutationObserver(() => {
+  function onCanvasOptics(ev) {
+    const o = ev.detail;
+    if (!o) return;
+    const yaw = Math.round((((o.yaw + 180) % 360) + 360) % 360 - 180);
+    const pitch = Math.round(o.pitch);
+    const yawStr = `${yaw > 0 ? '+' : ''}${yaw}°`;
+    const pitchStr = `${pitch > 0 ? '+' : ''}${pitch}°`;
+    if (yawEl) yawEl.textContent = yawStr;
+    if (pitchEl) pitchEl.textContent = pitchStr;
+    if (figAzEl) figAzEl.textContent = yawStr;
+    if (figElEl) figElEl.textContent = pitchStr;
+    onPose?.({ yaw, pitch, x: o.x });
+  }
+
+  function bindStageCanvas(target) {
+    if (canvas) canvas.removeEventListener('moss-optics', onCanvasOptics);
+    canvasObserver?.disconnect();
+    canvas = target || null;
+    if (!canvas) return;
+    canvasObserver = new MutationObserver(() => {
       if (canvas.dataset.error) {
+        clearLoadWatch();
+        sceneLoaded = false;
         if (loadBox) loadBox.hidden = true;
         showStandbyNotice(true);
       } else if (canvas.dataset.ready === 'true') {
+        clearLoadWatch();
+        sceneLoaded = true;
         if (loadBox) loadBox.hidden = true;
         showStandbyNotice(false);
         applyCameraPreset();
       }
-    }).observe(canvas, { attributes: true, attributeFilter: ['data-ready', 'data-error'] });
-
-    canvas.addEventListener('moss-optics', (ev) => {
-      const o = ev.detail;
-      if (!o) return;
-      const yaw = Math.round((((o.yaw + 180) % 360) + 360) % 360 - 180);
-      const pitch = Math.round(o.pitch);
-      const yawStr = `${yaw > 0 ? '+' : ''}${yaw}°`;
-      const pitchStr = `${pitch > 0 ? '+' : ''}${pitch}°`;
-      if (yawEl) yawEl.textContent = yawStr;
-      if (pitchEl) pitchEl.textContent = pitchStr;
-      if (figAzEl) figAzEl.textContent = yawStr;
-      if (figElEl) figElEl.textContent = pitchStr;
-      onPose?.({ yaw, pitch, x: o.x });
     });
+    canvasObserver.observe(canvas, { attributes: true, attributeFilter: ['data-ready', 'data-error'] });
+    canvas.addEventListener('moss-optics', onCanvasOptics);
   }
+
+  function resetCanvasCloneIfTransferred() {
+    if (!canvas) return;
+    if (canvasTransferred) {
+      // OffscreenCanvas can only be transferred once per <canvas> element; swap in a clean clone.
+      const fresh = canvas.cloneNode(false);
+      delete fresh.dataset.error;
+      delete fresh.dataset.ready;
+      canvas.replaceWith(fresh);
+      bindStageCanvas(fresh);
+      canvasTransferred = false;
+      document.dispatchEvent(new CustomEvent('moss-stage-canvas-replaced', { detail: { canvas: fresh } }));
+    } else {
+      delete canvas.dataset.error;
+      delete canvas.dataset.ready;
+    }
+  }
+
+  function load3DScene() {
+    showStandbyNotice(false);
+    if (sceneLoaded) return;
+    sceneLoaded = true;
+    const myEpoch = ++loadEpoch;
+    if (loadBox) loadBox.hidden = false;
+    clearLoadWatch();
+    loadWatchTimer = setTimeout(() => {
+      loadWatchTimer = 0;
+      if (canvas?.dataset?.ready !== 'true') {
+        sceneLoaded = false;
+        if (loadBox) loadBox.hidden = true;
+        showStandbyNotice(true);
+      }
+    }, 45000);
+    const mountNow = () => {
+      if (myEpoch !== loadEpoch || !sceneEnabled || !canvas) return;
+      unmountScene?.();
+      unmountScene = null;
+      resetCanvasCloneIfTransferred();
+      canvasTransferred = true;
+      unmountScene = mountMossViewFn(canvas);
+    };
+    if (mountMossViewFn) {
+      mountNow();
+      return;
+    }
+    import('/conversation-assets/moss-view.js?entry=fui-console&lifecycle=1')
+      .then((mod) => {
+        if (typeof mod?.mountMossView === 'function') {
+          mountMossViewFn = mod.mountMossView;
+          mountNow();
+        } else if (myEpoch === loadEpoch) {
+          clearLoadWatch();
+          canvasTransferred = true;
+        }
+      })
+      .catch(() => {
+        if (myEpoch !== loadEpoch) return;
+        clearLoadWatch();
+        sceneLoaded = false;
+        if (loadBox) loadBox.hidden = true;
+        showStandbyNotice(true);
+      });
+  }
+
+  bindStageCanvas(canvas);
 
   resetBtn?.addEventListener('click', () => selectCamera('interview', 0));
   reload3dBtn?.addEventListener('click', () => {
+    unmountScene?.();
+    unmountScene = null;
+    resetCanvasCloneIfTransferred();
+    sceneLoaded = false;
     sceneEnabled = true;
     load3DScene();
   });
@@ -401,6 +482,10 @@ export function createStageController({ onPose, onStatusChange } = {}) {
   function stopMediaTap() {
     cancelAnimationFrame(mediaFrameRaf);
     mediaFrameRaf = 0;
+    if (activeMediaEl?._fuiSource && activeMediaEl._fuiSourceConnected) {
+      try { activeMediaEl._fuiSource.disconnect(); } catch { /* ignore */ }
+      activeMediaEl._fuiSourceConnected = false;
+    }
     activeMediaEl = null;
     activeBands = silentBands;
     updateOrbitLabel();
@@ -420,8 +505,16 @@ export function createStageController({ onPose, onStatusChange } = {}) {
         mediaAnalyser.connect(mediaAudioCtx.destination);
       }
       if (!el._fuiSource) {
+        const src = el.currentSrc || el.getAttribute('src') || '';
+        if (src && !src.startsWith('blob:') && !src.startsWith('data:')) {
+          const parsed = new URL(src, location.href);
+          if (parsed.origin !== location.origin) return;
+        }
         el._fuiSource = mediaAudioCtx.createMediaElementSource(el);
+      }
+      if (el._fuiSource && !el._fuiSourceConnected) {
         el._fuiSource.connect(mediaAnalyser);
+        el._fuiSourceConnected = true;
       }
       if (mediaAudioCtx.state === 'suspended') {
         void mediaAudioCtx.resume().catch(() => {});
@@ -473,12 +566,23 @@ export function createStageController({ onPose, onStatusChange } = {}) {
 
   function setSceneEnabled(enabled) {
     sceneEnabled = Boolean(enabled);
-    if (sceneEnabled) load3DScene();
-    else showStandbyNotice(true);
+    if (sceneEnabled) {
+      if (canvas?.dataset?.error) resetCanvasCloneIfTransferred();
+      load3DScene();
+    } else {
+      loadEpoch += 1;
+      unmountScene?.();
+      unmountScene = null;
+      sceneLoaded = false;
+      clearLoadWatch();
+      if (loadBox) loadBox.hidden = true;
+      showStandbyNotice(true);
+    }
   }
 
   if (orbitCanvas) {
-    new ResizeObserver(() => drawOrbitFrame(0)).observe(orbitCanvas);
+    orbitObserver = new ResizeObserver(() => drawOrbitFrame(0));
+    orbitObserver.observe(orbitCanvas);
   }
   document.addEventListener('visibilitychange', syncOrbitLoop);
   reduced.addEventListener('change', syncOrbitLoop);
@@ -500,6 +604,21 @@ export function createStageController({ onPose, onStatusChange } = {}) {
     setAudioStyle,
     getAudioStyle,
     setSceneEnabled,
+    destroy() {
+      loadEpoch += 1;
+      unmountScene?.();
+      unmountScene = null;
+      clearLoadWatch();
+      cancelAnimationFrame(orbitRaf);
+      cancelAnimationFrame(mediaFrameRaf);
+      canvasObserver?.disconnect();
+      orbitObserver?.disconnect();
+      document.removeEventListener('visibilitychange', syncOrbitLoop);
+      reduced.removeEventListener('change', syncOrbitLoop);
+      mediaAudioCtx?.close?.().catch(() => {});
+      mediaAudioCtx = null;
+      mediaAnalyser = null;
+    },
     getStatus() {
       const idx = Math.max(0, CAMERAS.findIndex((c) => c.id === activeCamera));
       return {

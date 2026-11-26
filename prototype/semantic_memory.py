@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 
+from cognitive_utils import normalize_owner_code
 from memory_store import LIMITS
 
 
@@ -21,11 +22,13 @@ class LocalMemoryIndex:
             db.execute("INSERT OR IGNORE INTO memory_index_scope VALUES(1,?)", (uuid4().hex,))
         self.scope, = db.execute("SELECT scope FROM memory_index_scope WHERE id=1").fetchone()
 
-    async def request(self, operation, read_items, **extra):
+    async def request(self, operation, read_items, *, owner_code="MOSS", **extra):
         # 在锁内读取当前事实，使连续两次更改按提交后的状态同步。
+        norm = normalize_owner_code(owner_code)
+        scoped_id = self.scope if norm == "MOSS" else f"{self.scope}:{norm}"
         async with self.lock:
             items = [{"id": m["id"], "text": m["text"]} for m in read_items()]
-            body = {"scope": self.scope, "items": items, **extra}
+            body = {"scope": scoped_id, "items": items, **extra}
             try:
                 async with ClientSession(timeout=ClientTimeout(total=60), trust_env=False) as client:
                     async with client.post(self.url + "/v1/" + operation, json=body, allow_redirects=False) as response:
@@ -43,8 +46,8 @@ class LocalMemoryIndex:
             self.error = None
             return ids
 
-    async def select(self, question, read_items):
-        ids = await self.request("retrieve", read_items, query=question, limit=3)
+    async def select(self, question, read_items, *, owner_code="MOSS"):
+        ids = await self.request("retrieve", read_items, owner_code=owner_code, query=question, limit=3)
         # 查询期间可能有删除请求。只从此刻存在的原始记录取正文。
         current = {item["id"]: item for item in read_items()}
         remaining = LIMITS["context_max_bytes"]

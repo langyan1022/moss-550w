@@ -59,11 +59,12 @@ export function createDuplexVoice(output, {
   }
 
   function prepareImports() {
-    if (!preparationAllowed(getState())) return false;
+    if (document.body?.dataset?.authRole === 'C' || !preparationAllowed(getState())) return false;
     return output.prepareImports();
   }
 
   function releaseMicrophone(key) {
+    if (document.body?.dataset?.authRole === 'C') return;
     void fetch('/api/prepare-speech', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({mic:key, release:true}), keepalive:true,
@@ -80,7 +81,7 @@ export function createDuplexVoice(output, {
 
   function prepareForSpokenInput(signal) {
     const state = getState();
-    if (!preparationAllowed(state) || !output.isOutputReady?.()) return false;
+    if (document.body?.dataset?.authRole === 'C' || !preparationAllowed(state) || !output.isOutputReady?.()) return false;
     if (!signal || !activityPreloadEnabled(state) || targetsPlayback?.()) return prepareImports();
     if (signal.aborted) return false;
     const now = performance.now();
@@ -204,7 +205,10 @@ export function createDuplexVoice(output, {
     connectionInterrupted() {
       releasePreparation();
       output.releaseSessionWarm?.('idle');
-      capture.stop();
+      capture.pause?.('连接中断，已暂停语音监听。');
+    },
+    connectionRestored() {
+      capture.resumeWake?.();
     },
     isMicActive: () => getMode() === 'live' ? recordState : output.isMicActive(),
     interrupt: () => output.interrupt(),
@@ -230,9 +234,10 @@ export function createDuplexVoice(output, {
     observeState(state, options) {
       const switched = lastChat && state.chat_id !== lastChat;
       if (switched) {
-        capture.stop('已停止上一段语音输入。');
+        capture.pause?.('已停止上一段语音输入。');
         output.stopMic();
         interruptSpeech();
+        capture.resumeWake?.();
       }
       const mode = getMode();
       if (mode !== 'live' || state.speech_prepare !== true || !activityPreloadEnabled(state)) releasePreparation();

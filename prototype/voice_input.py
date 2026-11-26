@@ -9,6 +9,7 @@ import subprocess
 import sys
 import wave
 
+from cognitive_utils import attach_kill_on_close_job, close_job_handle
 from voice_asr_correct import correct_asr_transcript
 
 
@@ -19,6 +20,7 @@ class LocalVoice:
     def __init__(self):
         self.lock = asyncio.Lock()
         self.proc = None
+        self._job_handle = None
         self.used = False
         self.closing = False
         self.expiry = None
@@ -68,6 +70,8 @@ class LocalVoice:
                                     pass
                             raise ValueError("本机语音输入服务正在关闭")
                         self.proc = proc
+                        prev_job, self._job_handle = self._job_handle, attach_kill_on_close_job(getattr(proc, "pid", None))
+                        close_job_handle(prev_job)
                         if (await self.proc.stdout.readline()).strip() != b"ready":
                             raise ValueError("本机语音模型未就绪")
                     yield self.proc
@@ -132,6 +136,60 @@ class LocalVoice:
                 return ""
             return value if preview else correct_asr_transcript(value)
 
+    async def stream_chunk(self, session_id: str, pcm_bytes: bytes) -> dict:
+        """Append 16 kHz PCM16 frame bytes into an incremental recognizer session buffer."""
+        if not isinstance(pcm_bytes, (bytes, bytearray)) or not pcm_bytes:
+            return {"buffered_bytes": 0}
+        if len(pcm_bytes) > 640_000:
+            raise ValueError("音频分片过大")
+        if len(pcm_bytes) % 2:
+            pcm_bytes = bytes(pcm_bytes[:-1])
+        async with self._worker() as proc:
+            self.used = True
+            self._cancel_expiry()
+            payload = {"op": "stream_chunk", "session": session_id[:64], "b64": base64.b64encode(pcm_bytes).decode("ascii")}
+            proc.stdin.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+            await proc.stdin.drain()
+            line = await proc.stdout.readline()
+            if not line:
+                raise ValueError("本机语音进程意外退出")
+            return json.loads(line)
+
+    async def stream_commit(self, session_id: str, *, preview: bool = False) -> str:
+        """Decode accumulated streamed PCM16 chunks for a session and reset buffer."""
+        if preview and (self.closing or not self.proc or self.proc.returncode is not None):
+            return ""
+        async with self._worker() as proc:
+            if not preview:
+                self.used = True
+                self._cancel_expiry()
+            payload = {"op": "stream_commit", "session": session_id[:64], "preview": bool(preview)}
+            proc.stdin.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+            await proc.stdin.drain()
+            line = await proc.stdout.readline()
+            if not line:
+                raise ValueError("本机语音进程意外退出")
+            value = json.loads(line)
+            if not isinstance(value, str) or not any(char.isalnum() for char in value):
+                return ""
+            return value if preview else correct_asr_transcript(value)
+
+    async def stream_reset(self, session_id: str) -> None:
+        if self.closing or not self.proc or self.proc.returncode is not None:
+            return
+        async with self.lock:
+            if self.closing or not self.proc or self.proc.returncode is not None:
+                return
+            payload = {"op": "stream_reset", "session": session_id[:64]}
+            try:
+                self.proc.stdin.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+                await self.proc.stdin.drain()
+                line = await asyncio.wait_for(self.proc.stdout.readline(), 2.0)
+                if not line:
+                    await self._stop()
+            except (TimeoutError, OSError):
+                await self._stop()
+
     async def close(self):
         self.closing = True
         self._cancel_expiry()
@@ -143,22 +201,26 @@ class LocalVoice:
     async def _stop(self):
         self._cancel_expiry()
         proc, self.proc = self.proc, None
-        if proc and proc.returncode is None:
-            try:
-                if proc.stdin and not proc.stdin.is_closing():
-                    proc.stdin.close()
+        job_handle, self._job_handle = self._job_handle, None
+        try:
+            if proc and proc.returncode is None:
                 try:
-                    await asyncio.wait_for(proc.wait(), 3)
-                except TimeoutError:
-                    proc.terminate()
+                    if proc.stdin and not proc.stdin.is_closing():
+                        proc.stdin.close()
                     try:
-                        await asyncio.wait_for(proc.wait(), 2)
+                        await asyncio.wait_for(proc.wait(), 3)
                     except TimeoutError:
-                        proc.kill()
-                        await proc.wait()
-            except asyncio.CancelledError:
-                self._terminate_proc(proc)
-                raise
-            finally:
-                if proc.returncode is None:
+                        proc.terminate()
+                        try:
+                            await asyncio.wait_for(proc.wait(), 2)
+                        except TimeoutError:
+                            proc.kill()
+                            await proc.wait()
+                except asyncio.CancelledError:
                     self._terminate_proc(proc)
+                    raise
+                finally:
+                    if proc.returncode is None:
+                        self._terminate_proc(proc)
+        finally:
+            close_job_handle(job_handle)

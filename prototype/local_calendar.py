@@ -50,13 +50,14 @@ RECENT_EVENT = re.compile(r"(?:刚才|刚刚|上一个|这条|这个|那条|那�
 EXPLICIT_EVENT = re.compile(r"(?:本机)?(?:日程|会议)\s*[:：]\s*(.+)")
 NAMED_EVENT = re.compile(rf"(?:(?P<day>{QUERY_DAY})\s*(?:(?P<start>{QUERY_CLOCK})"
                          rf"(?:\s*(?:到|至|[-–—~～])\s*(?P<end>{QUERY_CLOCK}))?|(?P<part>{PERIOD}))?\s*的?\s*)?"
+                         r"(?:(?:那个|那条|那场|这个|这条|这场)\s*)?"
                          r"(?P<name>.+?)\s*(?P<noun>日程|会议)")
 EVENT_FIELDS = ("operation_id", "title", "start", "end", "slot")
 LIST_LIMIT = 20
 CALENDAR_COMPOUND_OTHER = re.compile(
-    r"[，,。；;]\s*(?:顺便|顺带|另外|再帮我|再给我|并帮我|并给我|同时帮我|同时)\s*"
+    r"[，,。；;]\s*(?:顺便|顺带|另外|然后|接着|再帮我|再给我|并帮我|并给我|同时帮我|同时|以及)\s*"
     r"(?:请|帮我|给我|麻烦你?\s*)*"
-    r"(?:查|看|算|计算|记|写|搜|搜索|读|打开|关|开|播|放|问|告诉|汇总|总结|列出|设|提醒)"
+    r"(?:查|看|算|计算|记|写|搜|搜索|读|打开|关|开|播|放|问|告诉|汇总|总结|列出|设|提醒|调|删)"
 )
 
 
@@ -71,9 +72,13 @@ def _epoch(moment):
     return epoch
 
 
+def _fmt_ymd_hm(moment):
+    return f"{moment.year:04d}年{moment.month:02d}月{moment.day:02d}日 {moment:%H:%M}"
+
+
 def _slot(first, last):
-    end = last.strftime("%H:%M" if first.date() == last.date() else "%Y年%m月%d日 %H:%M")
-    return f"{first:%Y年%m月%d日 %H:%M} 至 {end}"
+    end = f"{last:%H:%M}" if first.date() == last.date() else _fmt_ymd_hm(last)
+    return f"{_fmt_ymd_hm(first)} 至 {end}"
 
 
 def _calendar_interval(match, current, *, future=True):
@@ -154,7 +159,7 @@ def _parse_mutation(text, current):
 
 def _list_intent(first, last):
     whole_day = first.time() == last.time() == clock_time.min and (last - first).days == 1
-    detail = f"{first:%Y年%m月%d日}" if whole_day else _slot(first, last)
+    detail = f"{first.year:04d}年{first.month:02d}月{first.day:02d}日" if whole_day else _slot(first, last)
     return {"action": "calendar_list", "start": _epoch(first), "end": _epoch(last), "detail": detail}
 
 

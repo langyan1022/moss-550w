@@ -1,0 +1,19 @@
+{
+  "name": "550W · MOSS 战术分身",
+  "short_name": "MOSS 550W",
+  "description": "550W 智能量子计算机控制台与移动端伴随端",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#010305",
+  "theme_color": "#010305",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/vendor/logos/550w.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

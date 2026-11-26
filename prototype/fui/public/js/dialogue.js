@@ -7,6 +7,7 @@
  *  - Structured inline cards + 1-click contextual HUD popup triggers for every turn
  *  - Compact Quick-Directive bar right above the IME-safe composer
  */
+import { escapeHtml } from './hud/utils.js';
 import { matchIntelDossier } from './hud-popups.js';
 import { formatClock, t } from './i18n.js';
 import { safeCopyText } from './safe-web.js';
@@ -326,7 +327,7 @@ export function createDialogueController({
     head.innerHTML = `
       <span class="fui-chat__from">MOSS</span>
       ${tag ? `<span class="fui-badge" data-state="${tag.state}">${tag.code}</span>` : `<span class="fui-chat__role">${escapeHtml(t('comms.role_ai'))}</span>`}
-      ${turn.failover_provider?.to ? `<span class="fui-badge" data-state="warn">${escapeHtml(t('turn.failover_tag', { to: String(turn.failover_provider.to).toUpperCase() }))}</span>` : ''}
+      ${turn.failover_provider?.to ? `<span class="fui-badge" data-state="warn" title="${escapeHtml(turn.failover_provider.reason || '')}">${escapeHtml(t('turn.failover_tag', { to: String(turn.failover_provider.to).toUpperCase() }))}</span>` : ''}
       ${statusWord ? `<span class="fui-chat__status">${escapeHtml(statusWord)}</span>` : ''}
       <time class="fui-chat__time">${replyTime}</time>`;
     aiLi.append(head);
@@ -334,7 +335,7 @@ export function createDialogueController({
     const body = document.createElement('div');
     body.className = 'fui-chat__body';
 
-    // Collapsible 1-line tool execution micro-rail (v5.5)
+    // Collapsible 1-line tool execution micro-rail (v5.5 -> v6.1 args & errors)
     if (Array.isArray(turn.tool_trace) && turn.tool_trace.length) {
       const traceBox = document.createElement('details');
       traceBox.className = 'moss-tool-trace';
@@ -350,7 +351,9 @@ export function createDialogueController({
         const li = document.createElement('li');
         li.className = 'moss-tool-trace__item fui-num';
         li.dataset.state = tr.status === 'error' ? 'crit' : tr.status === 'running' ? 'warn' : 'ok';
-        li.textContent = `${tr.name} · ${tr.status === 'running' ? '…' : `${tr.ms ?? 0}ms`}`;
+        const argsTxt = tr.args ? ` (${tr.args})` : '';
+        const errTxt = tr.error ? ` · ERR: ${tr.error}` : '';
+        li.textContent = `${tr.name}${argsTxt} · ${tr.status === 'running' ? '…' : `${tr.ms ?? 0}ms`}${errTxt}`;
         ul.append(li);
       }
       traceBox.append(ul);
@@ -411,10 +414,16 @@ export function createDialogueController({
       body.append(errP);
     }
 
+    const statParts = [];
     if (showCloudCounts && turn.cloud_requests) {
+      statParts.push(t('turn.cloud_req', { total: turn.cloud_requests.total ?? 0 }));
+    }
+    if (turn.reply_ms != null) statParts.push(`${Math.round(turn.reply_ms)}ms`);
+    if (turn.token_usage?.total) statParts.push(`${turn.token_usage.total} tok`);
+    if (statParts.length) {
       const meta = document.createElement('span');
       meta.className = 'moss-card__meta fui-num';
-      meta.textContent = t('turn.cloud_req', { total: turn.cloud_requests.total ?? 0 });
+      meta.textContent = statParts.join(' · ');
       body.append(meta);
     }
 
@@ -424,16 +433,20 @@ export function createDialogueController({
     const actions = document.createElement('div');
     actions.className = 'fui-chat__actions';
 
+    const isVisitor = document.body?.dataset?.authRole === 'C';
     if (turn.status === 'pending') {
-      const okBtn = document.createElement('button');
-      okBtn.type = 'button';
-      okBtn.className = 'fui-btn fui-btn--primary';
-      okBtn.textContent = turn.desktop_confirmation
-        ? t('turn.approve_desktop')
-        : turn.verify_only
-          ? t('turn.approve_verify')
-          : t('turn.approve_draft');
-      okBtn.addEventListener('click', () => onApprove?.(turn.id));
+      if (!isVisitor) {
+        const okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.className = 'fui-btn fui-btn--primary';
+        okBtn.textContent = turn.desktop_confirmation
+          ? t('turn.approve_desktop')
+          : turn.verify_only
+            ? t('turn.approve_verify')
+            : t('turn.approve_draft');
+        okBtn.addEventListener('click', () => onApprove?.(turn.id));
+        actions.append(okBtn);
+      }
 
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
@@ -441,7 +454,7 @@ export function createDialogueController({
       cancelBtn.textContent = turn.desktop_confirmation ? t('turn.cancel_action') : t('turn.cancel_draft');
       cancelBtn.addEventListener('click', () => onCancel?.(turn.id));
 
-      actions.append(okBtn, cancelBtn, makeHudBtn(t('turn.hud_action'), () => onOpenHud?.(turn, 'action'), 'warn'));
+      actions.append(cancelBtn, makeHudBtn(t('turn.hud_action'), () => onOpenHud?.(turn, 'action'), 'warn'));
     } else if (isStreaming) {
       const stopBtn = document.createElement('button');
       stopBtn.type = 'button';
@@ -522,21 +535,24 @@ export function createDialogueController({
       rtyBtn.textContent = t('turn.retry');
       rtyBtn.addEventListener('click', () => onRetryTurn?.(turn));
 
-      const noteBtn = document.createElement('button');
-      noteBtn.type = 'button';
-      noteBtn.className = 'moss-turn-tool-btn';
-      noteBtn.textContent = t('turn.save_note');
-      noteBtn.addEventListener('click', async () => {
-        const ok = await onSaveNoteTurn?.(turn);
-        if (ok !== false) {
-          noteBtn.textContent = t('turn.saved_note');
-          setTimeout(() => { noteBtn.textContent = t('turn.save_note'); }, 1500);
-        }
-      });
-
-      utilRow.append(cpBtn, spkBtn, rtyBtn, noteBtn);
+      utilRow.append(cpBtn, spkBtn, rtyBtn);
+      if (document.body?.dataset?.authRole !== 'C') {
+        const noteBtn = document.createElement('button');
+        noteBtn.type = 'button';
+        noteBtn.className = 'moss-turn-tool-btn';
+        noteBtn.textContent = t('turn.save_note');
+        noteBtn.addEventListener('click', async () => {
+          const ok = await onSaveNoteTurn?.(turn);
+          if (ok !== false) {
+            noteBtn.textContent = t('turn.saved_note');
+            setTimeout(() => { noteBtn.textContent = t('turn.save_note'); }, 1500);
+          }
+        });
+        utilRow.append(noteBtn);
+      }
       actions.append(utilRow);
-    } else if (turn.status === 'error' && turn.user) {
+    // Error / Cancelled utility retry (+ Edit-before-retry)
+    } else if ((turn.status === 'error' || turn.status === 'cancelled') && turn.user) {
       const utilRow = document.createElement('div');
       utilRow.className = 'moss-turn-tools';
       const rtyBtn = document.createElement('button');
@@ -544,7 +560,12 @@ export function createDialogueController({
       rtyBtn.className = 'moss-turn-tool-btn';
       rtyBtn.textContent = t('turn.retry');
       rtyBtn.addEventListener('click', () => onRetryTurn?.(turn));
-      utilRow.append(rtyBtn);
+      const editRtyBtn = document.createElement('button');
+      editRtyBtn.type = 'button';
+      editRtyBtn.className = 'moss-turn-tool-btn';
+      editRtyBtn.textContent = t('turn.edit_retry');
+      editRtyBtn.addEventListener('click', () => onRetryTurn?.(turn, { editFirst: true }));
+      utilRow.append(rtyBtn, editRtyBtn);
       actions.append(utilRow);
     }
 
@@ -565,38 +586,50 @@ export function createDialogueController({
     }
   }
 
+  const INITIAL_VISIBLE_TURNS = 40;
+  let visibleTurnLimit = INITIAL_VISIBLE_TURNS;
+
+  function widgetSignature(w) {
+    return w ? `${w.kind || ''}:${w.title || ''}:${w.subtitle || ''}:${JSON.stringify(w.spec || {})}` : '';
+  }
+
   function turnSignature(turn, index) {
-    return JSON.stringify([
+    const trLen = Array.isArray(turn.tool_trace) ? turn.tool_trace.length : 0;
+    const lastTr = trLen ? turn.tool_trace[trLen - 1] : null;
+    const mediaSel = turn.media?.selected?.media_id || '';
+    const mediaCnt = Array.isArray(turn.media?.items) ? turn.media.items.length : 0;
+    const partialLen = turn.partial_reply ? turn.partial_reply.length : 0;
+    const replyHead = turn.partial_reply ? turn.partial_reply.slice(-32) : '';
+    return [
       index,
       turn.id,
       turn.status,
       turn.user,
-      turn.reply,
-      turn.partial_reply,
-      turn.error,
-      turn.preview,
-      turn.verify_only,
-      turn.created_at,
-      turn.replied_at,
-      turn.receipt,
-      turn.desktop_confirmation,
-      turn.media,
-      turn.media_in_flight,
-      turn.weather,
-      turn.local_overview,
-      turn.local_overview_partial,
-      turn.document,
-      turn.file,
-      turn.images,
-      turn.context_action,
-      turn.jev,
-      turn.reply_context,
-      turn.tool_trace,
-      turn.failover_provider,
-      turn.fui_widget,
-      showCloudCounts ? turn.cloud_requests : null,
+      turn.reply || '',
+      partialLen,
+      replyHead,
+      turn.error || '',
+      turn.preview || '',
+      Boolean(turn.verify_only),
+      turn.created_at || '',
+      turn.replied_at || '',
+      turn.receipt?.filename || '',
+      turn.desktop_confirmation?.action || '',
+      `${mediaSel}:${mediaCnt}:${Boolean(turn.media_in_flight)}`,
+      `${turn.weather?.temperature ?? turn.weather?.temp_c ?? ''}:${turn.weather?.temperature_min ?? ''}:${turn.weather?.temperature_max ?? ''}`,
+      `${turn.local_overview?.length || 0}:${turn.local_overview_partial?.length || 0}`,
+      `${turn.document?.title || turn.document?.filename || turn.document?.name || ''}:${turn.file?.filename || ''}:${turn.images?.length || 0}`,
+      turn.context_action?.kind || '',
+      turn.jev?.candidate_count || 0,
+      turn.reply_context?.request_id || '',
+      `${trLen}:${lastTr?.status || ''}:${lastTr?.ms || ''}`,
+      turn.failover_provider ? JSON.stringify(turn.failover_provider) : '',
+      turn.reply_ms ?? '',
+      turn.token_usage?.total ?? '',
+      widgetSignature(turn.fui_widget),
+      showCloudCounts ? (turn.cloud_requests?.total ?? '') : '',
       Boolean(latestState.jev_handoff),
-    ]);
+    ].join('|');
   }
 
   function renderState(state) {
@@ -606,13 +639,23 @@ export function createDialogueController({
       inputEl.value = drafts.get(state?.chat_id) || '';
       editRevision++;
       resizeInput();
+      visibleTurnLimit = INITIAL_VISIBLE_TURNS;
     }
     latestState = state || { turns: [] };
-    const turns = latestState.turns || [];
-    if (emptyEl) emptyEl.hidden = turns.length > 0;
+    const allTurns = latestState.turns || [];
+    if (emptyEl) emptyEl.hidden = allTurns.length > 0;
     if (logEl) {
+      const sliceStart = Math.max(0, allTurns.length - visibleTurnLimit);
+      const turns = sliceStart > 0 ? allTurns.slice(sliceStart) : allTurns;
       const fullReset = renderedChatId !== (latestState.chat_id || null) ||
         renderEpoch !== lastRenderEpoch || turns.length === 0;
+      const savedWidgets = new Map();
+      if (fullReset && renderedChatId === (latestState.chat_id || null) && turns.length > 0) {
+        for (const [tid, entry] of renderedTurns) {
+          const oldW = entry.aiLi?.querySelector('.moss-gen-widget');
+          if (oldW && entry.widgetSig) savedWidgets.set(tid, { node: oldW, wSig: entry.widgetSig });
+        }
+      }
       if (fullReset) {
         for (const child of [...logEl.children]) {
           if (child !== emptyEl) child.remove();
@@ -621,6 +664,8 @@ export function createDialogueController({
         renderedChatId = latestState.chat_id || null;
         lastRenderEpoch = renderEpoch;
       } else {
+        const oldLoader = logEl.querySelector('.moss-load-older');
+        oldLoader?.remove();
         const activeIds = new Set(turns.map((tr) => tr.id));
         for (const [id, entry] of renderedTurns) {
           if (!activeIds.has(id)) {
@@ -630,29 +675,70 @@ export function createDialogueController({
           }
         }
       }
-      let cursor = emptyEl ? emptyEl.nextElementSibling : logEl.firstElementChild;
-      turns.forEach((turn, idx) => {
+      if (sliceStart > 0) {
+        const loadBtn = document.createElement('button');
+        loadBtn.type = 'button';
+        loadBtn.className = 'fui-btn moss-load-older';
+        loadBtn.style.margin = '4px 0 8px';
+        loadBtn.textContent = t('turn.load_older', { n: sliceStart });
+        loadBtn.addEventListener('click', () => {
+          visibleTurnLimit += 40;
+          renderState(latestState);
+        });
+        logEl.insertBefore(loadBtn, emptyEl ? emptyEl.nextElementSibling : logEl.firstElementChild);
+      }
+      const prevLoader = logEl.querySelector('.moss-load-older');
+      let cursor = prevLoader ? prevLoader.nextElementSibling : (emptyEl ? emptyEl.nextElementSibling : logEl.firstElementChild);
+      turns.forEach((turn, relIdx) => {
+        const idx = sliceStart + relIdx;
+        const wSig = widgetSignature(turn.fui_widget);
         const sig = turnSignature(turn, idx);
         const existing = renderedTurns.get(turn.id);
         if (existing && existing.sig === sig && existing.userLi.isConnected && existing.aiLi.isConnected) {
           if (cursor !== existing.userLi) {
-            logEl.insertBefore(existing.userLi, cursor);
-            logEl.insertBefore(existing.aiLi, cursor);
-          } else {
-            cursor = existing.aiLi.nextElementSibling;
+            const anchor = (cursor && cursor.parentNode === logEl) ? cursor : null;
+            logEl.insertBefore(existing.userLi, anchor);
+            logEl.insertBefore(existing.aiLi, anchor);
           }
+          cursor = existing.aiLi.nextElementSibling;
           return;
         }
         const frag = renderTurnItems(turn, idx);
         const [userLi, aiLi] = [...frag.children];
+        const cachedWidget = savedWidgets.get(turn.id);
+        if (cachedWidget && wSig && cachedWidget.wSig === wSig) {
+          const newWidget = aiLi.querySelector('.moss-gen-widget');
+          if (newWidget) newWidget.replaceWith(cachedWidget.node);
+        }
         if (existing) {
-          existing.userLi.replaceWith(userLi);
-          existing.aiLi.replaceWith(aiLi);
+          if (wSig && existing.widgetSig === wSig) {
+            const oldWidget = existing.aiLi.querySelector('.moss-gen-widget');
+            const newWidget = aiLi.querySelector('.moss-gen-widget');
+            if (oldWidget && newWidget) newWidget.replaceWith(oldWidget);
+          }
+          let safeCursor = cursor;
+          while (safeCursor && (safeCursor === existing.userLi || safeCursor === existing.aiLi)) {
+            safeCursor = safeCursor.nextElementSibling;
+          }
+          if (existing.userLi.isConnected) existing.userLi.replaceWith(userLi);
+          if (existing.aiLi.isConnected) existing.aiLi.replaceWith(aiLi);
+          const anchor = (safeCursor && safeCursor.parentNode === logEl) ? safeCursor : null;
+          if (
+            userLi.parentNode !== logEl ||
+            aiLi.parentNode !== logEl ||
+            userLi.nextElementSibling !== aiLi ||
+            aiLi.nextElementSibling !== anchor
+          ) {
+            logEl.insertBefore(userLi, anchor);
+            logEl.insertBefore(aiLi, anchor);
+          }
           cursor = aiLi.nextElementSibling;
         } else {
-          logEl.insertBefore(frag, cursor);
+          const anchor = (cursor && cursor.parentNode === logEl) ? cursor : null;
+          logEl.insertBefore(frag, anchor);
+          cursor = aiLi.nextElementSibling;
         }
-        renderedTurns.set(turn.id, { sig, userLi, aiLi });
+        renderedTurns.set(turn.id, { sig, widgetSig: wSig, userLi, aiLi });
       });
       if (shouldFollow) logEl.scrollTop = logEl.scrollHeight;
     }
@@ -1104,12 +1190,4 @@ export function renderSafeMarkdown(rawText) {
     wrap.append(p);
   }
   return wrap;
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

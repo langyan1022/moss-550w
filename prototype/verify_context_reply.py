@@ -13,17 +13,11 @@ from aiohttp import web
 from playwright.async_api import async_playwright, expect
 from pydantic import SecretStr
 
-from browser_lab import BrowserServer, ROOT, confirm_muted_edge, open_browser
+from testkit import BrowserServer, ROOT, confirm_muted_edge, open_browser, safe_free_port as free_port
 from core import Moss
 from local_media.library import MediaLibrary
 from model_catalog import Profile, SPECS
 from serve import application
-
-
-def free_port():
-    with closing(socket.socket()) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 async def run():

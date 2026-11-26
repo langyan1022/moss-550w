@@ -19,31 +19,22 @@ import { classifyFileViewer, parseDocxBuffer } from './doc-parser.js';
 import { fixed, formatClock, formatCoord, getLocale, t, weatherCondition } from './i18n.js';
 import { INTEL_DOSSIERS, matchIntelDossier } from './intel-dossiers.js';
 import { safeUuid } from './safe-web.js';
+import { escapeHtml, GIB, localizeCity, safePopupUrl } from './hud/utils.js';
+import {
+  populateActionCard,
+  populateContextCard,
+  populateDocCard,
+  populateImageCard,
+  populateIntelCard,
+} from './hud/intel-image-doc.js';
+import {
+  populateHostCard,
+  populateWeatherCard,
+  renderDueReminders,
+  updateHostHardware,
+} from './hud/weather-host-view.js';
 
 export { INTEL_DOSSIERS, matchIntelDossier };
-
-const GIB = 1024 ** 3;
-
-function weatherGlyphSvg(code, condition = '') {
-  const txt = `${condition || ''}`;
-  const isStorm = code >= 95 || /雷/.test(txt);
-  const isRain = (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || /雨/.test(txt);
-  const isSnow = (code >= 71 && code <= 77) || (code >= 85 && code <= 86) || /雪/.test(txt);
-  const isClear = code === 0 || code === 1 || /晴/.test(txt);
-  if (isStorm) {
-    return `<svg class="moss-hud-glyph" viewBox="0 0 40 40" aria-hidden="true"><path d="M10 22a6 6 0 0 1 1-11.9A8.5 8.5 0 0 1 27.5 11a5.5 5.5 0 0 1 1.5 10.8H10Z"/><path d="M21 22l-4 7h4l-2 7 7-9h-4l2-5" data-accent="warn"/></svg>`;
-  }
-  if (isRain) {
-    return `<svg class="moss-hud-glyph" viewBox="0 0 40 40" aria-hidden="true"><path d="M10 22a6 6 0 0 1 1-11.9A8.5 8.5 0 0 1 27.5 11a5.5 5.5 0 0 1 1.5 10.8H10Z"/><path d="M14 26l-2 6M21 26l-2 6M28 26l-2 6" data-accent="data"/></svg>`;
-  }
-  if (isSnow) {
-    return `<svg class="moss-hud-glyph" viewBox="0 0 40 40" aria-hidden="true"><path d="M10 21a6 6 0 0 1 1-11.9A8.5 8.5 0 0 1 27.5 10a5.5 5.5 0 0 1 1.5 10.8H10Z"/><circle cx="14" cy="28" r="1.5"/><circle cx="21" cy="30" r="1.5"/><circle cx="28" cy="28" r="1.5"/></svg>`;
-  }
-  if (isClear) {
-    return `<svg class="moss-hud-glyph" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="7" data-accent="data"/><path d="M20 5v4M20 31v4M5 20h4M31 20h4M9.4 9.4l2.8 2.8M27.8 27.8l2.8 2.8M30.6 9.4l-2.8 2.8M12.2 27.8l-2.8 2.8"/></svg>`;
-  }
-  return `<svg class="moss-hud-glyph" viewBox="0 0 40 40" aria-hidden="true"><path d="M10 26a6 6 0 0 1 1-11.9A8.5 8.5 0 0 1 27.5 15a5.5 5.5 0 0 1 1.5 10.8H10Z"/><path d="M12 10h8M8 31h24" opacity="0.45"/></svg>`;
-}
 
 export function createHudPopupsController({
   stage,
@@ -702,7 +693,7 @@ export function createHudPopupsController({
         scheduleAutoHide(key, isTtsEnabled?.() ? AUTO_HIDE_SILENT_MS + 4000 : AUTO_HIDE_SILENT_MS);
       }
     }
-    renderDueReminders(state?.timers || []);
+    renderDueReminders(reminderStackEl, state?.timers || [], { onLocateTurn, onDismissTimer });
     onAutoModeChange?.({ autoPop, count: registry.size, activeKey });
   }
 
@@ -1018,140 +1009,27 @@ export function createHudPopupsController({
     const body = document.createElement('div');
     body.className = 'moss-hud-card__body';
 
-    if (card.type === 'intel') populateIntelCard(card, titleEl, body);
-    else if (card.type === 'image') populateImageCard(card, titleEl, body);
-    else if (card.type === 'media') populateMediaCard(card, titleEl, body, autoplay);
-    else if (card.type === 'doc') populateDocCard(card, titleEl, body);
-    else if (card.type === 'weather') populateWeatherCard(card, titleEl, body);
-    else if (card.type === 'host') populateHostCard(card, titleEl, body);
-    else if (card.type === 'action') populateActionCard(card, titleEl, body, el);
-    else if (card.type === 'context') populateContextCard(card, titleEl, body);
+    if (card.type === 'intel') {
+      populateIntelCard(card, titleEl, body, { slideIndexMap, renderOpenCards, openDossier, onSendFollowUp });
+    } else if (card.type === 'image') {
+      populateImageCard(card, titleEl, body, { imageViewStates, renderOpenCards });
+    } else if (card.type === 'media') {
+      populateMediaCard(card, titleEl, body, autoplay);
+    } else if (card.type === 'doc') {
+      populateDocCard(card, titleEl, body, { fileInputEl });
+    } else if (card.type === 'weather') {
+      populateWeatherCard(card, titleEl, body, { onOpenForecastModal });
+    } else if (card.type === 'host') {
+      populateHostCard(card, titleEl, body, { telemetry, isDeviceStale: () => deviceStale, onOpenLocalStatusModal, onOpenPopout });
+    } else if (card.type === 'action') {
+      populateActionCard(card, titleEl, body, el, { onApprove, onCancel });
+    } else if (card.type === 'context') {
+      populateContextCard(card, titleEl, body, { getLatestState: () => latestState, onContextSubmit });
+    }
 
     el.append(head, body);
     syncCardChrome(el, card);
     return el;
-  }
-
-  /* ── Viewer 1: 图文档案查看器 (Intel Dossier) ── */
-  function populateIntelCard(card, titleEl, body) {
-    const isZh = getLocale().startsWith('zh');
-    const src = card.intelMatch?.dossier
-      ? card.intelMatch.dossier[isZh ? 'zh' : 'en']
-      : card.intelMatch?.custom || {};
-    const slides = src.slides || [];
-    const curIdx = Math.min(Math.max(0, slideIndexMap.get(card.key) || 0), Math.max(0, slides.length - 1));
-    const slide = slides[curIdx];
-    titleEl.textContent = src.title || t('hud.intel_default');
-
-    let visualHtml = '';
-    if (slide) {
-      if (slide.kind === 'plate-light') {
-        visualHtml = `<div class="moss-hud-visual moss-hud-visual--light moss-slide-anim"><img class="moss-hud-visual__img" src="${escapeHtml(slide.src)}" alt="${escapeHtml(slide.caption || src.title)}"></div>`;
-      } else if (slide.kind === 'plate-dark') {
-        visualHtml = `<div class="moss-hud-visual moss-hud-visual--seal moss-slide-anim"><img class="moss-hud-visual__seal" src="${escapeHtml(slide.src)}" alt="${escapeHtml(slide.caption || src.title)}"></div>`;
-      } else if (slide.kind === 'plate-mask') {
-        visualHtml = `<div class="moss-hud-visual moss-hud-visual--seal moss-slide-anim"><span class="moss-hud-visual__mask" style="--hud-mask: url('${escapeHtml(slide.src)}')" role="img" aria-label="${escapeHtml(slide.caption || src.title)}"></span></div>`;
-      } else {
-        visualHtml = `<div class="moss-hud-visual moss-slide-anim"><img class="moss-hud-visual__photo" src="${escapeHtml(slide.src)}" alt="${escapeHtml(slide.caption || src.title)}"></div>`;
-      }
-    }
-
-    const pagerHtml = slides.length > 1
-      ? `<div class="moss-hud-pager">
-          <span class="moss-hud-caption">${escapeHtml(slide?.caption || '')}</span>
-          <div class="moss-hud-pager__btns">
-            <button class="moss-hud-ctrl" type="button" data-slide-dir="-1" ${curIdx <= 0 ? 'disabled' : ''}>‹</button>
-            <span class="fui-num">${String(curIdx + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}</span>
-            <button class="moss-hud-ctrl" type="button" data-slide-dir="1" ${curIdx >= slides.length - 1 ? 'disabled' : ''}>›</button>
-          </div>
-        </div>`
-      : (slide?.caption ? `<p class="moss-hud-caption">${escapeHtml(slide.caption)}</p>` : '');
-
-    const specsHtml = (src.specs || []).length
-      ? `<dl class="moss-hud-specs">${src.specs.map(([k, v]) => `<div><dt class="fui-label">${escapeHtml(k)}</dt><dd class="fui-num">${escapeHtml(v)}</dd></div>`).join('')}</dl>`
-      : '';
-
-    body.innerHTML = `
-      ${src.kicker ? `<span class="fui-label moss-hud-kicker">${escapeHtml(src.kicker)}</span>` : ''}
-      ${visualHtml}
-      ${pagerHtml}
-      ${src.summary ? `<p class="moss-hud-summary">${escapeHtml(src.summary)}</p>` : ''}
-      ${specsHtml}
-      <div class="moss-hud-foot">
-        <div class="moss-hud-dossier-nav">
-          ${INTEL_DOSSIERS.map((d) => `<button class="moss-hud-ctrl" type="button" data-dossier-id="${d.id}" aria-pressed="${String(`intel:${d.id}` === card.key)}">${escapeHtml(d.code.replace('INTEL-', ''))}</button>`).join('')}
-        </div>
-        ${src.followUp ? `<button class="fui-btn" type="button" data-follow-up>${escapeHtml(t('hud.ask_related'))}</button>` : ''}
-      </div>`;
-
-    for (const btn of body.querySelectorAll('[data-slide-dir]')) {
-      btn.addEventListener('click', () => {
-        const next = curIdx + Number(btn.dataset.slideDir);
-        slideIndexMap.set(card.key, Math.min(slides.length - 1, Math.max(0, next)));
-        renderOpenCards({ refreshKey: card.key });
-      });
-    }
-    for (const btn of body.querySelectorAll('[data-dossier-id]')) {
-      btn.addEventListener('click', () => openDossier(btn.dataset.dossierId));
-    }
-    body.querySelector('[data-follow-up]')?.addEventListener('click', () => onSendFollowUp?.(src.followUp));
-  }
-
-  /* ── Viewer 2: 专用图片查看器 (Image Inspector: Zoom / Rotate / Gallery) ── */
-  function populateImageCard(card, titleEl, body) {
-    let imageViewState = imageViewStates.get(card.key);
-    if (!imageViewState) {
-      imageViewState = { zoom: 1, rotate: 0, idx: 0 };
-      imageViewStates.set(card.key, imageViewState);
-    }
-    const imgs = card.images || [];
-    const idx = Math.min(Math.max(0, imageViewState.idx), Math.max(0, imgs.length - 1));
-    const cur = imgs[idx] || {};
-    titleEl.textContent = cur.title || t('hud.image_title');
-
-    const pct = Math.round(imageViewState.zoom * 100);
-    body.innerHTML = `
-      <div class="moss-img-toolbar">
-        <button class="moss-hud-ctrl" type="button" data-img-zoom="-0.25">−</button>
-        <span class="fui-num">${pct}%</span>
-        <button class="moss-hud-ctrl" type="button" data-img-zoom="0.25">+</button>
-        <button class="moss-hud-ctrl" type="button" data-img-rot>↻ 90°</button>
-        <button class="moss-hud-ctrl" type="button" data-img-fit>${escapeHtml(t('hud.fit'))}</button>
-        ${imgs.length > 1 ? `<span class="moss-img-toolbar__sep"></span><button class="moss-hud-ctrl" type="button" data-img-nav="-1" ${idx <= 0 ? 'disabled' : ''}>‹</button><span class="fui-num">${String(idx + 1).padStart(2, '0')}/${String(imgs.length).padStart(2, '0')}</span><button class="moss-hud-ctrl" type="button" data-img-nav="1" ${idx >= imgs.length - 1 ? 'disabled' : ''}>›</button>` : ''}
-      </div>
-      <div class="moss-img-stage">
-        <img class="moss-img-stage__img" src="${escapeHtml(safePopupUrl(cur.src))}" alt="${escapeHtml(cur.title || 'Image')}"
-             style="transform: scale(${imageViewState.zoom}) rotate(${imageViewState.rotate}deg)">
-      </div>
-      ${cur.caption ? `<p class="moss-hud-caption">${escapeHtml(cur.caption)}</p>` : ''}
-      <div class="moss-hud-foot">
-        <span class="fui-num moss-card__meta">IMG VIEWER · ${pct}% · ${imageViewState.rotate}°</span>
-        ${safePopupUrl(cur.src) ? `<a class="fui-btn" href="${escapeHtml(safePopupUrl(cur.src))}" target="_blank" rel="noopener">${escapeHtml(t('hud.open_raw'))}</a>` : ''}
-      </div>`;
-
-    for (const b of body.querySelectorAll('[data-img-zoom]')) {
-      b.addEventListener('click', () => {
-        imageViewState.zoom = Math.min(2.5, Math.max(0.5, +(imageViewState.zoom + Number(b.dataset.imgZoom)).toFixed(2)));
-        renderOpenCards({ refreshKey: card.key });
-      });
-    }
-    body.querySelector('[data-img-rot]')?.addEventListener('click', () => {
-      imageViewState.rotate = (imageViewState.rotate + 90) % 360;
-      renderOpenCards({ refreshKey: card.key });
-    });
-    body.querySelector('[data-img-fit]')?.addEventListener('click', () => {
-      imageViewState.zoom = 1;
-      imageViewState.rotate = 0;
-      renderOpenCards({ refreshKey: card.key });
-    });
-    for (const b of body.querySelectorAll('[data-img-nav]')) {
-      b.addEventListener('click', () => {
-        imageViewState.idx = Math.min(imgs.length - 1, Math.max(0, idx + Number(b.dataset.imgNav)));
-        imageViewState.zoom = 1;
-        imageViewState.rotate = 0;
-        renderOpenCards({ refreshKey: card.key });
-      });
-    }
   }
 
   /* ── Viewer 3: 专用音频 / 视频多媒体播放器 (AUD-02 / VID-02) ── */
@@ -1251,6 +1129,7 @@ export function createHudPopupsController({
         return onMediaEvent?.({ ...identity, event, play_id: playId, ...extra });
       }
       function pingScrobble(submission) {
+        if (document.body?.dataset?.authRole === 'C') return;
         if (selected.provider !== 'navidrome' || !selected.media_id || card.local) return;
         fetch('/api/online-music/scrobble', {
           method: 'POST',
@@ -1374,19 +1253,23 @@ export function createHudPopupsController({
               }
             }).catch(() => {});
         }
-        fetch('/api/music/prefs', { cache: 'no-store', signal })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((d) => {
-            if (!favBtn?.isConnected || !d) return;
-            isFavorited = Array.isArray(d.favorite_ids) && d.favorite_ids.includes(selected.media_id);
-            favBtn.setAttribute('aria-pressed', String(isFavorited));
-            favBtn.textContent = t(isFavorited ? 'hud.faved' : 'hud.fav');
-            if (isFavorited) favBtn.dataset.active = 'true';
-          }).catch(() => {});
+        const isAdminRole = !document.body.dataset.authRole || document.body.dataset.authRole === 'CS';
+        if (isAdminRole) {
+          fetch('/api/music/prefs', { cache: 'no-store', signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              if (!favBtn?.isConnected || !d) return;
+              isFavorited = Array.isArray(d.favorite_ids) && d.favorite_ids.includes(selected.media_id);
+              favBtn.setAttribute('aria-pressed', String(isFavorited));
+              favBtn.textContent = t(isFavorited ? 'hud.faved' : 'hud.fav');
+              if (isFavorited) favBtn.dataset.active = 'true';
+            }).catch(() => {});
+        }
       }
 
       favBtn?.addEventListener('click', async () => {
         if (!selected.media_id) return;
+        if (document.body.dataset.authRole && document.body.dataset.authRole !== 'CS') return;
         const nextStatus = isFavorited ? 'clear' : 'favorite';
         try {
           const resp = await fetch('/api/music/prefs', {
@@ -1417,6 +1300,10 @@ export function createHudPopupsController({
       let navMode = 'playlists';
       async function loadNavBrowse(kind, itemId = '') {
         if (!navShelf) return;
+        if (document.body.dataset.authRole && document.body.dataset.authRole !== 'CS') {
+          navShelf.innerHTML = `<p class="moss-hud-nav-empty">${escapeHtml(t('hud.nav_empty'))}</p>`;
+          return;
+        }
         navShelf.innerHTML = `<p class="moss-hud-nav-empty">${escapeHtml(t('hud.nav_loading'))}</p>`;
         try {
           const qs = new URLSearchParams({ kind, ...(itemId ? { id: itemId } : {}) });
@@ -1811,294 +1698,6 @@ export function createHudPopupsController({
     }
   }
 
-  /* ── Viewer 4: 专用文档查看器 (PDF / Word .docx / Markdown / Text / Code) ── */
-  function populateDocCard(card, titleEl, body) {
-    const doc = card.doc || {};
-    const fmt = (doc.format || 'text').toLowerCase();
-    titleEl.textContent = doc.title || doc.filename || t('hud.doc_title');
-
-    const safeDocUrl = safePopupUrl(doc.url);
-    let contentHtml = '';
-    if (fmt === 'pdf' && safeDocUrl) {
-      contentHtml = `<iframe class="moss-doc-pdf" src="${escapeHtml(safeDocUrl)}" title="${escapeHtml(titleEl.textContent)}"></iframe>`;
-    } else if (doc.blocks?.length) {
-      // Structured Word .docx / PDF briefing blocks (headings, paragraphs, tables)
-      contentHtml = `<div class="moss-doc-sheet">${doc.blocks.map((b) => {
-        if (b.kind === 'heading') return `<h3 class="moss-doc-h">${escapeHtml(b.text)}</h3>`;
-        if (b.kind === 'table') {
-          return `<div class="fui-table-wrap"><table class="fui-table fui-table--compact"><tbody>${b.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-        }
-        return `<p class="moss-doc-p">${escapeHtml(b.text)}</p>`;
-      }).join('')}</div>`;
-    } else {
-      contentHtml = `<pre class="moss-pre moss-doc-pre">${escapeHtml(doc.text || t('hud.doc_empty'))}</pre>`;
-    }
-
-    body.innerHTML = `
-      <div class="moss-doc-meta">
-        <span class="fui-badge" data-state="warn">${escapeHtml(fmt.toUpperCase())}</span>
-        <span class="fui-num moss-card__meta">${escapeHtml(doc.size || doc.pages || 'READ-ONLY VIEW')}</span>
-        <button class="moss-hud-ctrl" type="button" data-doc-load>${escapeHtml(t('hud.open_local_doc'))}</button>
-      </div>
-      ${contentHtml}
-      <div class="moss-hud-foot">
-        <span class="fui-num moss-card__meta">${escapeHtml(t('hud.doc_drop_hint'))}</span>
-        ${safeDocUrl ? `<a class="fui-btn" href="${escapeHtml(safeDocUrl)}" target="_blank" rel="noopener">${escapeHtml(t('hud.open_raw'))}</a>` : ''}
-      </div>`;
-
-    body.querySelector('[data-doc-load]')?.addEventListener('click', () => fileInputEl?.click());
-  }
-
-  /* ── Viewer 5: 气象情报投影 (METEO-03) ── */
-  function populateWeatherCard(card, titleEl, body) {
-    const w = card.turn?.weather || {};
-    const city = localizeCity(w.city);
-    titleEl.textContent = city ? `${city} · ${t('hud.weather_title')}` : t('hud.weather_title');
-
-    const tempHero = Number.isFinite(w.temperature)
-      ? `${fixed(w.temperature, 1)}`
-      : Number.isFinite(w.temperature_min) && Number.isFinite(w.temperature_max)
-        ? `${fixed(w.temperature_min, 0)}–${fixed(w.temperature_max, 0)}`
-        : '—';
-    const condText = weatherCondition(w.code, w.condition);
-    const precip = Number.isFinite(w.precipitation_probability) ? w.precipitation_probability : 0;
-    const coords = Number.isFinite(w.latitude) && Number.isFinite(w.longitude)
-      ? formatCoord(w.latitude, w.longitude)
-      : '—';
-
-    const daysHtml = (w.days || []).slice(0, 3).map((d) => `
-      <div class="moss-hud-day">
-        <span class="fui-num">${escapeHtml((d.date || '').slice(5))}</span>
-        <span class="moss-hud-day__cond">${escapeHtml(weatherCondition(d.code, d.condition))}</span>
-        <span class="fui-num">${fixed(d.temperature_min, 0)}–${fixed(d.temperature_max, 0)}°C</span>
-        <span class="fui-num moss-hud-day__pop">${Number.isFinite(d.precipitation_probability) ? `${fixed(d.precipitation_probability, 0)}%` : '—'}</span>
-      </div>`).join('');
-
-    body.innerHTML = `
-      <div class="moss-hud-weather-hero">
-        ${weatherGlyphSvg(w.code, w.condition)}
-        <div class="moss-hud-weather-main">
-          <div class="moss-hud-weather-city">${escapeHtml(city)}</div>
-          <div class="moss-weather-temp-row">
-            <div class="moss-hud-weather-temp fui-num">${escapeHtml(tempHero)}<span class="fui-readout__unit">°C</span></div>
-            <span class="moss-hud-weather-cond">${escapeHtml(condText)}</span>
-          </div>
-          <span class="fui-coord fui-num">${escapeHtml(coords)}</span>
-        </div>
-      </div>
-      <div class="moss-hud-weather-metrics">
-        <div class="moss-hud-metric">
-          <div class="fui-gauge-head">
-            <span class="fui-label">${escapeHtml(t('modal.weather_precip'))}</span>
-            <span class="fui-num">${fixed(precip, 0)} %</span>
-          </div>
-          <div class="fui-gauge" data-state="${precip >= 60 ? 'warn' : 'data'}" style="--segments: 16; --fui-value: ${(precip / 100).toFixed(3)}" role="meter" aria-label="Precipitation" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(precip)}"></div>
-        </div>
-        ${Number.isFinite(w.wind_speed) ? `<div class="moss-hud-kv"><span class="fui-label">${escapeHtml(t('geo.wind'))}</span><span class="fui-num">${fixed(w.wind_speed, 1)} km/h</span></div>` : ''}
-      </div>
-      ${daysHtml ? `<div class="moss-hud-days">${daysHtml}</div>` : ''}
-      <div class="moss-hud-foot">
-        <span class="fui-num moss-card__meta">${escapeHtml(w.source || 'Open-Meteo')}</span>
-        <button class="fui-btn" type="button" data-open-forecast>${escapeHtml(t('hud.full_forecast'))}</button>
-      </div>`;
-
-    body.querySelector('[data-open-forecast]')?.addEventListener('click', () => onOpenForecastModal?.(w, city));
-  }
-
-  function updateHostHardware(el, device) {
-    const readings = {
-      'host-cpu-load': [device?.cpu_percent, '%'],
-      'host-cpu-temperature': [device?.cpu?.temperature_c, ' °C', device?.cpu?.source],
-      'host-gpu-load': [device?.gpu?.percent, '%', device?.gpu?.name],
-      'host-gpu-temperature': [device?.gpu?.temperature_c, ' °C', device?.gpu?.name],
-    };
-    for (const [name, [value, unit, source]] of Object.entries(readings)) {
-      const node = el.querySelector(`[data-${name}]`);
-      if (!node) continue;
-      node.textContent = !deviceStale && Number.isFinite(value) ? fixed(value, 0) + unit : '—';
-      node.title = source || '';
-    }
-    const signal = el.querySelector('[data-host-signal]');
-    if (signal) signal.hidden = Boolean(device && !deviceStale);
-  }
-
-  /* ── Viewer 6: 本机实时状态投影 ── */
-  function populateHostCard(card, titleEl, body) {
-    const turn = card.turn || {};
-    const items = turn.local_overview?.length ? turn.local_overview : (turn.local_overview_partial || []);
-    const isReading = !turn.local_overview?.length && Boolean(turn.local_overview_partial?.length);
-    titleEl.textContent = t(isReading ? 'hud.host_reading' : 'hud.host_title');
-
-    const now = new Date();
-    const pad2 = (n) => String(n).padStart(2, '0');
-    const dev = telemetry?.getDevice?.();
-    const ramFree = dev?.memory ? dev.memory.available / GIB : null;
-    const ramTot = dev?.memory ? dev.memory.total / GIB : null;
-    const bat = dev?.battery?.present !== false ? dev?.battery?.percent : null;
-    const diskFree = dev?.disk ? dev.disk.free / GIB : null;
-
-    const chronoHtml = `
-      <div class="moss-hud-chrono">
-        <span class="fui-label" lang="en">CURRENT HOST TIME</span>
-        <div class="moss-chrono moss-chrono--compact fui-num">
-          <span class="moss-chrono__major">${now.getFullYear()}</span><span class="moss-chrono__unit">Y</span>
-          <span class="moss-chrono__major">${pad2(now.getMonth() + 1)}</span><span class="moss-chrono__unit">M</span>
-          <span class="moss-chrono__major">${pad2(now.getDate())}</span><span class="moss-chrono__unit">D</span>
-          <span class="moss-chrono__gap" aria-hidden="true"></span>
-          <span class="moss-chrono__minor">${pad2(now.getHours())}</span><span class="moss-chrono__unit">H</span>
-          <span class="moss-chrono__minor">${pad2(now.getMinutes())}</span><span class="moss-chrono__unit">MIN</span>
-          <span class="moss-chrono__minor moss-chrono__sec">${pad2(now.getSeconds())}</span><span class="moss-chrono__unit">S</span>
-        </div>
-      </div>`;
-
-    const kpiHtml = `
-      <div class="moss-kpi-grid">
-        <div class="moss-kpi" data-accent="data">
-          <span class="moss-kpi__en" lang="en">CPU LOAD</span>
-          <strong class="moss-kpi__val fui-num" data-host-cpu-load>—</strong>
-          <span class="moss-kpi__zh">${escapeHtml(t('hw.cpu'))} · <span class="fui-num" data-host-cpu-temperature>—</span></span>
-        </div>
-        <div class="moss-kpi" data-accent="data">
-          <span class="moss-kpi__en" lang="en">GPU LOAD</span>
-          <strong class="moss-kpi__val fui-num" data-host-gpu-load>—</strong>
-          <span class="moss-kpi__zh">GPU · <span class="fui-num" data-host-gpu-temperature>—</span></span>
-        </div>
-        <div class="moss-kpi" data-accent="ok">
-          <span class="moss-kpi__en" lang="en">RAM FREE</span>
-          <strong class="moss-kpi__val fui-num">${ramFree !== null ? fixed(ramFree, 1) : '—'}<span class="moss-kpi__unit">/${ramTot !== null ? fixed(ramTot, 0) : '—'}G</span></strong>
-          <span class="moss-kpi__zh">${escapeHtml(t('hw.ram'))}</span>
-        </div>
-        <div class="moss-kpi" data-accent="warn">
-          <span class="moss-kpi__en" lang="en">BATTERY</span>
-          <strong class="moss-kpi__val fui-num">${Number.isFinite(bat) ? fixed(bat, 0) : 'AC'}<span class="moss-kpi__unit">${Number.isFinite(bat) ? '%' : ''}</span></strong>
-          <span class="moss-kpi__zh">${escapeHtml(t('hw.battery'))}</span>
-        </div>
-        <div class="moss-kpi" data-accent="intel">
-          <span class="moss-kpi__en" lang="en">DISK FREE</span>
-          <strong class="moss-kpi__val fui-num">${diskFree !== null ? fixed(diskFree, 1) : '—'}<span class="moss-kpi__unit">G</span></strong>
-          <span class="moss-kpi__zh">${escapeHtml(t('hw.disk'))}</span>
-        </div>
-      </div>`;
-
-    const listHtml = items.map((it) => `
-      <div class="moss-hud-kv-row">
-        <span class="fui-badge" data-state="${it.status === 'error' ? 'warn' : 'data'}">${escapeHtml(it.label || (it.kind || 'SYS').toUpperCase())}</span>
-        <span class="moss-hud-kv-row__val">${escapeHtml(it.reply || '')}</span>
-      </div>`).join('');
-
-    body.innerHTML = `
-      ${chronoHtml}
-      ${kpiHtml}
-      <span class="moss-card__meta" data-host-signal hidden>${escapeHtml(t('hw.no_signal'))}</span>
-      ${listHtml ? `<div class="moss-hud-kv-list">${listHtml}</div>` : ''}
-      <div class="moss-hud-foot">
-        <button class="fui-btn" type="button" data-host-modal>${escapeHtml(t('hw.inspect'))}</button>
-        <button class="fui-btn" type="button" data-host-popout>${escapeHtml(t('hw.popout'))}</button>
-      </div>`;
-
-    updateHostHardware(body, dev);
-    body.querySelector('[data-host-modal]')?.addEventListener('click', () => onOpenLocalStatusModal?.(turn));
-    body.querySelector('[data-host-popout]')?.addEventListener('click', () => onOpenPopout?.());
-  }
-
-  /* ── Viewer 7: 操作核验闸门 / 草稿回执 (AUTH-05 / RCPT-05) ── */
-  function populateActionCard(card, titleEl, body, cardEl) {
-    const turn = card.turn || {};
-    const isPending = turn.status === 'pending';
-    if (isPending) {
-      cardEl.classList.add('moss-hud-card--warn');
-      titleEl.textContent = turn.desktop_confirmation?.title || t('hud.action_pending_title');
-      const preview = turn.desktop_confirmation?.detail || turn.preview || '';
-      const approveLabel = turn.desktop_confirmation
-        ? t('turn.approve_desktop')
-        : turn.verify_only
-          ? t('turn.approve_verify')
-          : t('turn.approve_draft');
-      const cancelLabel = turn.desktop_confirmation ? t('turn.cancel_action') : t('turn.cancel_draft');
-
-      body.innerHTML = `
-        <div class="fui-hazard moss-hud-hazard" aria-hidden="true"></div>
-        <p class="moss-hud-caption">${escapeHtml(turn.desktop_confirmation ? t('turn.pending_desktop') : t('turn.pending_draft'))}</p>
-        <pre class="moss-pre moss-hud-pre"></pre>
-        <div class="moss-hud-foot">
-          <button class="fui-btn" type="button" data-hud-cancel>${escapeHtml(cancelLabel)}</button>
-          <button class="fui-btn fui-btn--primary" type="button" data-hud-approve>${escapeHtml(approveLabel)}</button>
-        </div>`;
-      body.querySelector('.moss-hud-pre').textContent = preview;
-      body.querySelector('[data-hud-approve]')?.addEventListener('click', () => onApprove?.(turn.id));
-      body.querySelector('[data-hud-cancel]')?.addEventListener('click', () => onCancel?.(turn.id));
-    } else if (turn.receipt) {
-      titleEl.textContent = t('turn.draft_receipt');
-      body.innerHTML = `
-        <pre class="moss-pre moss-hud-pre"></pre>
-        <div class="moss-hud-foot">
-          <span class="fui-badge" data-state="ok">${escapeHtml(t('turn.saved'))}</span>
-          ${turn.receipt.filename ? `<a class="fui-btn" href="/drafts/${encodeURIComponent(turn.receipt.filename)}" target="_blank" rel="noopener">${escapeHtml(t('turn.open_draft'))}</a>` : ''}
-        </div>`;
-      body.querySelector('.moss-hud-pre').textContent = turn.receipt.text || '';
-    }
-  }
-
-  /* ── Viewer 8: 上下文采集 (剪贴板 / OCR / 截屏) ── */
-  function populateContextCard(card, titleEl, body) {
-    const turn = card.turn || {};
-    const action = typeof turn.context_action === 'string' ? turn.context_action : (turn.context_action?.action || 'clipboard');
-    const labelKey = {
-      clipboard: 'hud.ctx_clipboard',
-      screen_text: 'hud.ctx_ocr',
-      screenshot: 'hud.ctx_screenshot',
-      screen_image: 'hud.ctx_image',
-    }[action] || 'hud.ctx_clipboard';
-    titleEl.textContent = t(labelKey);
-    const widget = document.createElement('div');
-    widget.className = 'context-widget moss-stack';
-    body.append(widget);
-    import('/static/context-tools.js').then(({ mountContextTool }) => {
-      if (!widget.isConnected) return;
-      const contextTurn = { ...turn, context_action: action };
-      mountContextTool(widget, contextTurn,
-        (incoming, goal, requestId) => onContextSubmit?.({ turn: contextTurn, kind: 'reply', incoming, goal, requestId }),
-        {
-          model: () => ({ id: latestState?.model_id, name: latestState?.model }),
-          send: (question, excerpt, modelId) => onContextSubmit?.({ turn: contextTurn, kind: 'question', question, excerpt, modelId }),
-        }, {
-          model: () => latestState?.vision_model,
-          send: (question, image, modelId) => onContextSubmit?.({ turn: contextTurn, kind: 'image', question, image, modelId }),
-        });
-      widget.querySelector('button')?.classList.add('fui-btn', 'fui-btn--primary');
-    }).catch(() => {
-      if (widget.isConnected) widget.textContent = t('hud.ctx_failed');
-    });
-  }
-
-  /* ── Due Timers / Reminders Tactical Float Stack ── */
-  function renderDueReminders(timers = []) {
-    if (!reminderStackEl) return;
-    const now = Date.now();
-    const due = timers.filter((tm) => (tm.due_at || 0) * 1000 <= now);
-    reminderStackEl.replaceChildren();
-    reminderStackEl.hidden = due.length === 0;
-    for (const item of due.slice(0, 2)) {
-      const card = document.createElement('div');
-      card.className = 'moss-hud-reminder';
-      card.dataset.state = 'warn';
-      card.setAttribute('role', 'alert');
-      card.innerHTML = `
-        <div class="moss-hud-reminder__head">
-          <span class="fui-badge fui-badge--solid" data-state="warn">${escapeHtml(t('hud.rem_badge'))}</span>
-          <time class="fui-num">${formatClock((item.due_at || 0) * 1000)}</time>
-        </div>
-        <p class="moss-hud-reminder__text">${escapeHtml(item.label)}</p>
-        <div class="moss-hud-foot">
-          ${item.turn_id ? `<button class="fui-btn" type="button" data-rem-locate>${escapeHtml(t('rem.open'))}</button>` : ''}
-          <button class="fui-btn fui-btn--primary" type="button" data-rem-dismiss>${escapeHtml(t('rem.dismiss'))}</button>
-        </div>`;
-      card.querySelector('[data-rem-locate]')?.addEventListener('click', () => onLocateTurn?.(item.turn_id));
-      card.querySelector('[data-rem-dismiss]')?.addEventListener('click', () => onDismissTimer?.(item.id));
-      reminderStackEl.append(card);
-    }
-  }
-
   /* ── Local File Picker & Stage Drag-and-Drop Support ── */
   fileInputEl?.addEventListener('change', () => {
     const file = fileInputEl.files?.[0];
@@ -2152,7 +1751,7 @@ export function createHudPopupsController({
     updateDevice(device, {stale = false} = {}) {
       deviceStale = stale;
       for (const mounted of mountedCards.values()) {
-        if (mounted.type === 'host') updateHostHardware(mounted.el, device);
+        if (mounted.type === 'host') updateHostHardware(mounted.el, device, deviceStale);
       }
     },
     armAutoplay,
@@ -2224,25 +1823,4 @@ export function createHudPopupsController({
       renderOpenCards({ refreshInfo: true });
     },
   };
-}
-
-function localizeCity(name) {
-  if (!name) return '';
-  if (getLocale().startsWith('zh')) return name;
-  return { '上海': 'Shanghai', '北京': 'Beijing', '深圳': 'Shenzhen' }[name] || name;
-}
-
-function safePopupUrl(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return '';
-  if (s.startsWith('/') && !s.startsWith('//')) return s;
-  return /^(?:https?:|blob:)/i.test(s) ? s : '';
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

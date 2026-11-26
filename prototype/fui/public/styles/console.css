@@ -2921,6 +2921,8 @@ body[data-frozen="true"] .moss-id-photo__img--reveal { clip-path: inset(0 0 0 0)
 /* Turn sequence index & color-coded HUD recall triggers inside chat log */
 .moss-comms-panel .fui-chat__item {
   animation: moss-turn-in var(--fui-dur-fast) var(--fui-ease) both;
+  content-visibility: auto;
+  contain-intrinsic-size: 96px;
 }
 @keyframes moss-turn-in {
   from { opacity: 0; transform: translateX(6px); }
@@ -3207,6 +3209,8 @@ body[data-frozen="true"] .moss-id-photo__img--reveal { clip-path: inset(0 0 0 0)
 .moss-strip__brain-badge { font-size: 11px; padding: 0 4px; min-width: 16px; }
 
 .moss-pulse-toast {
+  position: relative;
+  z-index: 26;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3217,6 +3221,7 @@ body[data-frozen="true"] .moss-id-photo__img--reveal { clip-path: inset(0 0 0 0)
   background: var(--fui-surface-1);
   font-size: var(--fui-text-sm);
 }
+.moss-pulse-toast[hidden] { display: none; }
 .moss-pulse-toast[data-state="ok"] { border-left-color: var(--fui-ok); }
 .moss-pulse-toast[data-state="warn"] { border-left-color: var(--fui-warn); }
 .moss-pulse-toast[data-state="crit"] { border-left-color: var(--fui-crit); }
@@ -3856,7 +3861,7 @@ body[data-frozen="true"] .moss-log-row--fresh {
 
 .moss-comms-drawer {
   position: fixed;
-  z-index: 28;
+  z-index: 32;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -4309,3 +4314,19 @@ body[data-auth-role="C"] [data-cs-only="true"] {
   font-size: 0.74rem;
   color: var(--fui-text-dim);
 }
+
+/* ── v7.0 MCP Interactive Elicitation Rack & Cascade Toggle ── */
+.moss-elicit-rack {
+  display: grid;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--fui-line-1);
+  background: var(--fui-surface-1);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.moss-elicit-rack[hidden] { display: none; }
+.moss-elicit-card { display: grid; gap: 6px; padding: 8px 10px; }
+.moss-elicit-form { display: grid; gap: 6px; }
+.moss-elicit-actions { justify-content: flex-end; gap: 6px; }
+.moss-console-settings__cascade { margin-top: 8px; }

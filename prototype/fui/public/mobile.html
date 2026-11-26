@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#010305">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>550W · MOSS 移动端分身</title>
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/vendor/logos/550w.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/fonts.css">
   <link rel="stylesheet" href="/vendor/fui.css">
@@ -20,8 +24,9 @@
     }
     .m-shell {
       display: grid;
-      grid-template-rows: auto auto auto auto 1fr auto;
-      min-height: 100dvh;
+      grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
+      height: 100dvh;
+      overflow: hidden;
       max-width: 560px;
       margin: 0 auto;
       padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
@@ -32,28 +37,45 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 6px;
       border-bottom: 1px solid var(--fui-line-2);
       padding-bottom: 8px;
     }
-    .m-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    .m-brand strong { font-size: 1rem; letter-spacing: 0.1em; color: var(--fui-text-hi); white-space: nowrap; }
+    .m-brand { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .m-brand strong { font-size: 0.96rem; letter-spacing: 0.08em; color: var(--fui-text-hi); white-space: nowrap; }
     .m-controls {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
       gap: 6px;
       align-items: center;
     }
     .m-select {
       min-height: 36px;
-      padding: 4px 8px;
+      padding: 4px 6px;
       border: 1px solid var(--fui-line-2);
       background: var(--fui-surface-1);
       color: var(--fui-text-hi);
-      font: 500 0.8rem / 1.2 var(--fui-font-sans);
+      font: 500 0.78rem / 1.2 var(--fui-font-sans);
       min-width: 0;
       width: 100%;
     }
+    .m-select[hidden] { display: none; }
+    .m-alert {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--fui-line-2);
+      border-left: 3px solid var(--fui-info);
+      background: var(--fui-surface-1);
+      font-size: 0.78rem;
+    }
+    .m-alert[data-state="warn"] { border-left-color: var(--fui-warn); }
+    .m-alert[data-state="crit"] { border-left-color: var(--fui-crit); }
+    .m-alert[hidden] { display: none; }
+    .m-alert__meta { flex: 1 1 auto; min-width: 0; }
+    .m-alert__title { display: block; color: var(--fui-text-hi); font-weight: 600; }
+    .m-alert__body { display: block; color: var(--fui-text-dim); overflow-wrap: anywhere; }
     .m-media {
       display: grid;
       gap: 6px;
@@ -68,6 +90,17 @@
       gap: 6px;
       min-width: 0;
     }
+    @media (max-width: 460px) {
+      .m-media__row { flex-wrap: wrap; }
+    }
+    .m-media__progress {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.72rem;
+      color: var(--fui-text-dim);
+    }
+    .m-media__seek { flex: 1 1 auto; min-width: 0; accent-color: var(--fui-ok); }
     .m-media__cover {
       width: 26px;
       height: 26px;
@@ -164,7 +197,9 @@
       list-style: none;
       margin: 0;
       padding: 4px 0;
+      min-height: 0;
       overflow-y: auto;
+      overscroll-behavior: contain;
       display: grid;
       align-content: start;
       gap: 8px;
@@ -175,10 +210,14 @@
       padding: 8px 10px;
       background: var(--fui-surface-1);
       min-width: 0;
+      content-visibility: auto;
+      contain-intrinsic-size: 80px;
     }
     .m-msg--user { border-left-color: var(--fui-act); }
     .m-msg__role { font-size: 0.72rem; color: var(--fui-text-dim); margin-bottom: 4px; }
     .m-msg__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: 0.92rem; color: var(--fui-text-hi); }
+    .m-msg__body { min-width: 0; overflow-wrap: anywhere; font-size: 0.92rem; line-height: 1.5; color: var(--fui-text-hi); }
+    .m-msg__extras { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .m-msg__actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
     .m-form {
       display: grid;
@@ -206,10 +245,14 @@
         <button class="fui-badge" id="m-auth-chip" type="button" data-state="intel" title="点击切换 4 位授权码" style="cursor: pointer">MOSS</button>
         <span class="fui-badge" id="m-link" data-state="ok">SYNC</span>
       </div>
-      <a class="fui-key fui-key--sm" href="/">主控台</a>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="fui-key fui-key--sm" id="m-push" type="button" aria-pressed="false" title="开启后台 Web Push 系统通知" hidden>推送</button>
+        <a class="fui-key fui-key--sm" href="/">主控台</a>
+      </div>
     </header>
 
-    <section class="m-controls" aria-label="模型与性格控制">
+    <section class="m-controls" aria-label="会话与模型控制">
+      <select class="m-select" id="m-chat-sel" aria-label="切换历史会话" hidden></select>
       <select class="m-select" id="m-personality" aria-label="MOSS 性格预设">
         <option value="partner">熟人搭档</option>
         <option value="rational">550W 绝对理性</option>
@@ -218,6 +261,15 @@
       </select>
       <select class="m-select" id="m-model" aria-label="推理模型"></select>
       <button class="fui-key fui-key--sm" id="m-tts" type="button" aria-pressed="false">播报 关</button>
+    </section>
+
+    <section class="m-alert" id="m-alert-banner" hidden>
+      <span class="fui-badge" id="m-alert-badge" data-state="info">PULSE</span>
+      <div class="m-alert__meta">
+        <strong class="m-alert__title" id="m-alert-title">—</strong>
+        <span class="m-alert__body" id="m-alert-body"></span>
+      </div>
+      <button class="fui-key fui-key--sm" id="m-alert-dismiss" type="button">关闭</button>
     </section>
 
     <section class="m-media" id="m-media-bar" aria-label="正在播放" hidden>
@@ -231,7 +283,12 @@
         <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-prev" type="button" aria-label="上一首">‹</button>
         <button class="fui-key fui-key--sm" id="m-media-toggle" type="button">播放</button>
         <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-next" type="button" aria-label="下一首">›</button>
+        <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-speed" type="button" title="倍速">1x</button>
         <button class="fui-key fui-key--sm m-media__ctrl" id="m-media-sleep" type="button" title="睡眠定时 (15 / 30 / 60m)">⏱</button>
+      </div>
+      <div class="m-media__progress">
+        <input class="m-media__seek" id="m-media-seek" type="range" min="0" max="1000" value="0" aria-label="播放进度">
+        <span class="fui-num" id="m-media-time">00:00 / 00:00</span>
       </div>
       <div class="m-media__lrc" id="m-media-lrc" hidden></div>
       <canvas class="m-media__viz" id="m-viz" height="26" role="img" aria-label="音频实时频谱"></canvas>
@@ -268,733 +325,6 @@
     </form>
   </div>
 
-  <script type="module">
-    import { openBestMicStream } from '/js/mic-selector.js';
-    const feed = document.getElementById('m-feed');
-    const form = document.getElementById('m-form');
-    const input = document.getElementById('m-input');
-    const linkEl = document.getElementById('m-link');
-    const persSel = document.getElementById('m-personality');
-    const modelSel = document.getElementById('m-model');
-    const ttsBtn = document.getElementById('m-tts');
-    const micBtn = document.getElementById('m-mic');
-    const newChatBtn = document.getElementById('m-new-chat');
-    const mediaBar = document.getElementById('m-media-bar');
-    const mediaCover = document.getElementById('m-media-cover');
-    const mediaBadge = document.getElementById('m-media-badge');
-    const mediaTitle = document.getElementById('m-media-title');
-    const mediaArtist = document.getElementById('m-media-artist');
-    const mediaPrev = document.getElementById('m-media-prev');
-    const mediaToggle = document.getElementById('m-media-toggle');
-    const mediaNext = document.getElementById('m-media-next');
-    const mediaSleep = document.getElementById('m-media-sleep');
-    const mediaLrc = document.getElementById('m-media-lrc');
-    const mediaQueue = document.getElementById('m-media-queue');
-    const audioEl = document.getElementById('m-audio');
-    const vizCanvas = document.getElementById('m-viz');
-    const authOverlay = document.getElementById('m-auth');
-    const authForm = document.getElementById('m-auth-form');
-    const authInput = document.getElementById('m-auth-input');
-    const authErr = document.getElementById('m-auth-err');
-    const authChip = document.getElementById('m-auth-chip');
-
-    let vizCtx = null;
-    let vizAnalyser = null;
-    let vizSource = null;
-    let vizFreq = null;
-    let vizRaf = 0;
-    const vizPeaks = new Float32Array(28);
-
-    function drawMobileViz(playing) {
-      if (!vizCanvas) return;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const cw = Math.max(180, vizCanvas.clientWidth || 320);
-      const ch = 26;
-      if (vizCanvas.width !== Math.round(cw * dpr) || vizCanvas.height !== Math.round(ch * dpr)) {
-        vizCanvas.width = Math.round(cw * dpr);
-        vizCanvas.height = Math.round(ch * dpr);
-      }
-      const ctx = vizCanvas.getContext('2d');
-      if (!ctx) return;
-      ctx.save();
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, cw, ch);
-      const styles = getComputedStyle(document.documentElement);
-      const cOk = styles.getPropertyValue('--fui-ok').trim() || '#34d399';
-      const cInfo = styles.getPropertyValue('--fui-info').trim() || '#38bdf8';
-      const cAct = styles.getPropertyValue('--fui-act').trim() || '#f97316';
-      const cLine = styles.getPropertyValue('--fui-line-2').trim() || '#334155';
-
-      const bars = 28;
-      const gap = 3;
-      const bw = Math.max(3, (cw - gap * (bars - 1)) / bars);
-      if (playing && vizAnalyser && vizFreq) {
-        vizAnalyser.getByteFrequencyData(vizFreq);
-      }
-      for (let i = 0; i < bars; i++) {
-        let v = 0.08;
-        if (playing && vizFreq) {
-          const bin = Math.min(vizFreq.length - 1, Math.floor((i / bars) * (vizFreq.length * 0.68)));
-          v = Math.max(0.08, (vizFreq[bin] || 0) / 255);
-        }
-        vizPeaks[i] = v > vizPeaks[i] ? v : Math.max(0.08, vizPeaks[i] - 0.025);
-        const h = Math.max(2, Math.round(v * (ch - 4)));
-        const x = i * (bw + gap);
-        ctx.fillStyle = playing ? (v > 0.72 ? cAct : i % 3 === 0 ? cInfo : cOk) : cLine;
-        ctx.fillRect(x, ch - h, bw, h);
-        if (playing) {
-          const py = Math.max(0, ch - Math.round(vizPeaks[i] * (ch - 2)) - 2);
-          ctx.fillStyle = cAct;
-          ctx.fillRect(x, py, bw, 2);
-        }
-      }
-      ctx.restore();
-    }
-
-    function ensureAudioTap() {
-      if (vizAnalyser) {
-        if (vizCtx?.state === 'suspended') vizCtx.resume().catch(() => {});
-        return;
-      }
-      try {
-        vizCtx = new (window.AudioContext || window.webkitAudioContext)();
-        vizSource = vizCtx.createMediaElementSource(audioEl);
-        vizAnalyser = vizCtx.createAnalyser();
-        vizAnalyser.fftSize = 128;
-        vizAnalyser.smoothingTimeConstant = 0.78;
-        vizSource.connect(vizAnalyser);
-        vizAnalyser.connect(vizCtx.destination);
-        vizFreq = new Uint8Array(vizAnalyser.frequencyBinCount);
-      } catch { /* ignore */ }
-    }
-
-    function stopVizLoop() {
-      if (vizRaf) { cancelAnimationFrame(vizRaf); vizRaf = 0; }
-      drawMobileViz(false);
-    }
-
-    function startVizLoop() {
-      if (vizRaf) return;
-      const tick = () => {
-        if (audioEl.paused || audioEl.ended || document.hidden) {
-          vizRaf = 0;
-          drawMobileViz(false);
-          return;
-        }
-        drawMobileViz(true);
-        vizRaf = requestAnimationFrame(tick); // fui-lint-ignore: R15 bounded media playback spectrum loop
-      };
-      vizRaf = requestAnimationFrame(tick); // fui-lint-ignore: R15 bounded media playback spectrum loop
-    }
-
-    let chatId = '';
-    let ttsOn = false;
-    let lastSpokenTurn = '';
-    let activeMediaId = '';
-    let activeMediaProvider = '';
-    let mobileMediaItems = [];
-    let mobileMediaTurnId = '';
-    let mobileLrcLines = [];
-    let mobileLrcAbort = null;
-    let mobileSleepEnd = 0;
-    let mobileSleepTick = 0;
-    let mobileScrobbledStart = false;
-    let mobileScrobbledDone = false;
-    let micStream = null;
-    let micCtx = null;
-    let micNodeSrc = null;
-    let micNodeProc = null;
-    let micChunks = [];
-    let openingMic = false;
-    let activeSpeakAudio = null;
-    let activeSpeakUrl = '';
-    let isAdminRole = true;
-    let activeOwnerCode = 'MOSS';
-    let authRequiredMode = true;
-    let es = null;
-
-    function openAuthPrompt(msg, { switchMode = false } = {}) {
-      authRequiredMode = !switchMode;
-      if (!switchMode && es) { es.close(); es = null; }
-      authOverlay.hidden = false;
-      authErr.textContent = msg || '';
-      authErr.hidden = !msg;
-      if (authInput) { authInput.value = ''; authInput.focus(); }
-    }
-    authOverlay?.addEventListener('click', (ev) => {
-      if (!authRequiredMode && ev.target === authOverlay) authOverlay.hidden = true;
-    });
-    document.addEventListener('keydown', (ev) => {
-      if (!authRequiredMode && ev.key === 'Escape' && !authOverlay.hidden) authOverlay.hidden = true;
-    });
-
-    function flashLinkError(msg) {
-      linkEl.dataset.state = 'warn';
-      linkEl.textContent = String(msg || 'ERR').slice(0, 18);
-    }
-
-    async function postJson(url, body) {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json().catch(() => null);
-      if (resp.status === 401) {
-        openAuthPrompt((data && data.error) || '需要重新验证 4 位授权码');
-        return null;
-      }
-      if (!resp.ok) {
-        flashLinkError(`HTTP ${resp.status}`);
-        return null;
-      }
-      return data || {};
-    }
-
-    async function loadModels() {
-      try {
-        const resp = await fetch('/api/models', { cache: 'no-store' });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        const items = data.models || [];
-        modelSel.replaceChildren();
-        for (const m of items) {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = m.label || m.model || m.id;
-          opt.disabled = m.available === false;
-          modelSel.append(opt);
-        }
-        if (data.selected) modelSel.value = data.selected;
-      } catch { /* ignore */ }
-    }
-
-    function stopSpeakAudio() {
-      if (activeSpeakAudio) {
-        activeSpeakAudio.pause();
-        activeSpeakAudio = null;
-      }
-      if (activeSpeakUrl) {
-        URL.revokeObjectURL(activeSpeakUrl);
-        activeSpeakUrl = '';
-      }
-    }
-
-    async function speakReply(text) {
-      if (!ttsOn || !text) return;
-      stopSpeakAudio();
-      try {
-        const resp = await fetch('/api/speak', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text.slice(0, 140), category: 'reply', room_amount: 100 }),
-        });
-        if (!resp.ok) return;
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const player = new Audio(url);
-        activeSpeakAudio = player;
-        activeSpeakUrl = url;
-        const cleanup = () => {
-          URL.revokeObjectURL(url);
-          if (activeSpeakUrl === url) activeSpeakUrl = '';
-          if (activeSpeakAudio === player) activeSpeakAudio = null;
-        };
-        player.addEventListener('ended', cleanup, { once: true });
-        player.addEventListener('error', cleanup, { once: true });
-        await player.play().catch(cleanup);
-      } catch { /* ignore */ }
-    }
-
-    function syncMobileSleepBtn() {
-      const rem = mobileSleepEnd ? Math.max(0, Math.ceil((mobileSleepEnd - Date.now()) / 60000)) : 0;
-      mediaSleep.textContent = rem > 0 ? `⏱ ${rem}m` : '⏱';
-      if (rem > 0) mediaSleep.dataset.active = 'true';
-      else delete mediaSleep.dataset.active;
-    }
-
-    function armMobileSleep(minutes) {
-      clearInterval(mobileSleepTick);
-      mobileSleepTick = 0;
-      if (!minutes) {
-        mobileSleepEnd = 0;
-        syncMobileSleepBtn();
-        return;
-      }
-      mobileSleepEnd = Date.now() + minutes * 60000;
-      syncMobileSleepBtn();
-      mobileSleepTick = setInterval(() => { // fui-lint-ignore: R15 bounded sleep countdown while armed
-        if (mobileSleepEnd - Date.now() <= 0) {
-          clearInterval(mobileSleepTick);
-          mobileSleepTick = 0;
-          mobileSleepEnd = 0;
-          if (!audioEl.paused) audioEl.pause();
-        }
-        syncMobileSleepBtn();
-      }, 5000);
-    }
-
-    function syncMobileLrc(sec) {
-      if (!mediaLrc || !mobileLrcLines.length) return;
-      let idx = 0;
-      for (let i = 0; i < mobileLrcLines.length; i++) {
-        if (mobileLrcLines[i].time <= sec + 0.15) idx = i;
-        else break;
-      }
-      mediaLrc.textContent = mobileLrcLines[idx]?.text || '';
-    }
-
-    function loadMobileLyrics(sel) {
-      if (mobileLrcAbort) { mobileLrcAbort.abort(); mobileLrcAbort = null; }
-      mobileLrcLines = [];
-      mediaLrc.hidden = true;
-      mediaLrc.textContent = '';
-      if (!sel?.media_id || sel.live) return;
-      mobileLrcAbort = new AbortController();
-      const qs = new URLSearchParams();
-      if (sel.title) qs.set('title', sel.title);
-      if (sel.artist) qs.set('artist', sel.artist);
-      fetch(`/api/media/${encodeURIComponent(sel.media_id)}/lyrics?${qs}`, { cache: 'no-store', signal: mobileLrcAbort.signal })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => {
-          if (d?.lines?.length && sel.media_id === activeMediaId) {
-            mobileLrcLines = d.lines;
-            mediaLrc.hidden = false;
-            mediaLrc.textContent = d.lines[0]?.text || '';
-            if (d.synced !== false) syncMobileLrc(audioEl.currentTime || 0);
-          }
-        }).catch(() => {});
-    }
-
-    async function selectMobileTrack(item, index) {
-      if (!item?.media_id) return;
-      if (mobileMediaTurnId && chatId) {
-        const res = await postJson('/api/media-select', { chat_id: chatId, turn_id: mobileMediaTurnId, media_id: item.media_id, index });
-        if (res?.state) render(res.state);
-      }
-      ensureAudioTap();
-      audioEl.play().catch(() => {});
-    }
-
-    function renderMobileQueue(sel) {
-      const audioItems = mobileMediaItems.filter((it) => it && it.kind !== 'video');
-      if (audioItems.length <= 1) {
-        mediaQueue.hidden = true;
-        mediaQueue.replaceChildren();
-        mediaPrev.disabled = true;
-        mediaNext.disabled = true;
-        return;
-      }
-      const curIdx = audioItems.findIndex((it) => it.media_id === sel.media_id);
-      mediaPrev.disabled = curIdx <= 0;
-      mediaNext.disabled = curIdx < 0 || curIdx >= audioItems.length - 1;
-      mediaQueue.hidden = false;
-      mediaQueue.replaceChildren();
-      audioItems.forEach((item, i) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'm-media__qbtn';
-        btn.setAttribute('aria-current', String(item.media_id === sel.media_id));
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'm-media__qname';
-        nameSpan.textContent = `${String(i + 1).padStart(2, '0')} · ${item.title || item.media_id}${item.artist ? ` - ${item.artist}` : ''}`;
-        const tagSpan = document.createElement('span');
-        tagSpan.className = 'fui-num';
-        tagSpan.textContent = item.live ? 'LIVE' : String(item.provider || 'LOC').toUpperCase();
-        btn.append(nameSpan, tagSpan);
-        btn.addEventListener('click', () => { void selectMobileTrack(item, i + 1); });
-        mediaQueue.append(btn);
-      });
-    }
-
-    function syncMedia(turns) {
-      const mTurn = [...turns].reverse().find((t) => t.media?.selected?.media_id);
-      const sel = mTurn?.media?.selected;
-      if (!sel || sel.kind !== 'audio') {
-        if (!mediaBar.hidden || activeMediaId) {
-          audioEl.pause();
-          audioEl.removeAttribute('src');
-          try { audioEl.load(); } catch { /* ignore */ }
-          activeMediaId = '';
-          activeMediaProvider = '';
-          mobileMediaItems = [];
-          mobileMediaTurnId = '';
-          mobileLrcLines = [];
-          mediaLrc.hidden = true;
-          mediaCover.hidden = true;
-          mediaQueue.hidden = true;
-          mediaToggle.textContent = '播放';
-          stopVizLoop();
-        }
-        mediaBar.hidden = true;
-        return;
-      }
-      mediaBar.hidden = false;
-      mobileMediaTurnId = mTurn.id || '';
-      mobileMediaItems = Array.isArray(mTurn.media?.items) ? mTurn.media.items : [sel];
-      mediaBadge.textContent = sel.live ? 'LIVE' : sel.source_kind === 'online' ? String(sel.provider || 'ONL').slice(0, 4).toUpperCase() : 'AUD';
-      mediaTitle.textContent = sel.title || sel.media_id;
-      mediaArtist.textContent = sel.source_label ? `${sel.artist ? `${sel.artist} · ` : ''}${sel.source_label}` : (sel.artist || '550W MEDIA');
-      if (sel.cover_url && String(sel.cover_url).startsWith('/')) {
-        if (mediaCover.getAttribute('src') !== sel.cover_url) {
-          mediaCover.src = sel.cover_url;
-          mediaCover.hidden = false;
-        }
-      } else {
-        mediaCover.hidden = true;
-      }
-      renderMobileQueue(sel);
-      const src = sel.url || `/media/${encodeURIComponent(sel.media_id)}`;
-      if (activeMediaId !== sel.media_id) {
-        activeMediaId = sel.media_id;
-        activeMediaProvider = sel.provider || '';
-        mobileScrobbledStart = false;
-        mobileScrobbledDone = false;
-        audioEl.src = src;
-        mediaToggle.textContent = '播放';
-        stopVizLoop();
-        loadMobileLyrics(sel);
-      } else if (audioEl.paused) {
-        drawMobileViz(false);
-      }
-    }
-
-    function render(state) {
-      chatId = state.chat_id || '';
-      if (Array.isArray(state.personalities) && state.personalities.length && persSel.options.length !== state.personalities.length) {
-        persSel.replaceChildren();
-        for (const item of state.personalities) {
-          const opt = document.createElement('option');
-          opt.value = item.id;
-          opt.textContent = item.label || item.id;
-          persSel.append(opt);
-        }
-      }
-      if (state.personality_id && persSel.value !== state.personality_id) {
-        persSel.value = state.personality_id;
-      }
-      if (state.model_id && [...modelSel.options].some((o) => o.value === state.model_id)) {
-        modelSel.value = state.model_id;
-      }
-      const turns = (state.turns || []).slice(-14);
-      const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 64;
-      syncMedia(turns);
-      feed.replaceChildren();
-      for (const turn of turns) {
-        const u = document.createElement('li');
-        u.className = 'm-msg m-msg--user';
-        const opTag = activeOwnerCode === 'MOSS' ? 'OP-01' : `OP-${activeOwnerCode}`;
-        u.innerHTML = `<div class="m-msg__role fui-num">${opTag}</div><p class="m-msg__text"></p>`;
-        u.querySelector('.m-msg__text').textContent = turn.user || '';
-        feed.append(u);
-
-        const a = document.createElement('li');
-        a.className = 'm-msg';
-        a.innerHTML = `<div class="m-msg__role fui-num">MOSS · ${String(turn.status || '').toUpperCase()}</div><p class="m-msg__text"></p>`;
-        a.querySelector('.m-msg__text').textContent = turn.reply || turn.partial_reply || (turn.status === 'thinking' ? '处理中…' : (turn.error || ''));
-        if (turn.status === 'pending') {
-          const actions = document.createElement('div');
-          actions.className = 'm-msg__actions';
-          if (isAdminRole) {
-            const okBtn = document.createElement('button');
-            okBtn.type = 'button';
-            okBtn.className = 'fui-btn fui-btn--primary';
-            okBtn.textContent = '确认执行';
-            okBtn.addEventListener('click', () => {
-              void postJson('/api/approve', { turn_id: turn.id }).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
-            });
-            actions.append(okBtn);
-          }
-          const cancelBtn = document.createElement('button');
-          cancelBtn.type = 'button';
-          cancelBtn.className = 'fui-btn';
-          cancelBtn.textContent = '取消';
-          cancelBtn.addEventListener('click', () => {
-            void postJson('/api/cancel', { turn_id: turn.id }).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
-          });
-          actions.append(cancelBtn);
-          a.append(actions);
-        }
-        feed.append(a);
-      }
-      if (nearBottom) feed.scrollTop = feed.scrollHeight;
-      const latest = turns.at(-1);
-      if (ttsOn && latest && latest.status === 'replied' && latest.reply && latest.id !== lastSpokenTurn) {
-        lastSpokenTurn = latest.id;
-        void speakReply(latest.reply);
-      }
-    }
-
-    async function sendText(text) {
-      const clean = String(text || '').trim();
-      if (!clean) return false;
-      const res = await postJson('/api/message', { text: clean, chat_id: chatId || undefined });
-      if (res && Array.isArray(res.turns)) render(res);
-      return Boolean(res);
-    }
-
-    persSel.addEventListener('change', () => {
-      void postJson('/api/select-personality', { id: persSel.value }).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
-    });
-    modelSel.addEventListener('change', () => void postJson('/api/select-model', { id: modelSel.value }));
-    ttsBtn.addEventListener('click', () => {
-      ttsOn = !ttsOn;
-      if (!ttsOn) stopSpeakAudio();
-      ttsBtn.setAttribute('aria-pressed', String(ttsOn));
-      ttsBtn.textContent = ttsOn ? '播报 开' : '播报 关';
-    });
-    mediaToggle.addEventListener('click', () => {
-      if (audioEl.paused) {
-        ensureAudioTap();
-        audioEl.play().then(() => { mediaToggle.textContent = '暂停'; startVizLoop(); }).catch(() => {});
-      } else {
-        audioEl.pause();
-        mediaToggle.textContent = '播放';
-        stopVizLoop();
-      }
-    });
-    mediaCover.addEventListener('error', () => { mediaCover.hidden = true; });
-    mediaPrev.addEventListener('click', () => {
-      const idx = mobileMediaItems.findIndex((it) => it.media_id === activeMediaId);
-      if (idx > 0) void selectMobileTrack(mobileMediaItems[idx - 1], idx);
-    });
-    mediaNext.addEventListener('click', () => {
-      const idx = mobileMediaItems.findIndex((it) => it.media_id === activeMediaId);
-      if (idx >= 0 && idx + 1 < mobileMediaItems.length) void selectMobileTrack(mobileMediaItems[idx + 1], idx + 2);
-    });
-    const MOBILE_SLEEP_STEPS = [0, 15, 30, 60];
-    mediaSleep.addEventListener('click', () => {
-      const curRem = mobileSleepEnd ? Math.ceil((mobileSleepEnd - Date.now()) / 60000) : 0;
-      const nextIdx = MOBILE_SLEEP_STEPS.findIndex((m) => m > curRem);
-      armMobileSleep(nextIdx >= 0 ? MOBILE_SLEEP_STEPS[nextIdx] : 0);
-    });
-    audioEl.addEventListener('timeupdate', () => { if (mobileLrcLines.length) syncMobileLrc(audioEl.currentTime); });
-    audioEl.addEventListener('play', () => {
-      mediaToggle.textContent = '暂停';
-      startVizLoop();
-      if (activeMediaProvider === 'navidrome' && activeMediaId && !mobileScrobbledStart) {
-        mobileScrobbledStart = true;
-        fetch('/api/online-music/scrobble', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ media_id: activeMediaId, submission: false }),
-        }).catch(() => {});
-      }
-    });
-    audioEl.addEventListener('pause', () => { mediaToggle.textContent = '播放'; stopVizLoop(); });
-    audioEl.addEventListener('ended', () => {
-      mediaToggle.textContent = '播放';
-      stopVizLoop();
-      if (activeMediaProvider === 'navidrome' && activeMediaId && !mobileScrobbledDone) {
-        mobileScrobbledDone = true;
-        fetch('/api/online-music/scrobble', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ media_id: activeMediaId, submission: true }),
-        }).catch(() => {});
-      }
-    });
-    newChatBtn.addEventListener('click', () => {
-      void postJson('/api/new-chat', {}).then((r) => { if (r && Array.isArray(r.turns)) render(r); });
-    });
-
-    function encodeWav16k(floatBuf, inRate) {
-      const ratio = inRate / 16000;
-      const outLen = Math.max(1, Math.floor(floatBuf.length / ratio));
-      const pcm = new Int16Array(outLen);
-      for (let i = 0; i < outLen; i++) {
-        const s = Math.max(-1, Math.min(1, floatBuf[Math.floor(i * ratio)] || 0));
-        pcm[i] = s < 0 ? s * 32768 : s * 32767;
-      }
-      const wav = new ArrayBuffer(44 + pcm.byteLength);
-      const view = new DataView(wav);
-      const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
-      writeStr(0, 'RIFF'); view.setUint32(4, 36 + pcm.byteLength, true); writeStr(8, 'WAVE');
-      writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-      view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-      writeStr(36, 'data'); view.setUint32(40, pcm.byteLength, true);
-      new Int16Array(wav, 44).set(pcm);
-      return wav;
-    }
-
-    async function releaseMicResources() {
-      if (micStream) {
-        micStream.getTracks().forEach((t) => t.stop());
-        micStream = null;
-      }
-      try { micNodeSrc?.disconnect(); } catch { /* ignore */ }
-      try { micNodeProc?.disconnect(); } catch { /* ignore */ }
-      if (micNodeProc) micNodeProc.onaudioprocess = null;
-      micNodeSrc = null; micNodeProc = null;
-      const ctx = micCtx;
-      micCtx = null;
-      if (ctx) await ctx.close?.().catch(() => {});
-    }
-
-    micBtn.addEventListener('click', async () => {
-      if (!navigator.mediaDevices?.getUserMedia) { micBtn.disabled = true; return; }
-      if (openingMic) return;
-      if (micStream) {
-        const rate = micCtx?.sampleRate || 48000;
-        await releaseMicResources();
-        micBtn.disabled = true;
-        micBtn.textContent = '识别中';
-        const total = micChunks.reduce((n, b) => n + b.length, 0);
-        const merged = new Float32Array(total);
-        let off = 0;
-        for (const c of micChunks) { merged.set(c, off); off += c.length; }
-        micChunks = [];
-        try {
-          const resp = await fetch('/api/transcribe', {
-            method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: encodeWav16k(merged, rate),
-          });
-          if (resp.status === 401) {
-            openAuthPrompt('需要重新验证 4 位授权码');
-          } else if (resp.ok) {
-            const data = await resp.json();
-            if (data.text) await sendText(data.text);
-          } else {
-            flashLinkError(`HTTP ${resp.status}`);
-          }
-        } catch {
-          flashLinkError('ASR ERR');
-        } finally {
-          micBtn.disabled = false;
-          micBtn.textContent = '语音';
-        }
-        return;
-      }
-      openingMic = true;
-      try {
-        const { stream } = await openBestMicStream({
-          baseAudio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-        micStream = stream;
-        micCtx = new AudioContext();
-        micNodeSrc = micCtx.createMediaStreamSource(micStream);
-        micNodeProc = micCtx.createScriptProcessor(4096, 1, 1);
-        micChunks = [];
-        micNodeProc.onaudioprocess = (ev) => {
-          micChunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
-        };
-        micNodeSrc.connect(micNodeProc);
-        micNodeProc.connect(micCtx.destination);
-        micBtn.textContent = '结束';
-      } catch {
-        micChunks = [];
-        await releaseMicResources();
-        micBtn.textContent = '无麦';
-      } finally {
-        openingMic = false;
-      }
-    });
-
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && !audioEl.paused && !audioEl.ended) startVizLoop();
-    });
-    window.addEventListener('pagehide', () => {
-      clearInterval(mobileSleepTick);
-      mobileSleepTick = 0;
-      if (mobileLrcAbort) { mobileLrcAbort.abort(); mobileLrcAbort = null; }
-      void releaseMicResources();
-      stopSpeakAudio();
-      if (es) { es.close(); es = null; }
-    });
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const val = input.value;
-      if (!val.trim()) return;
-      if (await sendText(val)) input.value = '';
-    });
-    for (const btn of document.querySelectorAll('[data-quick]')) {
-      btn.addEventListener('click', () => void sendText(btn.dataset.quick));
-    }
-
-    let sseAuthChecking = false;
-    function connectLive() {
-      void loadModels();
-      if (es) es.close();
-      es = new EventSource('/api/events');
-      es.addEventListener('state', (ev) => {
-        linkEl.dataset.state = 'ok';
-        linkEl.textContent = 'ONLINE';
-        try { render(JSON.parse(ev.data)); } catch { /* ignore */ }
-      });
-      es.addEventListener('auth-required', () => {
-        openAuthPrompt('授权已变更，请重新验证 4 位授权码');
-      });
-      es.onerror = async () => {
-        linkEl.dataset.state = 'warn';
-        linkEl.textContent = 'RETRY';
-        if (sseAuthChecking) return;
-        sseAuthChecking = true;
-        try {
-          const r = await fetch('/api/auth/status', { cache: 'no-store' });
-          if (r.ok) {
-            const info = await r.json();
-            if (info.enabled && !info.authorized) openAuthPrompt('需要验证 4 位授权码');
-          }
-        } catch { /* ignore */ } finally {
-          sseAuthChecking = false;
-        }
-      };
-    }
-
-    function applyRole(info) {
-      isAdminRole = info?.role === 'CS' || (Boolean(info?.is_admin) && info?.role !== 'C');
-      const nextCode = String(info?.code || (isAdminRole ? 'MOSS' : '')).toUpperCase() || 'MOSS';
-      if (nextCode !== activeOwnerCode) {
-        activeOwnerCode = nextCode;
-        chatId = '';
-        lastSpokenTurn = '';
-        feed.replaceChildren();
-        syncMedia([]);
-      }
-      if (authChip) {
-        authChip.textContent = `${isAdminRole ? 'CS' : 'C'} · ${activeOwnerCode}`;
-        authChip.dataset.state = isAdminRole ? 'intel' : 'data';
-      }
-      modelSel.disabled = !isAdminRole;
-      modelSel.title = isAdminRole ? '推理模型（管理级权限可切换）' : '仅系统管理员有权切换推理模型';
-    }
-
-    authChip?.addEventListener('click', () => openAuthPrompt('', { switchMode: true }));
-
-    authForm.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      authErr.hidden = true;
-      const resp = await fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: authInput.value }),
-      });
-      if (resp.ok) {
-        const d = await resp.json().catch(() => ({}));
-        applyRole(d);
-        authOverlay.hidden = true;
-        authInput.value = '';
-        connectLive();
-      } else {
-        const d = await resp.json().catch(() => ({}));
-        authErr.textContent = d.error || '授权码错误';
-        authErr.hidden = false;
-      }
-    });
-
-    (async () => {
-      try {
-        const r = await fetch('/api/auth/status', { cache: 'no-store' });
-        if (r.ok) {
-          const info = await r.json();
-          if (info.enabled && !info.authorized) {
-            authOverlay.hidden = false;
-            authInput.focus();
-            return;
-          }
-          applyRole(info);
-        }
-      } catch { /* ignore */ }
-      connectLive();
-    })();
-  </script>
+  <script type="module" src="/js/mobile.js"></script>
 </body>
 </html>

@@ -294,9 +294,9 @@ async def test_providers_lyrics_and_core():
 
 
 def _pick_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+    from testkit import safe_free_port
+
+    return safe_free_port()
 
 
 async def test_http_proxy_rbac_and_range():

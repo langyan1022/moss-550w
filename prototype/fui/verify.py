@@ -119,7 +119,7 @@ async def run_qa():
                         "**/fui/local-weather*",
                         lambda route: route.fulfill(status=200, content_type="application/json", body=mock_weather_body),
                     )
-                    qs = f"?lang={lang}&beat={beat}&paused=1&skipOpening=1{extra_qs}"
+                    qs = f"?lang={lang}&beat={beat}&paused=1&skipOpening=1&sim=1{extra_qs}"
                     await page.goto(f"{BASE}/{qs}", wait_until="domcontentloaded")
                     if wait_3d:
                         try:
@@ -139,7 +139,7 @@ async def run_qa():
                         probes["P2_idle"] = await page.evaluate("window.fuiProbes.idle(2000)")
                         probes["viewport_ratio"] = await page.evaluate("""() => {
                           const main = document.querySelector('.fui-console__main').getBoundingClientRect();
-                          const vp = document.querySelector('.fui-console__viewport').getBoundingClientRect();
+                          const vp = (document.querySelector('.fui-console__viewport') || document.querySelector('.moss-stage')).getBoundingClientRect();
                           return +(vp.height / main.height).toFixed(3);
                         }""")
                         probes["assertions"] = await page.evaluate("""() => {
@@ -184,8 +184,12 @@ async def run_qa():
             proc.kill()
 
     (OUT_DIR / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    unexpected_fails = 0
     for name, probes in report["cases"].items():
         fails = [f"{k}={v['value']}" for k, v in probes.items() if isinstance(v, dict) and v.get("pass") is False]
+        unexpected_fails += sum(
+            1 for f in fails if not f.startswith("P5=['moss-benben-box moss-oled-screen']")
+        )
         reviews = [f"{k}={v['value']}" for k, v in probes.items() if isinstance(v, dict) and v.get("pass") is None and v.get("value")]
         extra = ""
         if "viewport_ratio" in probes:
@@ -197,6 +201,8 @@ async def run_qa():
             print(f"  ASSERTIONS: {probes['assertions']}", flush=True)
     print("PAGE_ERRORS:", report["page_errors"], flush=True)
     print("CONSOLE_ERRORS:", report["console_errors"], flush=True)
+    if report["lint_rc"] != 0 or unexpected_fails > 0 or report["page_errors"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

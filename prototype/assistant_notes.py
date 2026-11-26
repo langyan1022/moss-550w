@@ -44,9 +44,9 @@ NOTE_FOLLOWING_ACTION = re.compile(
     r"(?:删除|删掉|清空|归档|恢复|编辑|修改|保存|写入|执行|发送|发给)"
 )
 NOTE_COMPOUND_OTHER = re.compile(
-    r"[，,。；;]\s*(?:顺便|顺带|另外|再帮我|再给我|并帮我|并给我|同时帮我)\s*"
+    r"[，,。；;]\s*(?:顺便|顺带|另外|然后|接着|再帮我|再给我|并帮我|并给我|同时帮我|同时)\s*"
     r"(?:请|帮我|给我|麻烦你?\s*)*"
-    r"(?:查|看|算|计算|搜|搜索|读|打开|关|开|播|放|问|告诉|汇总|总结|定|设|提醒)"
+    r"(?:查|看|算|计算|搜|搜索|读|打开|关|开|播|放|问|告诉|汇总|总结|定|设|提醒|改|调)"
 )
 
 
@@ -122,6 +122,7 @@ def parse_bare_note_ordinal(text):
 class NoteStore:
     def __init__(self, db):
         self.db = db
+        self.last_added = None
         with db:
             db.execute("""CREATE TABLE IF NOT EXISTS assistant_notes(
                 id INTEGER PRIMARY KEY, text TEXT NOT NULL, searchable TEXT NOT NULL,
@@ -150,7 +151,9 @@ class NoteStore:
         timestamp = now()
         cursor = self.db.execute("INSERT INTO assistant_notes(text,searchable,created_at,updated_at) VALUES (?,?,?,?)",
                                  (value, normalize(value), timestamp, timestamp))
-        return self.get(cursor.lastrowid)
+        note = self.get(cursor.lastrowid)
+        self.last_added = note
+        return note
 
     def get(self, key):
         if type(key) is not int or not 0 < key <= MAX_NOTE_ID:

@@ -63,7 +63,8 @@ def _stop():
         process.kill()
         process.wait()
     finally:
-        process.stdout.close()
+        if getattr(process, "stdout", None) is not None:
+            process.stdout.close()
 
 
 def close():
@@ -180,6 +181,7 @@ def _vad_backend():
 
 
 def _worker():
+    from time import monotonic as _mono
     output = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     import sherpa_onnx
@@ -189,10 +191,70 @@ def _worker():
     vad = backend.VadOptions(threshold=0.45, min_speech_duration_ms=64, min_silence_duration_ms=160, speech_pad_ms=64)
     confirmed_vad = backend.VadOptions(threshold=0.72, min_speech_duration_ms=96, min_silence_duration_ms=96, speech_pad_ms=0)
     backend.get_vad_model()
+    stream_buffers: dict[str, tuple[bytearray, float]] = {}
+    max_pcm_bytes = SAMPLE_RATE * MAX_SECONDS * 2
     print(f"ASR VAD | {backend.__name__}", file=sys.stderr, flush=True)
     print("ready", file=output, flush=True)
     for line in sys.stdin.buffer:
-        pcm = base64.b64decode(line)
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(b"{"):
+            try:
+                cmd = json.loads(stripped.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                print('""', file=output, flush=True)
+                continue
+            op = cmd.get("op")
+            sid = str(cmd.get("session") or "default")[:64]
+            now_m = _mono()
+            stale = [k for k, (_, ts) in stream_buffers.items() if now_m - ts > 300.0]
+            for k in stale:
+                stream_buffers.pop(k, None)
+            if op == "stream_reset":
+                stream_buffers.pop(sid, None)
+                print('""', file=output, flush=True)
+                continue
+            if op == "stream_chunk":
+                try:
+                    chunk = base64.b64decode(cmd.get("b64") or "", validate=True)
+                except (ValueError, TypeError):
+                    buf_prev = stream_buffers.get(sid)
+                    print(json.dumps({"buffered_bytes": len(buf_prev[0]) if buf_prev else 0, "error": "invalid_audio_b64"}), file=output, flush=True)
+                    continue
+                if sid not in stream_buffers and len(stream_buffers) >= 16:
+                    oldest_k = min(stream_buffers.items(), key=lambda kv: kv[1][1])[0]
+                    stream_buffers.pop(oldest_k, None)
+                buf, _ = stream_buffers.get(sid, (bytearray(), now_m))
+                remain = max_pcm_bytes - len(buf)
+                if remain > 0 and chunk:
+                    buf.extend(chunk[:remain])
+                stream_buffers[sid] = (buf, now_m)
+                print(json.dumps({"buffered_bytes": len(buf)}), file=output, flush=True)
+                continue
+            if op == "stream_commit":
+                is_preview = bool(cmd.get("preview"))
+                entry = stream_buffers.get(sid) if is_preview else stream_buffers.pop(sid, None)
+                pcm = bytes(entry[0]) if entry else b""
+                if len(pcm) % 2:
+                    pcm = pcm[:-1]
+                if not pcm:
+                    print('""', file=output, flush=True)
+                    continue
+            else:
+                print('""', file=output, flush=True)
+                continue
+        else:
+            try:
+                pcm = base64.b64decode(stripped, validate=True)
+            except (ValueError, TypeError):
+                print('""', file=output, flush=True)
+                continue
+            if len(pcm) % 2:
+                pcm = pcm[:-1]
+        if len(pcm) < 2:
+            print('""', file=output, flush=True)
+            continue
         samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
         # Silero 只判定是否有人声，保留整句原始采样供识别器处理轻声和短答。
         gain = min(6.0, 0.20 / max(np.abs(samples).max(), 0.001))

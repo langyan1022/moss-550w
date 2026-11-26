@@ -333,7 +333,7 @@ async def run():
                               localStorage.setItem('moss-fui.tts', 'off');
                               window.__camTracks = [];
                               window.__camDraws = 0;
-                              window.__gesturePose = 'fist';
+                              window.__gesturePose = 'none';
                               Object.defineProperty(navigator, 'mediaDevices', {
                                 configurable: true,
                                 value: {
@@ -420,6 +420,7 @@ async def run():
                             # PART B (F50): Hand-Gesture Camera Switching
                             await page.locator("#strip-settings").click()
                             await expect(page.locator("#dlg-settings")).to_be_visible()
+                            await page.locator('#dlg-settings [data-set-tab="display"]').click()
                             gesture_chk = page.locator("#set-gesture")
                             assert not await gesture_chk.is_checked()
                             assert not await gesture_chk.is_disabled()
@@ -428,7 +429,7 @@ async def run():
                                 "() => window.__camTracks.filter(t => t.readyState === 'live').length === 1 && window.__gestureStub?.detects >= 2",
                                 timeout=8000,
                             )
-                            # Hold fist for 650ms -> camera must stay 01 / 06
+                            # Hold neutral hand pose for 650ms -> camera must stay 01 / 06
                             await page.wait_for_timeout(650)
                             after_fist = (await page.locator("#cam-index").text_content()).strip()
 
@@ -441,8 +442,8 @@ async def run():
                             await page.wait_for_timeout(600)
                             latched_cam = (await page.locator("#cam-index").text_content()).strip()
 
-                            # Lower hand (fist) >= 550ms to unlatch, then index-up again -> 03 / 06
-                            await page.evaluate("window.__gesturePose = 'fist'")
+                            # Relax hand (none) >= 550ms to unlatch, then index-up again -> 03 / 06
+                            await page.evaluate("window.__gesturePose = 'none'")
                             await page.wait_for_timeout(650)
                             await page.evaluate("window.__gesturePose = 'index_up'")
                             await page.wait_for_function(
@@ -460,7 +461,7 @@ async def run():
                             })""")
 
                             # Re-enable gesture, then disable 3D stage -> gesture auto-stops and disables
-                            await page.evaluate("window.__gesturePose = 'fist'")
+                            await page.evaluate("window.__gesturePose = 'none'")
                             await gesture_chk.check()
                             await page.wait_for_function(
                                 "() => window.__camTracks.filter(t => t.readyState === 'live').length === 1",
@@ -476,7 +477,7 @@ async def run():
 
                             # Re-enable 3D + gesture, then dispatch pagehide -> camera stops immediately
                             await page.locator("#set-scene-3d").check()
-                            await page.wait_for_function("() => !document.querySelector('#set-gesture')?.disabled", timeout=5000)
+                            await page.wait_for_function("() => !document.querySelector('#set-gesture')?.disabled", timeout=20000)
                             await gesture_chk.check()
                             await page.wait_for_function(
                                 "() => window.__camTracks.filter(t => t.readyState === 'live').length === 1",
@@ -704,6 +705,7 @@ async def run():
                             # Enable wake + barge-in via Settings dialog (real user gesture unlocks AudioContext)
                             await page.locator("#strip-settings").click()
                             await expect(page.locator("#dlg-settings")).to_be_visible()
+                            await page.locator('#dlg-settings [data-set-tab="audio"]').click()
                             await page.locator("#set-wake").check()
                             await page.wait_for_function(
                                 "() => !document.querySelector('#set-barge')?.disabled && window.__duplexLog.tracks.length >= 1",

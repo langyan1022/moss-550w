@@ -29,9 +29,11 @@ export function createCommsDrawerController({ onModeChange } = {}) {
     h: 640,
   };
 
+  let hasSaved = false;
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (saved && typeof saved === 'object') {
+      hasSaved = true;
       if (saved.mode === 'float' || saved.mode === 'drawer') state.mode = saved.mode;
       if (typeof saved.open === 'boolean') state.open = saved.open;
       if (Number.isFinite(saved.x)) state.x = saved.x;
@@ -40,6 +42,9 @@ export function createCommsDrawerController({ onModeChange } = {}) {
       if (Number.isFinite(saved.h)) state.h = Math.max(400, Math.min(880, saved.h));
     }
   } catch { /* ignore */ }
+  if (!hasSaved && typeof window !== 'undefined' && window.innerWidth <= 960) {
+    state.open = false;
+  }
 
   function save() {
     try {

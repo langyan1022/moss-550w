@@ -5,10 +5,17 @@ import json
 from pathlib import Path
 import re
 import secrets
+import socket
 
 from playwright.async_api import async_playwright
 
 from browser_lab import BrowserServer, ROOT, open_browser
+
+
+def _free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def require(ok, message):
@@ -45,7 +52,7 @@ async def new_chat(page, server):
 
 async def run(folder):
     folder.mkdir(parents=True, exist_ok=False)
-    server = BrowserServer(folder, 18226)
+    server = BrowserServer(folder, _free_port())
     code = "M-" + secrets.token_hex(4).upper()
     temp = "T-" + secrets.token_hex(4).upper()
     other = "纸舟-" + secrets.token_hex(2).upper()

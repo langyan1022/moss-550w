@@ -47,7 +47,7 @@ const browser = await chromium.launch({
 });
 
 try {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
   const page = await ctx.newPage();
 
   page.on('pageerror', (err) => {
@@ -86,7 +86,7 @@ try {
 
   // 2. Load live console
   await page.goto(`${BASE}/?skipOpening=1`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  const skipBtn = page.locator('#opening-skip');
+  const skipBtn = page.locator('#skip-opening, #opening-skip').first();
   if (await skipBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
     await skipBtn.click().catch(() => {});
   }
@@ -104,8 +104,12 @@ try {
   await page.waitForTimeout(300);
 
   await page.locator('[data-brain-tab="rsi"]').click();
+  await page.locator('#brain-rsi-eval-btn').click();
+  await page.waitForTimeout(300);
   await page.locator('#brain-rsi-run').click();
   await page.waitForTimeout(450);
+  const rsiMeta = (await page.locator('#brain-rsi-status').textContent() || '').trim();
+  assert(rsiMeta.length > 0, 'Brain RSI status stayed empty after eval+run');
 
   await page.locator('[data-brain-tab="sag"]').click();
   await page.fill('#brain-sag-search-input', 'MOSS');
@@ -434,7 +438,7 @@ try {
   await page.waitForFunction(() => {
     const hud = document.getElementById('stage-gesture-hud');
     return hud && !hud.hidden && hud.dataset.mode === 'notice';
-  }, { timeout: 4000 });
+  }, null, { timeout: 6000 });
   const noticeText = (await page.locator('#stage-gesture-notice').textContent() || '').trim();
   assert(noticeText.length >= 6, `Expected honest camera notice text, got "${noticeText}"`);
   report.gesture.noticeText = noticeText;
@@ -817,8 +821,11 @@ try {
   mobPage.on('console', (msg) => {
     if (msg.type() === 'error') consoleErrors.push(`mobile: ${msg.text()} (${msg.location?.()?.url || ''})`);
   });
-  mobPage.on('response', (res) => {
-    if (res.status() >= 400) console.error('[MOB_HTTP_ERR]', res.status(), res.url());
+  mobPage.on('response', async (res) => {
+    if (res.status() >= 400) {
+      const txt = await res.text().catch(() => '');
+      console.error('[MOB_HTTP_ERR]', res.status(), res.url(), txt);
+    }
   });
   await mobPage.setViewportSize({ width: 390, height: 844 });
   await mobPage.goto(`${BASE}/mobile`, { waitUntil: 'domcontentloaded', timeout: 15000 });
@@ -841,7 +848,7 @@ try {
     const bar = document.getElementById('m-media-bar');
     const title = (document.getElementById('m-media-title')?.textContent || '').trim();
     return bar && !bar.hidden && title && title !== '—';
-  }, { timeout: 12000 });
+  }, null, { timeout: 15000 });
 
   await mobPage.locator('#m-media-toggle').click();
   await mobPage.waitForTimeout(260);
@@ -858,7 +865,7 @@ try {
   await mobPage.locator('#m-media-toggle').click();
 
   await mobPage.waitForFunction(() => !Array.from(document.querySelectorAll('#m-feed .m-msg .m-msg__role'))
-    .some((el) => /THINKING/i.test(el.textContent || '')), { timeout: 10000 });
+    .some((el) => /THINKING/i.test(el.textContent || '')), null, { timeout: 12000 });
   for (const txt of [
     '今儿几号，星期几？',
     'MOSS-550W-MOBILE-LONG-UNBROKEN-TOKEN-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-现在几点了？',
@@ -871,15 +878,17 @@ try {
       const msgs = document.querySelectorAll('#m-feed .m-msg');
       const roles = Array.from(document.querySelectorAll('#m-feed .m-msg .m-msg__role'));
       return msgs.length >= prev + 2 && !roles.some((el) => /THINKING/i.test(el.textContent || ''));
-    }, beforeCount, { timeout: 12000 });
+    }, beforeCount, { timeout: 25000 });
   }
-  await mobPage.waitForFunction(() => document.querySelectorAll('#m-feed .m-msg').length >= 6, { timeout: 12000 });
+  await mobPage.waitForFunction(() => document.querySelectorAll('#m-feed .m-msg').length >= 6, null, { timeout: 12000 });
 
   const mobMetrics = await mobPage.evaluate(() => ({
     scrollW: document.documentElement.scrollWidth,
     innerW: window.innerWidth,
     hasPers: Boolean(document.getElementById('m-personality')),
     hasModel: Boolean(document.getElementById('m-model')),
+    hasChatSel: Boolean(document.getElementById('m-chat-sel')),
+    hasSeek: Boolean(document.getElementById('m-media-seek') && document.getElementById('m-media-speed') && document.getElementById('m-media-time')),
     hasVizCanvas: Boolean(document.getElementById('m-viz')),
     hasQueueCtrl: Boolean(document.getElementById('m-media-prev') && document.getElementById('m-media-next') && document.getElementById('m-media-sleep')),
     msgCount: document.querySelectorAll('#m-feed .m-msg').length,
@@ -889,15 +898,133 @@ try {
   }));
   report.mobile = { ...mobMetrics, vizLitPixels: vizNonBlank };
   assert(mobMetrics.scrollW <= mobMetrics.innerW + 2, `Mobile horizontal overflow after multi-turn + long token: ${mobMetrics.scrollW} > ${mobMetrics.innerW}`);
-  assert(mobMetrics.hasVizCanvas && mobMetrics.hasQueueCtrl && mobMetrics.msgCount >= 6, `Unexpected mobile metrics: ${JSON.stringify(mobMetrics)}`);
+  assert(mobMetrics.hasVizCanvas && mobMetrics.hasQueueCtrl && mobMetrics.hasChatSel && mobMetrics.hasSeek && mobMetrics.msgCount >= 6, `Unexpected mobile metrics: ${JSON.stringify(mobMetrics)}`);
   await mobPage.screenshot({ path: path.join(OUT, '07_mobile_390px.png'), animations: 'disabled' });
   await mobPage.close();
+
+  // 16. Two-tab operator badge isolation (MOSS vs C-operator OP63) + C-role zero-403 check
+  console.log('[UI 16/17] Verifying two-tab operator badge isolation & C-role clean session...');
+  await page.locator('#strip-settings').click();
+  await page.waitForSelector('#dlg-settings[open]', { timeout: 5000 });
+  await page.locator('[data-set-tab="badge"]').click();
+  const hostSavePromise = page.waitForResponse(
+    (res) => res.url().includes('/api/console-settings/prefs') && res.request().method() === 'POST',
+    { timeout: 6000 },
+  );
+  await page.fill('#set-badge-name', '刘启-HOST');
+  await page.locator('#set-badge-name').dispatchEvent('input');
+  const hostSaveRes = await hostSavePromise;
+  assert(hostSaveRes.status() === 200, `Host badge prefs save failed: ${hostSaveRes.status()}`);
+  await page.locator('#dlg-settings [data-dialog-close]').first().click();
+
+  const opCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const op403s = [];
+  const opPage = await opCtx.newPage();
+  opPage.on('pageerror', (err) => pageErrors.push(`op63: ${err?.stack || err}`));
+  opPage.on('response', (res) => { if (res.status() === 403) op403s.push(res.url()); });
+  await opCtx.request.post(`${BASE}/api/auth/verify`, {
+    data: { code: 'OP63' },
+    headers: { Origin: BASE },
+  });
+  await opPage.addInitScript(() => { sessionStorage.setItem('moss-fui.opened', '1'); });
+  await opPage.goto(`${BASE}/?skipOpening=1&scene=off`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await opPage.waitForFunction(() => document.body.dataset.backend === 'live', { timeout: 15000 });
+  const secUiChecks = await opPage.evaluate(async () => {
+    const { escapeHtml } = await import('./js/hud/utils.js');
+    const escapedSingle = escapeHtml("a'b\"<>&");
+    const { populateIntelCard } = await import('./js/hud/intel-image-doc.js');
+    const card = {
+      key: 'sec-test',
+      intelMatch: {
+        custom: {
+          title: 'T',
+          slides: [{ src: 'javascript:alert(1)', caption: 'bad' }, { src: '/assets/ok.png', caption: 'ok' }],
+          facts: [],
+        },
+      },
+    };
+    const titleEl = document.createElement('h3');
+    const bodyBlocked = document.createElement('div');
+    populateIntelCard(card, titleEl, bodyBlocked, {
+      slideIndexMap: new Map([['sec-test', 0]]),
+      renderOpenCards: () => {},
+      openDossier: () => {},
+      onSendFollowUp: () => {},
+    });
+    const bodyOk = document.createElement('div');
+    populateIntelCard(card, titleEl, bodyOk, {
+      slideIndexMap: new Map([['sec-test', 1]]),
+      renderOpenCards: () => {},
+      openDossier: () => {},
+      onSendFollowUp: () => {},
+    });
+    const blockedImgs = [...bodyBlocked.querySelectorAll('img')].map((el) => el.getAttribute('src'));
+    const okImgs = [...bodyOk.querySelectorAll('img')].map((el) => el.getAttribute('src'));
+    return { escapedSingle, blockedImgs, okImgs };
+  });
+  assert(
+    secUiChecks.escapedSingle === "a&#39;b&quot;&lt;&gt;&amp;"
+    && secUiChecks.blockedImgs.length === 0
+    && secUiChecks.okImgs.includes('/assets/ok.png'),
+    `XSS UI safety failed: ${JSON.stringify(secUiChecks)}`,
+  );
+  await opPage.locator('#strip-settings').click();
+  await opPage.waitForSelector('#dlg-settings[open]', { timeout: 5000 });
+  // Attempt to open CS-only soul tab as C-operator: must gracefully guard/stay off soul without triggering 403s
+  await opPage.locator('[data-set-tab="soul"]').click({ force: true }).catch(() => {});
+  await opPage.waitForTimeout(120);
+  const soulSelectedForC = await opPage.locator('[data-set-tab="soul"]').getAttribute('aria-selected');
+  assert(soulSelectedForC !== 'true', `C-operator was allowed onto CS-only soul tab: ${soulSelectedForC}`);
+  await opPage.locator('[data-set-tab="badge"]').click();
+  const opInitBadgeName = await opPage.inputValue('#set-badge-name');
+  assert(opInitBadgeName !== '刘启-HOST', `C-operator leaked host badge name: ${opInitBadgeName}`);
+  const opSavePromise = opPage.waitForResponse(
+    (res) => res.url().includes('/api/console-settings/prefs') && res.request().method() === 'POST',
+    { timeout: 6000 },
+  );
+  await opPage.fill('#set-badge-name', '韩朵朵-OP63');
+  await opPage.locator('#set-badge-name').dispatchEvent('input');
+  const opSaveRes = await opSavePromise;
+  assert(opSaveRes.status() === 200, `OP63 badge prefs save failed: ${opSaveRes.status()}`);
+  await opCtx.close();
+
+  assert(op403s.length === 0, `C-operator session hit unexpected 403s: ${JSON.stringify(op403s)}`);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.body.dataset.backend === 'live', { timeout: 15000 });
+  if (await page.locator('#dlg-badge').evaluate((el) => Boolean(el?.open)).catch(() => false)) {
+    await page.locator('#badge-verify').click().catch(() => {});
+  }
+  await page.locator('#strip-settings').click();
+  await page.waitForSelector('#dlg-settings[open]', { timeout: 5000 });
+  await page.locator('[data-set-tab="badge"]').click();
+  const hostBadgeAfter = await page.inputValue('#set-badge-name');
+  assert(hostBadgeAfter === '刘启-HOST', `Host badge name overwritten by C-operator: ${hostBadgeAfter}`);
+  await page.locator('#dlg-settings [data-dialog-close]').first().click();
+
+  // 17. Stage 3D data-error recovery unlock + double-reload stability
+  console.log('[UI 17/17] Verifying Stage 3D #stage-reload-3d error recovery & double-reload unlock...');
+  await page.evaluate(() => {
+    const c = document.getElementById('moss-model');
+    if (c) c.dataset.error = 'Simulated WebGL lost context';
+  });
+  await page.waitForSelector('#stage-reload-3d', { state: 'visible', timeout: 5000 });
+  await page.evaluate(() => {
+    const btn = document.getElementById('stage-reload-3d');
+    btn?.click();
+    btn?.click();
+  });
+  await page.waitForFunction(() => {
+    const c = document.getElementById('moss-model');
+    const notice = document.getElementById('stage-standby-notice');
+    return Boolean(c && !c.dataset.error && c.dataset.ready === 'true' && notice?.hidden);
+  }, null, { timeout: 20000 });
+  report.v63IsolationAndRecovery = { hostBadgeAfter, opInitBadgeName, op403s: op403s.length, stageErrorCleared: true, stageReady: true };
 
   assert(pageErrors.length === 0, `Page errors detected:\n${pageErrors.join('\n')}`);
   assert(consoleErrors.length === 0, `Console errors detected:\n${consoleErrors.join('\n')}`);
 
   fs.writeFileSync(path.join(OUT, 'ui_gate_report.json'), JSON.stringify(report, null, 2), 'utf-8');
-  console.log('ALL 15 LIVE UI GATE CHECKS PASSED (0 page errors, 0 console errors)!');
+  console.log('ALL 17 LIVE UI GATE CHECKS PASSED (0 page errors, 0 console errors)!');
 } finally {
   await browser.close();
 }

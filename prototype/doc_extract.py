@@ -28,6 +28,24 @@ SUPPORTED_DOC_EXTS = TEXT_EXTS | {".csv", ".tsv", ".docx", ".xlsx", ".pdf"}
 
 MAX_EXTRACT_CHARS = 14000
 MAX_FILE_BYTES = 15 * 1024 * 1024
+MAX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024
+MAX_PDF_STREAM_BYTES = 4 * 1024 * 1024
+
+
+def _safe_zip_read(zf: zipfile.ZipFile, member: str, max_bytes: int = MAX_ZIP_ENTRY_BYTES) -> bytes:
+    info = zf.getinfo(member)
+    if int(getattr(info, "file_size", 0) or 0) > max_bytes:
+        raise ValueError("压缩文档内节点解压体积超出安全上限。")
+    buf = bytearray()
+    with zf.open(info, "r") as stream:
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            if len(buf) + len(chunk) > max_bytes:
+                raise ValueError("压缩文档存在异常膨胀内容，已拒绝解析。")
+            buf.extend(chunk)
+    return bytes(buf)
 
 
 def _decode_bytes(raw: bytes) -> str:
@@ -63,7 +81,7 @@ def _extract_docx(raw: bytes) -> tuple[str, dict]:
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         if "word/document.xml" not in zf.namelist():
             raise ValueError("不是有效的 .docx 文档（缺少 word/document.xml）")
-        root = ET.fromstring(zf.read("word/document.xml"))
+        root = ET.fromstring(_safe_zip_read(zf, "word/document.xml"))
     w_ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     blocks = []
     para_count = 0
@@ -114,13 +132,13 @@ def _extract_xlsx(raw: bytes, *, max_sheets: int = 6, max_rows_per_sheet: int = 
         names = set(zf.namelist())
         shared: list[str] = []
         if "xl/sharedStrings.xml" in names:
-            sroot = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+            sroot = ET.fromstring(_safe_zip_read(zf, "xl/sharedStrings.xml"))
             for si in sroot:
                 if si.tag.endswith("}si") or si.tag == "si":
                     shared.append("".join(el.text or "" for el in si.iter() if el.tag.endswith("}t") or el.tag == "t"))
         sheet_labels: list[str] = []
         if "xl/workbook.xml" in names:
-            wroot = ET.fromstring(zf.read("xl/workbook.xml"))
+            wroot = ET.fromstring(_safe_zip_read(zf, "xl/workbook.xml"))
             for sh in wroot.iter():
                 if sh.tag.endswith("}sheet") or sh.tag == "sheet":
                     nm = sh.attrib.get("name")
@@ -137,7 +155,7 @@ def _extract_xlsx(raw: bytes, *, max_sheets: int = 6, max_rows_per_sheet: int = 
         total_rows = 0
         for idx, spath in enumerate(sheet_paths[:max_sheets]):
             label = sheet_labels[idx] if idx < len(sheet_labels) else f"Sheet{idx + 1}"
-            sroot = ET.fromstring(zf.read(spath))
+            sroot = ET.fromstring(_safe_zip_read(zf, spath))
             out_rows = []
             sheet_row_count = 0
             for row in sroot.iter():
@@ -215,7 +233,10 @@ def _extract_pdf(raw: bytes) -> tuple[str, dict]:
         data = blob
         if b"BT" not in blob:
             try:
-                data = zlib.decompress(blob)
+                dec = zlib.decompressobj()
+                data = dec.decompress(blob, MAX_PDF_STREAM_BYTES + 1)
+                if len(data) > MAX_PDF_STREAM_BYTES or dec.unconsumed_tail:
+                    continue
             except zlib.error:
                 continue
         if b"BT" not in data:
@@ -274,5 +295,9 @@ def extract_document_bytes(filename: str, raw: bytes, *, max_chars: int = MAX_EX
 
 
 def extract_document_path(path: Path, *, max_chars: int = MAX_EXTRACT_CHARS) -> dict:
-    raw = path.read_bytes()
+    size = path.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise ValueError(f"文件大小（{size} B）超过 15 MiB 限制")
+    with path.open("rb") as fh:
+        raw = fh.read(MAX_FILE_BYTES + 1)
     return extract_document_bytes(path.name, raw, max_chars=max_chars)

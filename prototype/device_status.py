@@ -347,3 +347,6 @@ class DeviceStatusCache:
                 self.hardware_job = asyncio.create_task(self.refresh_hardware())
             recent = self.hardware if hardware_age < HARDWARE_MAX_AGE else None
             return {**self.readings, "cpu": None, "gpu": None, "hardware_sampled_at": None, **(recent or {})}
+
+
+DEFAULT_DEVICE_CACHE = DeviceStatusCache()

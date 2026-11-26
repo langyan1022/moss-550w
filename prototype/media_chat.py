@@ -1130,13 +1130,21 @@ class MediaChat:
         async def choose_audio(items):
             tracks = [item for item in items if item.get("kind") == "audio" and item.get("source_kind") in {"local", "nas"}]
             tracks = [item for item in tracks if browser_audio_supported(item)]
+            blocked_ids = set(intent.get("_blocked_media_ids") or ())
+            fav_ids = set(intent.get("_favorite_media_ids") or ())
+            if blocked_ids and tracks:
+                non_blocked = [item for item in tracks if item.get("media_id") not in blocked_ids]
+                if non_blocked:
+                    tracks = non_blocked
             if items and not tracks:
                 return None, "当前歌单没有本页播放器支持的音轨。"
             message = "这份歌单里的歌曲目前都无法打开。"
             random_song = intent.get("random_song")
             if random_song and action == "select":
                 shuffle(tracks)
-                tracks.sort(key=lambda item: item["source_kind"] != "local")
+                tracks.sort(key=lambda item: (item.get("media_id") not in fav_ids, item["source_kind"] != "local"))
+            elif fav_ids and not intent.get("change_track"):
+                tracks.sort(key=lambda item: item.get("media_id") not in fav_ids)
             if intent.get("change_track") and context:
                 previous = context.get("browser_playback") or context.get("selected") or {}
                 if not random_song:
@@ -1331,6 +1339,12 @@ class MediaChat:
                                                 exclude_keywords=intent.get("exclude_keywords", ()),
                                                 prefer_keywords=intent.get("prefer_keywords", ()))
             items = found["items"]
+            blocked_ids = set(intent.get("_blocked_media_ids") or ())
+            fav_ids = set(intent.get("_favorite_media_ids") or ())
+            if blocked_ids and items:
+                items = [it for it in items if it.get("media_id") not in blocked_ids]
+            if fav_ids and items and not intent.get("change_track"):
+                items = sorted(items, key=lambda it: it.get("media_id") not in fav_ids)
             data = {**data, "items": items, "query": query, "online_calls": found["online_calls"],
                     "consulted_sources": found.get("consulted_sources", []), "autoplay": False, "selected": None}
             problems = found["unavailable_sources"]

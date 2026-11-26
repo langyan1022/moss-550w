@@ -1,16 +1,19 @@
 import asyncio
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 import hashlib
 import json
 from pathlib import Path
 import re
 import sys
+from typing import Literal
 import unicodedata
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mcp_media import run_media_mcp
-from mcp_stdio import ROOT, connect_stdio
+from mcp_modern import ACTIVE_MCP_PROGRESS, make_elicitation_callback, mask_headers
+from mcp_stdio import ROOT, connect_stdio, connect_streamable_http, validate_mcp_http_url
 
 
 MCP_DATA = ContextVar("mcp_data", default=None)
@@ -51,14 +54,31 @@ class NaturalRequest(BaseModel):
 
 class ServerSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    command: str
+    transport: Literal["stdio", "streamable_http"] = "stdio"
+    command: str | None = None
     args: list[str] = Field(default_factory=list, max_length=32)
+    url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict, max_length=16)
+    allow_remote: bool = False
+    elicitation_mode: Literal["prompt", "auto", "deny"] = "prompt"
+    read_only_only: bool = True
     tools: dict[str, str] = Field(min_length=1, max_length=24)
     cwd: str | None = None
     server_name: str | None = None
-    timeout_seconds: float = Field(default=9.0, ge=.1, le=45)
+    timeout_seconds: float = Field(default=9.0, ge=.1, le=60)
     natural: list[NaturalRequest] | None = Field(default=None, max_length=16)
     model_match: bool | None = None
+
+    @model_validator(mode="after")
+    def _validate_transport_target(self):
+        if self.transport == "stdio":
+            if not isinstance(self.command, str) or not self.command.strip():
+                raise ValueError("stdio MCP 服务必须指定本机 command")
+        else:
+            if not isinstance(self.url, str) or not self.url.strip():
+                raise ValueError("streamable_http MCP 服务必须指定合法的 url")
+            validate_mcp_http_url(self.url, allow_remote=bool(self.allow_remote))
+        return self
 
 
 def read_servers():
@@ -208,17 +228,126 @@ def local_path(value):
     return resolved
 
 
-async def readonly_tools(session, names):
+async def readonly_tools(session, names, *, read_only_only=True):
     tools = set()
     cursor = None
     for _ in range(16):
         page = await session.list_tools(cursor=cursor)
-        tools.update(tool.name for tool in page.tools if tool.name in names and tool.annotations
-                     and tool.annotations.readOnlyHint is True and tool.annotations.destructiveHint is not True)
+        for tool in page.tools:
+            if tool.name not in names:
+                continue
+            if not read_only_only:
+                if not (tool.annotations and tool.annotations.destructiveHint is True):
+                    tools.add(tool.name)
+                continue
+            if tool.annotations and tool.annotations.readOnlyHint is True and tool.annotations.destructiveHint is not True:
+                tools.add(tool.name)
         cursor = page.nextCursor
         if cursor is None:
             return tools
     raise ValueError("MCP 工具列表页数超出限制")
+
+
+@asynccontextmanager
+async def open_server_session(name, settings):
+    elicit_cb = make_elicitation_callback(
+        name,
+        mode=settings.elicitation_mode,
+        timeout=max(float(settings.timeout_seconds), 20.0),
+    )
+    if settings.transport == "streamable_http":
+        async with connect_streamable_http(
+            settings.url,
+            headers=settings.headers,
+            timeout=settings.timeout_seconds,
+            expected_name=settings.server_name,
+            allow_remote=bool(settings.allow_remote),
+            elicitation_callback=elicit_cb,
+        ) as session:
+            yield session
+        return
+    command = local_path(sys.executable if settings.command == "project-python" else settings.command)
+    cwd = local_path(settings.cwd) if settings.cwd else ROOT
+    if command.suffix.lower() != ".exe" or not command.is_file() or not cwd.is_dir():
+        raise ValueError("MCP 命令或工作目录不存在")
+    async with connect_stdio(
+        str(command),
+        settings.args,
+        cwd=cwd,
+        timeout=settings.timeout_seconds,
+        expected_name=settings.server_name,
+        elicitation_callback=elicit_cb,
+    ) as session:
+        yield session
+
+
+def public_servers():
+    servers = read_servers()
+    out = []
+    for name, raw in servers.items():
+        entry = dict(raw) if isinstance(raw, dict) else {}
+        if "headers" in entry and isinstance(entry["headers"], dict):
+            entry["headers"] = mask_headers(entry["headers"])
+        out.append({"name": name, "transport": entry.get("transport", "stdio"), **entry})
+    return out
+
+
+def _write_servers(servers: dict):
+    folder = MCP_DATA.get()
+    if folder is None:
+        raise ValueError("MCP 数据目录未就绪")
+    folder.mkdir(parents=True, exist_ok=True)
+    file = folder / "mcp-servers.json"
+    payload = json.dumps({"servers": servers}, ensure_ascii=False, indent=2) + "\n"
+    if len(payload.encode("utf-8")) > 32768:
+        raise ValueError("MCP 服务配置超出大小限制")
+    tmp = folder / "mcp-servers.tmp"
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(file)
+
+
+def upsert_server(name: str, raw: dict):
+    if not isinstance(name, str) or not re.fullmatch(NAME, name):
+        raise ValueError("MCP 服务名无效")
+    settings = ServerSettings.model_validate(raw)
+    if any(not re.fullmatch(NAME, key) or not re.fullmatch(NAME, alias) for key, alias in settings.tools.items()):
+        raise ValueError("MCP 工具名称无效")
+    servers = read_servers()
+    if name not in servers and len(servers) >= 16:
+        raise ValueError("最多配置 16 个 MCP 服务")
+    servers[name] = settings.model_dump(exclude_none=True)
+    _write_servers(servers)
+    return public_servers()
+
+
+def delete_server(name: str) -> bool:
+    servers = read_servers()
+    if name not in servers:
+        return False
+    servers.pop(name, None)
+    _write_servers(servers)
+    return True
+
+
+async def probe_server(name: str) -> dict:
+    servers = read_servers()
+    if name not in servers:
+        raise ValueError(f"未找到名为「{name}」的 MCP 服务")
+    settings = ServerSettings.model_validate(servers[name])
+    async with open_server_session(name, settings) as session:
+        listed = await session.list_tools()
+        allowed = await readonly_tools(session, settings.tools, read_only_only=settings.read_only_only)
+        tools_info = [
+            {
+                "name": t.name,
+                "label": settings.tools.get(t.name, t.name),
+                "allowed": t.name in allowed,
+                "description": (t.description or "")[:160],
+                "readOnlyHint": bool(t.annotations and t.annotations.readOnlyHint is True),
+            }
+            for t in listed.tools
+        ]
+    return {"name": name, "transport": settings.transport, "ok": True, "tools": tools_info}
 
 
 def result_text(response, natural=False):
@@ -318,10 +447,11 @@ async def run_server(name, raw, intent, metadata=None):
         settings = ServerSettings.model_validate(raw)
         if any(not re.fullmatch(NAME, key) or not re.fullmatch(NAME, alias) for key, alias in settings.tools.items()):
             raise ValueError("MCP 工具名称无效")
-        command = local_path(sys.executable if settings.command == "project-python" else settings.command)
-        cwd = local_path(settings.cwd) if settings.cwd else ROOT
-        if command.suffix.lower() != ".exe" or not command.is_file() or not cwd.is_dir():
-            raise ValueError("MCP 命令或工作目录不存在")
+        if settings.transport == "stdio":
+            command = local_path(sys.executable if settings.command == "project-python" else settings.command)
+            cwd = local_path(settings.cwd) if settings.cwd else ROOT
+            if command.suffix.lower() != ".exe" or not command.is_file() or not cwd.is_dir():
+                raise ValueError("MCP 命令或工作目录不存在")
     except (OSError, ValueError):
         return f"「{name}」的本机 MCP 配置无效。请核对命令和工具清单。"
 
@@ -337,21 +467,37 @@ async def run_server(name, raw, intent, metadata=None):
         except ValueError:
             return "MCP 工具参数需要使用 JSON 对象，例如 {\"zone\": \"UTC\"}。"
 
+    registry = ACTIVE_MCP_PROGRESS.get()
+    task_id = None
     try:
-        async with connect_stdio(str(command), settings.args, cwd=cwd, timeout=settings.timeout_seconds,
-                                 expected_name=settings.server_name) as session:
-            allowed = await readonly_tools(session, settings.tools)
+        async with open_server_session(name, settings) as session:
+            allowed = await readonly_tools(session, settings.tools, read_only_only=settings.read_only_only)
+            tool_kind = "只读工具" if settings.read_only_only else "已授权工具"
             if mode == "tools":
                 labels = [f"{alias}（{key}）" for key, alias in settings.tools.items() if key in allowed]
-                return "\n".join([f"「{name}」已连接 · {len(labels)} 个只读工具", *labels])
+                return "\n".join([f"「{name}」已连接 · {len(labels)} 个{tool_kind}", *labels])
             if tool not in allowed:
-                return f"「{name}」没有提供这个只读工具。"
-            result = await session.call_tool(tool, args)
+                return f"「{name}」没有提供这个{tool_kind}。"
+            progress_cb = None
+            if registry is not None:
+                task_id = registry.start(name, tool)
+
+                async def _on_progress(progress: float, total: float | None, message: str | None = None):
+                    registry.update(task_id, progress, total, message)
+
+                progress_cb = _on_progress
+            result = await session.call_tool(tool, args, progress_callback=progress_cb)
+            if registry is not None and task_id is not None:
+                registry.finish(task_id, status="error" if result.isError else "completed")
             content = result_text(result, natural=intent.get("natural", False))
         if not result.isError and metadata is not None:
             metadata["mcp_receipt"] = receipt_key(name, tool, args)
         return content if intent.get("natural") else f"MCP {name} · {settings.tools[tool]}\n{content}"
     except TimeoutError:
+        if registry is not None and task_id is not None:
+            registry.finish(task_id, status="timeout", message="到达调用时限")
         return f"「{name}」未在 {settings.timeout_seconds:g} 秒内返回。可以稍后重试。"
-    except (OSError, ValueError, RuntimeError, ExceptionGroup):
-        return f"「{name}」本机 MCP 未能完成这次请求。"
+    except (OSError, ValueError, RuntimeError, ExceptionGroup) as exc:
+        if registry is not None and task_id is not None:
+            registry.finish(task_id, status="error", message=str(exc)[:180])
+        return f"「{name}」MCP 未能完成这次请求。"

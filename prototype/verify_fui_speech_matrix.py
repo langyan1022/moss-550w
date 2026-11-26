@@ -190,7 +190,7 @@ async def run_unit_suite(out_dir: Path, tag: str):
             self._used_worker = False
             self._session_warm_ready = False
 
-        async def _worker_reply(self, req, cancel, disconnected, timeout):
+        async def _worker_reply(self, req, cancel, disconnected, timeout, cancel_event=None):
             self.requests.append(dict(req))
             if req.get("prepare"):
                 if self.prime_delay:
@@ -325,6 +325,7 @@ async def run_unit_suite(out_dir: Path, tag: str):
                     # Open settings and check #set-voice-resident toggle + status text
                     await page.locator("#strip-settings").click()
                     await expect(page.locator("#dlg-settings")).to_have_attribute("open", "")
+                    await page.locator('#dlg-settings [data-set-tab="audio"]').click()
                     assert await page.locator("#set-voice-resident").is_checked()
                     status_ready = (await page.locator("#set-voice-resident-status").text_content() or "").strip()
                     assert "就绪" in status_ready or "ready" in status_ready.lower(), status_ready

@@ -61,6 +61,17 @@ class VadOptions:
     speech_pad_ms: int = 400
 
 
+def suggest_silence_ms(complete_prob: float | None, *, base_ms: int = 1550) -> int:
+    """Adapt acoustic silence timeout using semantic turn-completion probability."""
+    if complete_prob is None:
+        return base_ms
+    if complete_prob >= 0.55:
+        return 420
+    if complete_prob >= 0.42:
+        return 850
+    return 2200
+
+
 def get_speech_timestamps(
     audio: np.ndarray,
     vad_options: Optional[VadOptions] = None,

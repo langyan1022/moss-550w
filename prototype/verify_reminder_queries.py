@@ -369,7 +369,7 @@ async def calendar_cases(server, message, create, report):
     assert await records() == {weekday:{**first, "due_at":friday.timestamp()}}
     assert f"{weekday} 号 ·" not in await message("下周三的提醒", chat)
     date_key = await create(f"{saturday:%Y-%m-%d} 14:35提醒我签收日历测试件", chat)
-    upper_key = await create(f"{outside:%Y年%m月%d日}上午十点提醒我查下一周", chat)
+    upper_key = await create(f"{outside.year:04d}年{outside.month:02d}月{outside.day:02d}日上午十点提醒我查下一周", chat)
     assert (await records())[date_key]["due_at"] == saturday.timestamp()
     assert (await records())[upper_key]["due_at"] == outside.timestamp()
     result = await message("下周有哪些提醒？", chat)

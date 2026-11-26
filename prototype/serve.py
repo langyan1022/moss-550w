@@ -14,7 +14,7 @@ import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from time import perf_counter
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 import aiohttp
 from aiohttp import web
@@ -27,7 +27,7 @@ import win32job
 from assistant_notes import NoteConflict, NoteUpdate, NoteWrite
 from core import Moss, WINDOW_IMAGE_PROVIDER
 from context_tools import MAX_CAPTURE_BYTES, recognize_capture
-from device_status import DeviceStatusCache
+from device_status import DEFAULT_DEVICE_CACHE
 from jev_handoff import DRAFT_HANDOFF_ENABLED
 from mcp_configured import MCP_DATA
 from runtime_log import BackendLogHub, RuntimeLog
@@ -38,9 +38,10 @@ from weather_current import CurrentWeatherCache
 from weather_location import browser_position
 from city_catalog import city_catalog, selected_city
 from window_image import IMAGE_MAX_JSON, prepare_window_image
-from doc_extract import IMAGE_EXTS, extract_document_bytes
 from brain_iot_routes import install_brain_iot_routes
+from chat_attachment_routes import install_chat_attachment_routes
 from online_music_routes import install_online_music_routes
+from runtime_loops import install_runtime_loops
 
 
 ROOT = Path(__file__).resolve().parent
@@ -64,20 +65,37 @@ async def engine_process(port, log_dir, backend, *, vulkan_device=None):
     model = "moss-chat-qwen35-4b"
     slots = log_dir / "slots"
     slots.mkdir(exist_ok=True)
+    ctx_size = max(4096, int(os.environ.get("MOSS_LOCAL_CTX_SIZE", "16384") or 16384))
+    cache_ram = max(0, int(os.environ.get("MOSS_LOCAL_CACHE_RAM", "1024") or 1024))
+    cache_reuse = max(0, int(os.environ.get("MOSS_LOCAL_CACHE_REUSE", "512") or 512))
+    kv_type = os.environ.get("MOSS_LOCAL_KV_TYPE", "q8_0").strip() or "q8_0"
+    spec_type = os.environ.get("MOSS_LOCAL_SPEC_TYPE", "ngram-cache").strip() or "none"
+    draft_model = os.environ.get("MOSS_LOCAL_DRAFT_MODEL", "").strip()
+    slot_file = "moss_slot0.bin"
     if type(backend) is bool:
         backend = "cuda" if backend else "cpu"
     executable = QWEN_ENGINES[backend]
     if not executable.is_file():
         raise FileNotFoundError(f"找不到本机 Qwen 的 {backend} 后端。")
     cmd = [str(executable), "-m", str(WEIGHTS), "--alias", model, "--host", "127.0.0.1",
-           "--port", str(port), "--parallel", "1", "--ctx-size", "4096",
+           "--port", str(port), "--parallel", "1", "--ctx-size", str(ctx_size),
            "--threads", "8", "--threads-batch", "8", "--reasoning", "off", "--jinja",
-           "--cache-prompt", "--cache-ram", "0", "--slot-save-path", str(slots)]
+           "--cache-prompt", "--cache-ram", str(cache_ram), "--slot-save-path", str(slots)]
+    if cache_reuse > 0:
+        cmd.extend(["--cache-reuse", str(cache_reuse)])
+    if spec_type and spec_type.lower() != "none":
+        cmd.extend(["--spec-type", spec_type])
+    if draft_model and Path(draft_model).is_file():
+        cmd.extend(["-md", draft_model])
     device = None
     if backend != "cpu":
         device = "CUDA0" if backend == "cuda" else vulkan_device or "Vulkan0"
-        cmd.extend(["--device", device, "--fit", "on", "--fit-target", "1024",
-                    "--sleep-idle-seconds", "90", "--verbosity", "4"])
+        cmd.extend([
+            "--device", device,
+            "-fa", "on", "-ctk", kv_type, "-ctv", kv_type,
+            "--fit", "on", "--fit-target", "1024",
+            "--sleep-idle-seconds", "90", "--verbosity", "4",
+        ])
     else:
         cmd.extend(["--n-gpu-layers", "0"])
     # 主进程被强制退出时，Windows 同时释放专用推理进程。
@@ -119,9 +137,23 @@ async def engine_process(port, log_dir, backend, *, vulkan_device=None):
                 device_log = re.search(rb"\busing device\s+" + re.escape(device.encode("ascii")) + rb"(?=\s|\()", startup_log)
                 if not device_log or not layers or int(layers[1]) < 1:
                     raise RuntimeError(f"Qwen 日志未确认 {device} 已加载模型层，详见 {log_path}。")
+            if (slots / slot_file).is_file():
+                try:
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2)) as sc:
+                        async with sc.post(url + "/slots/0?action=restore", json={"filename": slot_file}) as resp:
+                            await resp.read()
+                except Exception:
+                    pass
             yield url + "/v1", model, backend
         finally:
             try:
+                if proc is not None and proc.poll() is None:
+                    try:
+                        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1.2)) as sc:
+                            async with sc.post(url + "/slots/0?action=save", json={"filename": slot_file}) as resp:
+                                await resp.read()
+                    except Exception:
+                        pass
                 if proc is not None:
                     if proc.poll() is None:
                         proc.terminate()
@@ -140,7 +172,7 @@ async def engine(port, log_dir, *, backend="auto", vulkan_device=None, allow_cpu
         for candidate in candidates:
             try:
                 ready = await stack.enter_async_context(engine_process(port, log_dir, candidate, vulkan_device=vulkan_device))
-            except (OSError, RuntimeError, TimeoutError) as exc:
+            except (OSError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as exc:
                 if candidate == candidates[-1]:
                     raise RuntimeError(f"本机 Qwen 未能使用 {candidate} 启动。详见 {log_dir / 'qwen.log'}，或在设置中使用 DeepSeek。") from exc
             else:
@@ -223,10 +255,11 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                 default_session_warm="0", fui_public=None, lan_hosts=(), tls_port=0):
     voice = LocalVoice()
     speech = MossSpeech(data, idle_seconds=speech_idle_seconds, standby_seconds=speech_standby_seconds)
-    device_status = DeviceStatusCache()
+    device_status = DEFAULT_DEVICE_CACHE
     current_weather = CurrentWeatherCache()
     handoffs = moss.jev_handoffs
-    subscribers = set()
+    runtime_subscribers = set()
+    subscribers_by_owner: dict[str, set[asyncio.Event]] = {}
     backend_log = BackendLogHub(data)
     moss.rsi.on_event = backend_log.emit
     moss.sag.on_event = backend_log.emit
@@ -239,175 +272,9 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
     listen_summary = ", ".join(["127.0.0.1", *lan_host_list])
     backend_log.emit(f"MOSS 550W backend listening {listen_summary}:{port} model={moss.model_id}", source="SYS", level="ok")
     wake = BrowserWake(token)
-    log_tail_task = None
-    pulse_task = None
     last_dev_log = [0.0]
     last_auto_dream = [0.0]
     boot_monotonic = perf_counter()
-
-    async def tail_logs_loop():
-        slot = 0
-        last_pulse = 0.0
-        last_hw_refresh = 0.0
-        cached_hw = None
-        try:
-            while not stopped.is_set():
-                if backend_log.subscribers:
-                    backend_log.poll_files()
-                    now_t = perf_counter()
-                    if now_t - last_hw_refresh >= 3.6 or cached_hw is None:
-                        last_hw_refresh = now_t
-                        try:
-                            cached_hw = await device_status.read()
-                        except Exception:
-                            pass
-                    if now_t - last_pulse >= 1.1:
-                        last_pulse = now_t
-                        hw = cached_hw or {}
-                        up_s = int(max(0.0, now_t - boot_monotonic))
-                        hh, rem = divmod(up_s, 3600)
-                        mm, ss = divmod(rem, 60)
-                        if slot == 0:
-                            cpu_p = hw.get("cpu_percent")
-                            cpu_t = (hw.get("cpu") or {}).get("temperature_c")
-                            gpu = hw.get("gpu") or {}
-                            gpu_p = gpu.get("percent")
-                            gpu_t = gpu.get("temperature_c")
-                            c_str = f"CPU {cpu_p:.0f}%" if isinstance(cpu_p, (int, float)) else "CPU --"
-                            if isinstance(cpu_t, (int, float)):
-                                c_str += f"/{cpu_t:.0f}C"
-                            g_str = f"GPU {gpu_p:.0f}%" if isinstance(gpu_p, (int, float)) else "GPU --"
-                            if isinstance(gpu_t, (int, float)):
-                                g_str += f"/{gpu_t:.0f}C"
-                            lvl = "warn" if (isinstance(cpu_t, (int, float)) and cpu_t >= 82) or (isinstance(gpu_t, (int, float)) and gpu_t >= 82) else "info"
-                            backend_log.emit(f"BUS·THERM | {c_str} · {g_str} · LINK OK", source="DEV", level=lvl, write_file=False)
-                        elif slot == 1:
-                            mem = hw.get("memory") or {}
-                            disk = hw.get("disk") or {}
-                            bat = hw.get("battery") or {}
-                            r_str = (f"RAM {mem['available']/(1024**3):.1f}/{mem['total']/(1024**3):.0f}G"
-                                     if mem.get("available") is not None and mem.get("total") else "RAM --")
-                            d_str = (f"DISK {disk.get('drive','C:')} {disk['free']/(1024**3):.0f}G FREE"
-                                     if disk.get("free") is not None else "DISK --")
-                            p_str = "PWR AC" if bat.get("ac") or bat.get("present") is False else f"BAT {bat.get('percent', 0):.0f}%"
-                            backend_log.emit(f"BUS·MEMIO | {r_str} · {d_str} · {p_str}", source="DEV", level="info", write_file=False)
-                        elif slot == 2:
-                            phase = "THINKING" if moss._has_active_turn() else "STANDBY"
-                            try:
-                                row_c = moss.db.execute("SELECT COUNT(*) FROM turns WHERE chat_id=?", (moss.chat_id,)).fetchone()
-                                turns_n = int(row_c[0]) if row_c else 0
-                            except Exception:
-                                turns_n = 0
-                            backend_log.emit(
-                                f"CORE·550W | {moss.model_name} [{phase}] · T={turns_n:02d} · SSE={len(backend_log.subscribers)} · UP {hh:02d}:{mm:02d}:{ss:02d}",
-                                source="CORE", level="ok" if phase == "THINKING" else "info", write_file=False,
-                            )
-                        else:
-                            try:
-                                sag_s = moss.sag.status_snapshot()
-                                rsi_s = moss.rsi.status_snapshot()
-                                ha_live = bool(moss.iot.config.get("ha_enabled") and (moss.iot.config.get("ha_url") or moss.iot.config.get("ha_base_url")) and moss.iot.config.get("ha_token"))
-                                ha_mode = "LIVE" if ha_live else "DRY"
-                                hw_seq = int(getattr(moss.iot, "hw_seq", 0))
-                                backend_log.emit(
-                                    f"MATX·BRAIN | SAG {sag_s['event_count']}N/{sag_s['entity_count']}E · RSI {rsi_s['active_count']}R · HA:{ha_mode} · HW#{hw_seq:03d}",
-                                    source="BRAIN", level="info", write_file=False,
-                                )
-                            except Exception:
-                                pass
-                        slot = (slot + 1) % 4
-                moss.jobs.poll_watchers()
-                await asyncio.sleep(0.45)
-        except asyncio.CancelledError:
-            pass
-
-    async def proactive_heartbeat_loop():
-        try:
-            while not stopped.is_set():
-                await asyncio.sleep(30.0)
-                if stopped.is_set():
-                    break
-                busy = moss._has_active_turn()
-                if not busy:
-                    try:
-                        dev_sample = await device_status.read() if (subscribers or backend_log.subscribers) else None
-                    except Exception:
-                        dev_sample = None
-                    if moss.pulse.config.get("enabled"):
-                        moss.pulse.evaluate_tick(device_sample=dev_sample, is_busy=busy)
-                    # v5.5: Evaluate due recurring tasks / daily briefings independently of ad-hoc nudge toggle
-                    for rtask in moss.routines.pop_due_tasks():
-                        try:
-                            kind = rtask.get("action_kind")
-                            if kind == "briefing":
-                                wm_snap = moss.consolidator.latest_snapshot()
-                                brief = moss.pulse.generate_briefing(
-                                    device_sample=dev_sample,
-                                    timers_count=len(moss.timers.snapshot()),
-                                    notes_count=len((moss.notes.page("", archived=False, before=0, limit=50)).get("items") or []),
-                                    rsi_active=moss.rsi.status_snapshot()["active_count"],
-                                    sag_events=moss.sag.status_snapshot()["event_count"],
-                                    world_model=(wm_snap or {}).get("world_model"),
-                                )
-                                moss.pulse._emit_alert(
-                                    kind="routine_briefing",
-                                    level="info",
-                                    title=f"例行早报 · {rtask['name']}",
-                                    body=brief["text"],
-                                    dedup_key=f"routine:{rtask['id']}",
-                                    cooldown_sec=540.0,
-                                    bypass_budget=True,
-                                )
-                            elif kind == "dream":
-                                res = moss.consolidator.run_consolidation(trigger="routine")
-                                moss.pulse._emit_alert(
-                                    kind="routine_dream",
-                                    level="info",
-                                    title=f"定期深度整理 · {rtask['name']}",
-                                    body=res["summary"],
-                                    dedup_key=f"routine:{rtask['id']}",
-                                    cooldown_sec=540.0,
-                                    bypass_budget=True,
-                                )
-                            else:
-                                moss.pulse._emit_alert(
-                                    kind="routine",
-                                    level="info",
-                                    title=f"例行任务 · {rtask['name']}",
-                                    body=rtask.get("payload") or rtask["name"],
-                                    dedup_key=f"routine:{rtask['id']}",
-                                    cooldown_sec=540.0,
-                                    bypass_budget=True,
-                                )
-                        except Exception as exc:
-                            backend_log.emit(f"Routine dispatch error ({rtask.get('id')}): {exc}", source="PULSE", level="warn", write_file=False)
-                    if not moss.pulse.config.get("enabled"):
-                        continue
-                    # Sleep-time consolidation when idle >= 15 min (max once per hour)
-                    idle_sec = perf_counter() - getattr(moss, "_last_activity", perf_counter())
-                    now_t = perf_counter()
-                    if idle_sec >= 900 and (last_auto_dream[0] == 0.0 or now_t - last_auto_dream[0] >= 3600):
-                        last_auto_dream[0] = now_t
-                        try:
-                            moss.consolidator.run_consolidation(trigger="idle_sleep")
-                        except Exception:
-                            pass
-        except asyncio.CancelledError:
-            pass
-
-    async def start_log_tail(app):
-        nonlocal log_tail_task, pulse_task
-        log_tail_task = asyncio.create_task(tail_logs_loop())
-        pulse_task = asyncio.create_task(proactive_heartbeat_loop())
-
-    async def stop_log_tail(app):
-        for tsk in (log_tail_task, pulse_task):
-            if tsk is not None:
-                tsk.cancel()
-                try:
-                    await tsk
-                except asyncio.CancelledError:
-                    pass
     accepted_hosts = {f"127.0.0.1:{port}", f"localhost:{port}", *(f"{h}:{port}" for h in lan_host_list)}
     if tls_port:
         accepted_hosts.update({f"127.0.0.1:{tls_port}", f"localhost:{tls_port}", *(f"{h}:{tls_port}" for h in lan_host_list)})
@@ -421,12 +288,23 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
     def can_warm_microphone():
         return moss.model_id != "local" and local_engine() == "standby"
 
-    def changed():
+    def changed_owner(owner_code=None):
         runtime.capture()
-        for signal in subscribers:
+        for signal in tuple(runtime_subscribers):
             signal.set()
+        if owner_code:
+            for signal in tuple(subscribers_by_owner.get(owner_code, ())):
+                signal.set()
+        else:
+            for group in list(subscribers_by_owner.values()):
+                for signal in tuple(group):
+                    signal.set()
+
+    def changed():
+        changed_owner(None)
 
     moss.on_change = changed
+    moss.on_owner_change = changed_owner
 
     def _req_owner(request):
         ident = request.get("moss_identity")
@@ -449,7 +327,13 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
     _GZIP_MIME = {"application/json", "text/plain", "text/markdown", "text/html",
                   "application/javascript", "text/javascript", "text/css", "image/svg+xml"}
 
-    def _cached_gzip_file(file_path: Path):
+    def _build_gzip_entry(file_path: Path, mtime_ns: int, size: int):
+        gz = gzip.compress(file_path.read_bytes(), compresslevel=6)
+        etag = f'"{mtime_ns:x}-{size:x}-gz"'
+        ctype = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        return (gz, etag, ctype)
+
+    async def _cached_gzip_file(file_path: Path):
         st = file_path.stat()
         if st.st_size < 4096:
             return None
@@ -458,14 +342,42 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         if hit is not None:
             _gzip_static_cache.move_to_end(key)
             return hit
-        gz = gzip.compress(file_path.read_bytes(), compresslevel=6)
-        etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}-gz"'
-        ctype = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-        entry = (gz, etag, ctype)
+        entry = await asyncio.to_thread(_build_gzip_entry, file_path, st.st_mtime_ns, st.st_size)
         _gzip_static_cache[key] = entry
         while len(_gzip_static_cache) > _GZIP_CACHE_LIMIT:
             _gzip_static_cache.popitem(last=False)
         return entry
+
+    ADMIN_GET_PATHS = frozenset({
+        "/api/online-music/config", "/api/console-settings/providers",
+        "/api/console-settings/library", "/api/iot/config",
+        "/api/notes", "/api/sag", "/api/soul", "/api/soul/export",
+        "/api/rsi", "/api/jobs", "/api/watchers", "/api/routines",
+        "/api/ha/entities", "/api/music/prefs", "/api/skills",
+        "/api/hardware/moss/stream", "/api/runtime-log/source",
+        "/api/online-music/browse", "/api/mcp/servers", "/api/mcp/elicitations", "/api/mcp/progress",
+        "/api/desktop/uia",
+    })
+    ADMIN_WRITE_PATHS = frozenset({
+        "/api/select-model", "/api/console-settings/providers", "/api/console-settings/library",
+        "/api/online-music/config", "/api/online-music/ping", "/api/online-music/scrobble",
+        "/api/music/prefs",
+        "/api/iot/config", "/api/iot/ha-mcp-discover", "/api/ha/service",
+        "/api/hardware/moss/command", "/api/hardware/moss/telemetry", "/api/hardware/moss/audio",
+        "/api/proactive/config", "/api/proactive/briefing",
+        "/api/watchers", "/api/skills", "/api/sag/ingest", "/api/sag/query", "/api/sag/invalidate",
+        "/api/jobs", "/api/rsi/iterate", "/api/rsi/eval",
+        "/api/brain/consolidate", "/api/soul/profile", "/api/soul/beliefs",
+        "/api/soul/distill", "/api/routines", "/api/auth/config", "/api/auth/users",
+        "/api/shutdown", "/api/approve", "/api/timer-dismiss", "/api/notes",
+        "/api/context/ocr", "/api/context/jev-handoff", "/api/context/vision-to-sag", "/api/prepare-speech",
+        "/api/mcp/servers", "/api/mcp/test",
+    })
+    ADMIN_WRITE_PREFIXES = (
+        "/api/watchers/", "/api/rsi/lessons/", "/api/skills/", "/api/auth/users/",
+        "/api/soul/profile/", "/api/soul/beliefs/", "/api/routines/", "/api/proactive/alerts/",
+        "/api/notes/", "/api/mcp/servers/", "/api/mcp/elicitations/",
+    )
 
     @web.middleware
     async def local_requests(request, handler):
@@ -493,26 +405,9 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             is_cs = ident.get("role") == "CS"
             if not is_cs:
                 p = request.path
-                admin_get_blocked = (
-                    request.method == "GET"
-                    and p in {"/api/online-music/config", "/api/console-settings/providers", "/api/console-settings/library", "/api/iot/config"}
-                )
+                admin_get_blocked = request.method == "GET" and p in ADMIN_GET_PATHS
                 admin_write_blocked = request.method in {"POST", "DELETE", "PUT"} and (
-                    p in {
-                        "/api/select-model", "/api/console-settings/providers", "/api/console-settings/library",
-                        "/api/online-music/config", "/api/online-music/ping",
-                        "/api/iot/config", "/api/ha/service", "/api/hardware/moss/command",
-                        "/api/hardware/moss/telemetry", "/api/proactive/config", "/api/watchers",
-                        "/api/skills", "/api/sag/ingest", "/api/jobs", "/api/rsi/iterate",
-                        "/api/brain/consolidate", "/api/soul/profile", "/api/soul/beliefs",
-                        "/api/soul/distill", "/api/routines", "/api/auth/config", "/api/auth/users",
-                        "/api/shutdown", "/api/approve", "/api/context/jev-handoff",
-                        "/api/context/vision-to-sag", "/api/prepare-speech",
-                    }
-                    or p.startswith((
-                        "/api/watchers/", "/api/rsi/lessons/", "/api/skills/", "/api/auth/users/",
-                        "/api/soul/profile/", "/api/soul/beliefs/", "/api/routines/", "/api/proactive/alerts/",
-                    ))
+                    p in ADMIN_WRITE_PATHS or p.startswith(ADMIN_WRITE_PREFIXES)
                 )
                 if admin_get_blocked or admin_write_blocked:
                     return web.json_response(
@@ -520,7 +415,13 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                          "required_role": "CS", "role": ident.get("role", "C")},
                         status=403, headers={"Cache-Control": "no-store"},
                     )
-        expected_type = {"/api/transcribe": "audio/wav", "/api/context/ocr": "image/png"}.get(request.path, "application/json")
+        expected_type = {
+            "/api/transcribe": "audio/wav",
+            "/api/transcribe/stream/chunk": "application/octet-stream",
+            "/api/transcribe/turn-check": "application/octet-stream",
+            "/api/hardware/moss/audio": "application/octet-stream",
+            "/api/context/ocr": "image/png",
+        }.get(request.path, "application/json")
         if request.method == "POST" and request.content_type != expected_type:
             raise web.HTTPUnsupportedMediaType()
         started = perf_counter()
@@ -549,7 +450,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             if isinstance(response, web.FileResponse) and path.endswith(_GZIP_EXTS):
                 fpath = getattr(response, "_path", None)
                 if isinstance(fpath, Path) and fpath.is_file():
-                    cached = _cached_gzip_file(fpath)
+                    cached = await _cached_gzip_file(fpath)
                     if cached is not None:
                         gz_bytes, etag, ctype = cached
                         out_headers = {"Content-Encoding": "gzip", "Vary": "Accept-Encoding", "ETag": etag}
@@ -602,6 +503,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                                   "speech_standby_seconds": speech_standby_seconds,
                                   "speech_session_warm": speech_session_warm,
                                   "speech_session_warm_ready": bool(getattr(speech, "session_warm_ready", False)),
+                                  "provider_health": moss.provider_health.snapshot(),
                                   "memory_backend": "mem0" if moss.index else "sqlite",
                                   "memory_url": moss.index.url if moss.index else None})
 
@@ -769,13 +671,8 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     item = moss.notes.update(key, NoteUpdate.model_validate(body))
                 else:
                     item = moss.notes.add(NoteWrite.model_validate(body).text)
-            try:
-                if isinstance(body, dict) and note_id and body.get("action") == "archive":
-                    moss.sag.delete_by_source_ref("note", f"note:{item['id']}")
-                else:
-                    moss.sag.upsert_event(content=item["text"], title=item["text"][:40], source="note", source_ref=f"note:{item['id']}")
-            except Exception:
-                pass
+            archived = isinstance(body, dict) and bool(note_id) and body.get("action") == "archive"
+            moss.sync_note_sag(item, archived=archived)
             return web.json_response({"item": item}, status=200 if note_id else 201)
         except ValidationError:
             return web.json_response({"error": "请提供有效的便签和操作，正文可填写 1 至 1200 个字符。"}, status=400)
@@ -798,6 +695,58 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             return web.json_response({"text": text})
         except (ValueError, TimeoutError, OSError) as error:
             return web.json_response({"error": str(error) or "本机语音识别超时"}, status=422)
+
+    async def transcribe_stream_start(request):
+        from uuid import uuid4
+        return web.json_response({"session": uuid4().hex}, headers={"Cache-Control": "no-store"})
+
+    async def transcribe_stream_chunk(request):
+        try:
+            sid = (request.query.get("session") or request.headers.get("X-MOSS-ASR-Session") or "default").strip()[:64]
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sid):
+                raise ValueError("无效语音会话 ID")
+            pcm = await request.read()
+            res = await voice.stream_chunk(sid, pcm)
+            return web.json_response({"session": sid, **res}, headers={"Cache-Control": "no-store"})
+        except (ValueError, TimeoutError, OSError) as error:
+            return web.json_response({"error": str(error) or "流式语音分片失败"}, status=422)
+
+    async def transcribe_stream_commit(request):
+        try:
+            body = await _read_json_dict(request)
+            sid = str(body.get("session") or "default").strip()[:64]
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sid):
+                raise ValueError("无效语音会话 ID")
+            text = await voice.stream_commit(sid, preview=bool(body.get("preview")))
+            return web.json_response({"text": text, "session": sid}, headers={"Cache-Control": "no-store"})
+        except (ValueError, TimeoutError, OSError) as error:
+            return web.json_response({"error": str(error) or "流式语音提交超时"}, status=422)
+
+    async def transcribe_stream_reset(request):
+        try:
+            body = await _read_json_dict(request)
+            sid = str(body.get("session") or "default").strip()[:64]
+            if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sid):
+                await voice.stream_reset(sid)
+            return web.json_response({"ok": True, "session": sid}, headers={"Cache-Control": "no-store"})
+        except (ValueError, TimeoutError, OSError) as error:
+            return web.json_response({"error": str(error) or "流式重置失败"}, status=400)
+
+    async def transcribe_turn_check(request):
+        from voice.smart_turn import predict_turn_completion
+
+        try:
+            pcm = await request.read()
+            if len(pcm) > 640_000:
+                pcm = pcm[-256_000:]
+            res = await asyncio.to_thread(predict_turn_completion, pcm)
+            return web.json_response(res, headers={"Cache-Control": "no-store"})
+        except (ValueError, OSError, RuntimeError) as error:
+            return web.json_response(
+                {"available": False, "complete": False, "probability": 0.5, "error": str(error)},
+                status=200,
+                headers={"Cache-Control": "no-store"},
+            )
 
     async def stop_speech(app):
         await speech.close()
@@ -831,7 +780,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     raise ValueError("无效的会话语音预热请求")
                 if body.get("release"):
                     if hasattr(speech, "release_session"):
-                        await speech.release_session(key, force_stop=True)
+                        await speech.release_session(key, force_stop=False)
                 elif speech_session_warm and hasattr(speech, "prepare_session"):
                     ready = await speech.prepare_session(key, eligible=can_warm_microphone, prime=True)
                     return web.Response(status=204, headers={"X-MOSS-Session-Prepared": "1" if ready else "0"})
@@ -984,8 +933,28 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         stream = web.StreamResponse(headers={"Content-Type": "text/event-stream; charset=utf-8",
                                              "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         await stream.prepare(request)
+        ident = request.get("moss_identity") or {}
+        if ident.get("role") and ident.get("role") != "CS":
+            # Prevent leaking host logs/paths/SAG/RSI/HA telemetry to C-operators while keeping 3D canvas EventSource healthy.
+            anon_frame = json.dumps({
+                "time": int(perf_counter() * 1000),
+                "source": "CORE",
+                "text": "LINK · RESTRICTED C-MODE",
+                "level": "info",
+            }, ensure_ascii=False)
+            try:
+                await stream.write(f"data: {anon_frame}\n\n".encode("utf-8"))
+                while not stopped.is_set():
+                    try:
+                        await asyncio.wait_for(stopped.wait(), 15)
+                    except TimeoutError:
+                        await stream.write(b": keep-alive\n\n")
+            except (ConnectionError, aiohttp.ClientConnectionError):
+                pass
+            return stream
         signal = asyncio.Event()
-        backend_log.subscribers.add(signal)
+        backend_log.bind_loop()
+        backend_log.subscribe(signal)
         cursor = backend_log.attach(request.headers.get("Last-Event-ID", ""))
         try:
             while not stopped.is_set():
@@ -999,7 +968,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         except (ConnectionError, aiohttp.ClientConnectionError):
             pass
         finally:
-            backend_log.subscribers.discard(signal)
+            backend_log.unsubscribe(signal)
         return stream
 
     async def runtime_log_source(request):
@@ -1016,12 +985,19 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         referer_path = urlsplit(request.headers.get("Referer", "")).path
         if request.query.get("mode") == "tail" or (fui_public is not None and referer_path == "/"):
             return await backend_log_stream(request)
+        ident = request.get("moss_identity") or {}
+        if ident.get("role") and ident.get("role") != "CS":
+            return web.json_response(
+                {"error": "当前为 C 级普通权限，Runtime 日志流仅 CS 管理员可访问。",
+                 "required_role": "CS", "role": ident.get("role", "C")},
+                status=403, headers={"Cache-Control": "no-store"},
+            )
         stream = web.StreamResponse(headers={"Content-Type": "text/event-stream; charset=utf-8",
                                              "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         await stream.prepare(request)
         signal = asyncio.Event()
         cursor = runtime.attach(request.headers.get("Last-Event-ID", ""))
-        subscribers.add(signal)
+        runtime_subscribers.add(signal)
         try:
             while not stopped.is_set():
                 signal.clear()
@@ -1035,7 +1011,7 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
             pass
         finally:
             runtime.detach()
-            subscribers.discard(signal)
+            runtime_subscribers.discard(signal)
         return stream
 
     async def event_stream(request):
@@ -1044,15 +1020,20 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                                              "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         await stream.prepare(request)
         signal = asyncio.Event()
-        subscribers.add(signal)
+        owner_subs = subscribers_by_owner.setdefault(stream_owner, set())
+        owner_subs.add(signal)
+        is_host = stream_owner == moss.DEFAULT_OWNER
+        moss.pulse.subscribers.add(signal)
+        sent_alert_ids: set[int] = set()
         wake_notifications = (
             request.path == "/api/events"
             and request.query.get("wake") == "1"
-            and stream_owner == moss.DEFAULT_OWNER
+            and is_host
         )
         if wake_notifications:
             wake.pages[signal] = request.transport
         previous_wake = None
+        last_sent_rev = None
         auth_check = request.app.get("moss_auth_check")
         try:
             while not stopped.is_set():
@@ -1067,8 +1048,22 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                 if offer and not offer.shown.is_set() and offer.ticket != previous_wake:
                     await stream.write(f"event: wake-offer\ndata: {offer.ticket}\n\n".encode("ascii"))
                     previous_wake = offer.ticket
+                pending_alerts = moss.pulse.alerts_for(owner_code=stream_owner, active_only=True, limit=5)
+                if not pending_alerts:
+                    pending_alerts = [
+                        al for al in list(moss.pulse.alerts)
+                        if not al.get("dismissed") and al.get("owner_code", moss.DEFAULT_OWNER) == stream_owner
+                    ][-5:]
+                for al in pending_alerts:
+                    aid = int(al.get("id") or 0)
+                    if aid and aid not in sent_alert_ids:
+                        sent_alert_ids.add(aid)
+                        al_json = json.dumps(al, ensure_ascii=False)
+                        await stream.write(f"event: brain-alert\ndata: {al_json}\n\n".encode("utf-8"))
                 revision, payload = payloads.read(owner_code=stream_owner)
-                await stream.write(f"id: {revision}\nevent: state\ndata: ".encode("ascii") + payload + b"\n\n")
+                if revision != last_sent_rev:
+                    last_sent_rev = revision
+                    await stream.write(f"id: {revision}\nevent: state\ndata: ".encode("ascii") + payload + b"\n\n")
                 try:
                     await asyncio.wait_for(signal.wait(), 15)
                 except TimeoutError:
@@ -1076,7 +1071,10 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         except (ConnectionError, aiohttp.ClientConnectionError):
             pass
         finally:
-            subscribers.discard(signal)
+            owner_subs.discard(signal)
+            if not owner_subs:
+                subscribers_by_owner.pop(stream_owner, None)
+            moss.pulse.subscribers.discard(signal)
             wake.pages.pop(signal, None)
         return stream
 
@@ -1125,197 +1123,21 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         return web.FileResponse(ROOT / "static/conversation-assets/moss-view.js",
                                 headers={"Cache-Control": "no-cache"})
 
-    async def chats_search(request):
-        owner = _req_owner(request)
-        q = (request.query.get("q") or "").strip()
-        if not q:
-            return web.json_response({"query": "", "hits": []}, headers={"Cache-Control": "no-store"})
-        needle = q.casefold()
-        rows = moss.db.execute(
-            "SELECT t.id, t.chat_id, c.title, t.doc FROM turns t "
-            "JOIN chats c ON c.id = t.chat_id WHERE COALESCE(c.owner_code,'MOSS')=? "
-            "ORDER BY t.rowid DESC LIMIT 600",
-            (owner,),
-        ).fetchall()
-        hits = []
-        matched_chats: set[str] = set()
-        title_fallback: dict[str, dict] = {}
-        for turn_id, cid, title, raw_doc in rows:
-            try:
-                doc = json.loads(raw_doc)
-            except ValueError:
-                continue
-            user_txt = str(doc.get("user") or "")
-            reply_txt = str(doc.get("reply") or "")
-            title_txt = str(title or "")
-            matched_role = ""
-            snippet = ""
-            for role_name, field in (("user", user_txt), ("assistant", reply_txt)):
-                pos = field.casefold().find(needle)
-                if pos != -1:
-                    matched_role = role_name
-                    lo = max(0, pos - 24)
-                    hi = min(len(field), pos + len(q) + 56)
-                    prefix = "…" if lo > 0 else ""
-                    suffix = "…" if hi < len(field) else ""
-                    snippet = prefix + field[lo:hi].replace("\n", " ") + suffix
-                    break
-            if matched_role:
-                matched_chats.add(cid)
-                hits.append({
-                    "chat_id": cid,
-                    "chat_title": title_txt or cid,
-                    "turn_id": turn_id,
-                    "created_at": doc.get("created_at") or "",
-                    "role": matched_role,
-                    "snippet": snippet,
-                    "user": user_txt[:120],
-                })
-                if len(hits) >= 40:
-                    break
-            elif cid not in title_fallback and needle in title_txt.casefold():
-                pos = title_txt.casefold().find(needle)
-                lo = max(0, pos - 24)
-                hi = min(len(title_txt), pos + len(q) + 56)
-                prefix = "…" if lo > 0 else ""
-                suffix = "…" if hi < len(title_txt) else ""
-                title_fallback[cid] = {
-                    "chat_id": cid,
-                    "chat_title": title_txt or cid,
-                    "turn_id": turn_id,
-                    "created_at": doc.get("created_at") or "",
-                    "role": "title",
-                    "snippet": prefix + title_txt[lo:hi].replace("\n", " ") + suffix,
-                    "user": user_txt[:120],
-                }
-        for cid, entry in title_fallback.items():
-            if len(hits) >= 40:
-                break
-            if cid not in matched_chats:
-                hits.append(entry)
-        return web.json_response({"query": q, "hits": hits}, headers={"Cache-Control": "no-store"})
-
-    async def chat_export(request):
-        owner = _req_owner(request)
-        cid = request.match_info["chat_id"]
-        chat_row = moss.db.execute("SELECT id, title, created_at, owner_code FROM chats WHERE id=?", (cid,)).fetchone()
-        if not chat_row:
-            raise web.HTTPNotFound()
-        _, title, created_at, chat_owner = chat_row
-        if moss.normalize_owner(chat_owner) != owner:
-            return web.json_response({"error": "无权导出其他授权人员的对话记录。"}, status=403)
-        op_label = "OP-01" if owner == moss.DEFAULT_OWNER else f"OP-{owner}"
-        turn_rows = moss.db.execute("SELECT doc FROM turns WHERE chat_id=? ORDER BY rowid ASC", (cid,)).fetchall()
-        lines = [
-            f"# MOSS 550W 对话记录 · {title or cid}",
-            "",
-            f"- 会话编号：`{cid}`",
-            f"- 所属人员：`{owner}`",
-            f"- 创建时间：`{created_at}`",
-            f"- 轮次数量：`{len(turn_rows)}`",
-            "",
-            "---",
-            "",
-        ]
-        for idx, (raw_doc,) in enumerate(turn_rows, 1):
-            try:
-                doc = json.loads(raw_doc)
-            except ValueError:
-                continue
-            ts = str(doc.get("created_at") or "")[:19].replace("T", " ")
-            lines.append(f"## #{idx:02d} · {ts}")
-            lines.append("")
-            lines.append(f"**{op_label}**：{doc.get('user') or ''}")
-            lines.append("")
-            body = doc.get("reply") or doc.get("error") or f"({doc.get('status') or 'pending'})"
-            lines.append(f"**MOSS**：{body}")
-            lines.append("")
-        md = "\n".join(lines).encode("utf-8")
-        safe_id = re.sub(r"[^A-Za-z0-9_-]", "", cid)[:24] or "chat"
-        disp = f'attachment; filename="moss-chat-{safe_id}.md"; filename*=UTF-8\'\'{quote(f"moss-chat-{safe_id}.md")}'
-        return web.Response(
-            body=md,
-            content_type="text/markdown",
-            charset="utf-8",
-            headers={"Cache-Control": "no-store", "Content-Disposition": disp, "X-Content-Type-Options": "nosniff"},
-        )
-
-    async def chat_attach(request):
-        """Accept pasted screenshots (Ctrl+V) or dragged documents (PDF/DOCX/XLSX/CSV/text/code) directly from composer."""
-        import base64
-        import io
-        from PIL import Image
-
-        owner = _req_owner(request)
-        try:
-            body = await request.clone(client_max_size=16 * 1024 * 1024).json()
-            if not isinstance(body, dict):
-                raise ValueError("需要 JSON 对象")
-            name = Path(str(body.get("name") or "attachment.bin")).name
-            mime = str(body.get("mime") or "").lower()
-            prompt = str(body.get("prompt") or "").strip()
-            chat_id = str(body.get("chat_id") or moss.active_chat_for(owner))
-            moss.require_chat_owner(chat_id, owner)
-            if chat_id != moss.active_chat_for(owner):
-                raise ValueError("当前对话已切换，请刷新后在当前对话重新发送附件。")
-            raw_b64 = str(body.get("data_b64") or "").strip()
-            if not raw_b64:
-                raise ValueError("附件内容为空")
-            if "," in raw_b64 and raw_b64.startswith("data:"):
-                raw_b64 = raw_b64.split(",", 1)[1]
-            raw = base64.b64decode(raw_b64)
-            ext = Path(name).suffix.lower()
-            is_image = mime.startswith("image/") or ext in IMAGE_EXTS
-            if is_image:
-                def _to_png(blob: bytes):
-                    with Image.open(io.BytesIO(blob)) as im:
-                        im = im.convert("RGB")
-                        im.thumbnail((2048, 2048))
-                        buf = io.BytesIO()
-                        im.save(buf, format="PNG")
-                        return buf.getvalue(), im.size
-                png_bytes, size = await asyncio.to_thread(_to_png, raw)
-                q = prompt or f"请解读这张图片（{name}）中的核心信息。"
-                if len(q) > 1200:
-                    q = q[:1200]
-                if moss.model_available(WINDOW_IMAGE_PROVIDER):
-                    await moss.message(q, chat_id, image_context=("composer_attach", png_bytes, size), owner_code=owner)
-                else:
-                    ocr_text = (await recognize_capture(png_bytes)).strip()
-                    combined = f"{q}\n\n【本机 OCR 识别自图片 {name}（百炼视觉未配置，仅提取文字）】\n{ocr_text or '（未识别到文字）'}"
-                    await moss.message(combined[:1150], chat_id, owner_code=owner)
-                return state_response(owner_code=owner, headers={"Cache-Control": "no-store"})
-
-            extracted = await asyncio.to_thread(extract_document_bytes, name, raw, max_chars=8000)
-            q = prompt or f"请总结附件《{extracted['name']}》的关键要点。"
-            sag_note = ""
-            if owner == moss.DEFAULT_OWNER:
-                # Keep user message concise while injecting extracted content via SAG + message text safely
-                ev = moss.sag.upsert_event(
-                    content=f"附件《{extracted['name']}》：\n{extracted['text']}",
-                    title=f"附件：{extracted['name']}",
-                    source="attach",
-                )
-                sag_note = f"，已同步至 SAG E#{ev['id']}"
-            preview_budget = max(200, 1080 - len(q) - len(extracted["name"]) - 120)
-            snippet = extracted["text"][:preview_budget]
-            msg = (
-                f"{q}\n"
-                f"【附件《{extracted['name']}》已解析（{extracted['bytes']}B{sag_note}，以下为只读正文摘录）】\n"
-                f"{snippet}"
-            )
-            await moss.message(msg[:1190], chat_id, owner_code=owner)
-            return state_response(owner_code=owner, headers={"Cache-Control": "no-store"})
-        except web.HTTPRequestEntityTooLarge:
-            return web.json_response({"error": "附件超出 15 MB 上限。"}, status=413)
-        except PermissionError as exc:
-            return web.json_response({"error": str(exc)}, status=403)
-        except (OSError, ValueError, KeyError) as exc:
-            return web.json_response({"error": str(exc) or "附件格式无法识别或已损坏。"}, status=400)
-
     app = web.Application(middlewares=[local_requests], client_max_size=16 * 1024 * 1024)
-    app.on_startup.append(start_log_tail)
-    app.on_shutdown.append(stop_log_tail)
+    app["moss_voice_service"] = voice
+    install_runtime_loops(
+        app,
+        moss,
+        stopped,
+        device_status=device_status,
+        current_weather=current_weather,
+        backend_log=backend_log,
+        runtime=runtime,
+        subscribers_by_owner=subscribers_by_owner,
+        runtime_subscribers=runtime_subscribers,
+        boot_monotonic=boot_monotonic,
+        last_auto_dream=last_auto_dream,
+    )
     app.on_shutdown.append(close_handoffs)
     app.on_shutdown.append(stop_speech)
     app.on_cleanup.append(close_voice)
@@ -1332,14 +1154,17 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     web.post("/api/timer-notification", timer_notification),
                     web.get("/api/notes", notes), web.post("/api/notes", notes),
                     web.post(r"/api/notes/{note_id:[0-9]{1,19}}", notes),
-                    web.get("/api/chats/search", chats_search),
-                    web.get(r"/api/chats/{chat_id:[A-Za-z0-9_-]{1,64}}/export", chat_export),
-                    web.post("/api/chat/attach", chat_attach),
                     web.get("/api/events", event_stream), web.post("/api/shutdown", shutdown),
                     web.post(r"/api/wake/{wake_action:activate|status|claim|shown}", wake.handle),
                     web.get("/api/models", models), web.get("/api/personality", personality_endpoint),
                     web.post("/api/personality", personality_endpoint), web.post("/api/prepare-voice", prepare_voice),
-                    web.post("/api/transcribe", transcribe), web.post("/api/speak", speak),
+                    web.post("/api/transcribe", transcribe),
+                    web.post("/api/transcribe/stream/start", transcribe_stream_start),
+                    web.post("/api/transcribe/stream/chunk", transcribe_stream_chunk),
+                    web.post("/api/transcribe/stream/commit", transcribe_stream_commit),
+                    web.post("/api/transcribe/stream/reset", transcribe_stream_reset),
+                    web.post("/api/transcribe/turn-check", transcribe_turn_check),
+                    web.post("/api/speak", speak),
                     web.post("/api/speak-batch", speak), web.post("/api/prepare-speech", prepare_speech),
                     web.post("/api/{verb:message|approve|cancel|remember|forget|new-chat|switch-chat|select-model|select-personality|media-select|media-event|transport-result}", action),
                     web.get("/drafts/{name}", file), web.get("/media/{media_id}", moss.media.stream),
@@ -1347,6 +1172,15 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
                     web.get("/conversation-assets/moss-view.js", model_view),
                     web.static("/conversation-assets", ROOT / "static/conversation-assets"),
                     web.static("/static", ROOT / "static")])
+    install_chat_attachment_routes(
+        app,
+        moss,
+        req_owner=_req_owner,
+        state_response=state_response,
+        prepare_window_image=prepare_window_image,
+        recognize_capture=recognize_capture,
+        window_image_provider=WINDOW_IMAGE_PROVIDER,
+    )
     install_brain_iot_routes(
         app,
         moss,
@@ -1362,11 +1196,11 @@ def application(moss, local_engine, data, port, token, stopped, *, qwen_backend=
         tls_port=tls_port,
     )
     install_online_music_routes(app, moss)
+    from console_settings import install_console_settings
+    install_console_settings(app, moss)
     if fui_public is not None:
-        from console_settings import install_console_settings
         from fui_routes import install_fui
         install_fui(app, fui_public)
-        install_console_settings(app, moss)
     return app
 
 
@@ -1449,13 +1283,75 @@ async def run(args):
         msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
         local_engine = "external" if args.model_url else "standby"
         local_lock = asyncio.Lock()
+        current_engine_stack = [None]
+        local_health_url = [""]
+        moss = None
+
+        async def _close_engine_stack():
+            if current_engine_stack[0] is not None:
+                try:
+                    await current_engine_stack[0].aclose()
+                except Exception:
+                    pass
+                current_engine_stack[0] = None
+
+        stack.push_async_callback(_close_engine_stack)
+
+        def _pick_free_local_port():
+            for _ in range(24):
+                with socket.socket() as s:
+                    s.bind(("127.0.0.1", 0))
+                    cand = int(s.getsockname()[1])
+                if not (18222 <= cand <= 18321):
+                    return cand
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                return int(s.getsockname()[1])
+
+        async def _local_healthy(health_url: str) -> bool:
+            if not health_url:
+                return False
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=0.6)) as hc:
+                    async with hc.get(health_url) as resp:
+                        return resp.status == 200
+            except Exception:
+                return False
+
         async def start_local():
             nonlocal local_engine
             async with local_lock:
+                if local_engine in {"cuda", "vulkan", "cpu"} and current_engine_stack[0] is not None:
+                    if await _local_healthy(local_health_url[0]):
+                        return
+                    await _close_engine_stack()
+                    local_engine = "standby"
                 if local_engine == "standby":
-                    _, _, local_engine = await stack.enter_async_context(engine(
-                        args.engine_port, data, backend=args.qwen_backend, vulkan_device=args.vulkan_device,
-                        allow_cpu=args.allow_cpu))
+                    ep = args.engine_port
+                    try:
+                        local_port(ep)
+                    except OSError:
+                        ep = _pick_free_local_port()
+                    eng_stack = AsyncExitStack()
+                    try:
+                        _, _, local_engine = await eng_stack.enter_async_context(engine(
+                            ep, data, backend=args.qwen_backend, vulkan_device=args.vulkan_device,
+                            allow_cpu=args.allow_cpu))
+                    except Exception:
+                        await eng_stack.aclose()
+                        raise
+                    current_engine_stack[0] = eng_stack
+                    local_health_url[0] = f"http://127.0.0.1:{ep}/health"
+                    if moss is not None:
+                        new_base = f"http://127.0.0.1:{ep}/v1"
+                        if moss.local_base != new_base:
+                            moss.local_base = new_base
+                            old_cli = moss.clients.pop("local", None)
+                            if old_cli is not None:
+                                try:
+                                    await old_cli.close()
+                                except Exception:
+                                    pass
 
         if args.model_url:
             if urlsplit(args.model_url).hostname not in {"127.0.0.1", "localhost"}:
@@ -1522,6 +1418,14 @@ async def run(args):
         await moss.sync_reminders()
         lan_note = ("  LAN: " + ", ".join(f"http://{h}:{args.port}/" for h in bound_lan)) if bound_lan else ""
         tls_note = ("  HTTPS: " + ", ".join(f"https://{h}:{tls_port}/" for h in bound_tls)) if bound_tls else ""
+        if bound_lan:
+            try:
+                ag_row = moss.db.execute("SELECT value FROM console_prefs WHERE key='_auth_gate'").fetchone()
+                ag_cfg = json.loads(ag_row[0]) if ag_row else {}
+                if not ag_cfg.get("lan_cs_local_only") and not ag_cfg.get("admin_pass_hash") and not os.environ.get("MOSS_ADMIN_PASS") and os.environ.get("MOSS_LAN_CS_LOCAL_ONLY") != "1":
+                    print("WARN: LAN 模式使用默认 CS 授权码 MOSS；如需加固，请在 /api/auth/config 开启 lan_cs_local_only 或设置 MOSS_ADMIN_PASS。", flush=True)
+            except Exception:
+                pass
         print(f"MOSS http://127.0.0.1:{args.port}/{lan_note}{tls_note}", flush=True)
         await stopped.wait()
 

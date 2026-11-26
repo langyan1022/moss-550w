@@ -3,9 +3,10 @@
  * Handles History, Long-Term Memory, Notes CRUD, Local Status Overview,
  * 3-Day & Hourly Weather Forecast, Jev Native Draft Handoff, Tool Catalog, and Settings.
  */
+import { escapeHtml } from './hud/utils.js';
 import { fixed, formatClock, getLocale, t, weatherCondition } from './i18n.js';
 import { rankMicDevices } from './mic-selector.js';
-import { safeUuid } from './safe-web.js';
+import { safeCopyText, safeUuid } from './safe-web.js';
 
 const TOOL_PROMPTS = [
   { key: '刘德华的冰雨', labelZh: '点歌 · 刘德华的冰雨', labelEn: 'Music · Andy Lau' },
@@ -236,7 +237,19 @@ export function createModalsController({
       del.type = 'button';
       del.className = 'fui-btn fui-btn--danger';
       del.textContent = t('modal.delete');
-      del.addEventListener('click', () => api.postAction('forget', { id: m.id }).catch(() => {}));
+      del.addEventListener('click', async () => {
+        del.disabled = true;
+        try {
+          await api.postAction('forget', { id: m.id });
+        } catch (err) {
+          del.disabled = false;
+          if (memoryInput) {
+            memoryInput.setCustomValidity(err.message);
+            memoryInput.reportValidity();
+            memoryInput.setCustomValidity('');
+          }
+        }
+      });
       li.append(main, del);
       memoryList.append(li);
     }
@@ -510,7 +523,10 @@ export function createModalsController({
   let activeSettingsTab = 'model';
 
   function selectSettingsTab(tabId) {
-    const valid = settingsPanes.some((p) => p.dataset.setPane === tabId) ? tabId : 'model';
+    const btnMatch = settingsTabs.find((b) => b.dataset.setTab === tabId);
+    const blocked = document.body?.dataset?.authRole === 'C' && btnMatch?.dataset?.csOnly === 'true';
+    const targetId = blocked ? 'model' : tabId;
+    const valid = settingsPanes.some((p) => p.dataset.setPane === targetId) ? targetId : 'model';
     activeSettingsTab = valid;
     for (const btn of settingsTabs) {
       btn.setAttribute('aria-selected', String(btn.dataset.setTab === valid));
@@ -562,6 +578,7 @@ export function createModalsController({
   /* ── Tab 07: Soul Constitution, Beliefs & User Persona Archive ── */
   const soulDistillBtn = document.getElementById('set-soul-distill-btn');
   const soulExportBtn = document.getElementById('set-soul-export-btn');
+  const soulCopyBtn = document.getElementById('set-soul-copy-btn');
   const soulDownloadBtn = document.getElementById('set-soul-download-btn');
   const soulStatsEl = document.getElementById('set-soul-stats');
   const soulStatusEl = document.getElementById('set-soul-status');
@@ -595,6 +612,7 @@ export function createModalsController({
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     });
     const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401) window.dispatchEvent(new CustomEvent('moss-auth-required'));
     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
     return data;
   }
@@ -667,6 +685,18 @@ export function createModalsController({
           main.className = 'moss-modal-row__main';
           main.innerHTML = `<p class="moss-modal-row__text"><span class="fui-badge" data-state="info">${escapeHtml(tr.category)}</span> <strong class="fui-num">${escapeHtml(tr.key)}</strong> · ${escapeHtml(tr.value)}</p>`
             + `<span class="moss-modal-row__meta fui-num">SRC ${escapeHtml(tr.source)} · SAL ${Number(tr.salience ?? 1).toFixed(2)} · HIT ${tr.access_count ?? 0}</span>`;
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'fui-btn';
+          editBtn.textContent = t('soul.edit');
+          editBtn.addEventListener('click', () => {
+            if (soulTraitCat) soulTraitCat.value = tr.category || 'preference';
+            if (soulTraitKey) soulTraitKey.value = tr.key || '';
+            if (soulTraitVal) {
+              soulTraitVal.value = tr.value || '';
+              soulTraitVal.focus();
+            }
+          });
           const delBtn = document.createElement('button');
           delBtn.type = 'button';
           delBtn.className = 'fui-btn fui-btn--danger';
@@ -678,7 +708,7 @@ export function createModalsController({
               renderSoulArchive(res.soul);
             } catch (err) { showSoulStatus(err.message, true); }
           });
-          li.append(main, delBtn);
+          li.append(main, editBtn, delBtn);
           return li;
         }));
       }
@@ -686,6 +716,7 @@ export function createModalsController({
   }
 
   async function refreshSoulArchive() {
+    if (document.body?.dataset?.authRole === 'C') return;
     if (api.getMode() !== 'live') {
       renderSoulArchive({
         beliefs: [{ id: 0, scope: 'constitution', pinned: 1, evidence_count: 99, confidence: 1.0, status: 'active', statement: localized('事实与工具回执最高优先（仿真示例）', 'Truth & tool receipts first (sim)') }],
@@ -732,10 +763,19 @@ export function createModalsController({
         soulExportPreview.hidden = !lastExportBundle;
         soulExportPreview.textContent = lastExportBundle;
       }
+      if (soulCopyBtn) soulCopyBtn.hidden = !lastExportBundle;
       if (soulDownloadBtn) soulDownloadBtn.hidden = !lastExportBundle;
       showSoulStatus('');
     } catch (err) { showSoulStatus(err.message, true); }
     finally { soulExportBtn.disabled = false; }
+  });
+
+  soulCopyBtn?.addEventListener('click', async () => {
+    if (!lastExportBundle) return;
+    if (await safeCopyText(lastExportBundle)) {
+      soulCopyBtn.textContent = t('turn.copied');
+      setTimeout(() => { soulCopyBtn.textContent = t('soul.copy_md'); }, 1400);
+    }
   });
 
   soulDownloadBtn?.addEventListener('click', () => {
@@ -1052,21 +1092,37 @@ export function createModalsController({
   function open(name, opts = {}) {
     if (name === 'history') { renderHistory(api.getState()); historyDlg?.showModal(); }
     else if (name === 'memory') { renderMemories(api.getState()); memoryDlg?.showModal(); }
-    else if (name === 'notes') { loadNotes(); notesDlg?.showModal(); }
+    else if (name === 'notes') { if (document.body.dataset.authRole === 'C') return; loadNotes(); notesDlg?.showModal(); }
     else if (name === 'tools') { renderToolsGrid(); toolsDlg?.showModal(); }
     else if (name === 'settings') {
-      selectSettingsTab(opts?.tab || activeSettingsTab);
+      const reqTab = opts?.tab || activeSettingsTab;
+      const blockedForC = document.body?.dataset?.authRole === 'C' && (reqTab === 'auth' || reqTab === 'soul');
+      selectSettingsTab(blockedForC ? 'model' : reqTab);
       syncOledPresetButtons();
       populateMics();
       syncResidentStatus();
+      if (scene3dCheck) scene3dCheck.checked = Boolean(stage.getStatus?.()?.sceneActive);
       if (simModeCheck) simModeCheck.checked = api.getMode() === 'simulated';
       settingsDlg?.showModal();
     }
   }
 
+  function clearAdminCaches() {
+    lastSoulSnap = null;
+    lastExportBundle = '';
+    soulBeliefsList?.replaceChildren();
+    soulProfileList?.replaceChildren();
+    if (soulExportPreview) {
+      soulExportPreview.hidden = true;
+      soulExportPreview.textContent = '';
+    }
+    notesList?.replaceChildren();
+  }
+
   return {
     open,
     selectSettingsTab,
+    clearAdminCaches,
     renderHistory,
     renderMemories,
     renderModels,
@@ -1087,12 +1143,4 @@ export function createModalsController({
       void populateMics();
     },
   };
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

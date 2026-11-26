@@ -1,5 +1,6 @@
 """Project completed backend transitions to the two local runtime displays."""
 
+import asyncio
 from collections import Counter, deque
 from datetime import datetime
 import json
@@ -7,6 +8,7 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+import threading
 from time import time
 
 
@@ -213,6 +215,8 @@ class BackendLogHub:
         self.sequence = 0
         self.entries = deque(maxlen=256)
         self.subscribers = set()
+        self._lock = threading.RLock()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._tail_offsets = {}
         self.extra_path: Path | None = None
         self._load_source_config()
@@ -297,8 +301,28 @@ class BackendLogHub:
         self.poll_files()
         return self.source_info()
 
+    def bind_loop(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+        if loop is not None:
+            self._loop = loop
+
+    def subscribe(self, sig: asyncio.Event):
+        with self._lock:
+            self.subscribers.add(sig)
+
+    def unsubscribe(self, sig: asyncio.Event):
+        with self._lock:
+            self.subscribers.discard(sig)
+
+    def snapshot_subscribers(self) -> tuple[asyncio.Event, ...]:
+        with self._lock:
+            return tuple(self.subscribers)
+
     def _append_frame(self, text: str, *, source="SYS", level="info", error=False, ts=None, file_tag=None):
-        self.sequence += 1
         stamp = int(ts if ts is not None else time() * 1000)
         payload = {"time": stamp, "source": source, "level": level, "text": text}
         if error:
@@ -306,10 +330,26 @@ class BackendLogHub:
         if file_tag:
             payload["file"] = file_tag
         encoded = json.dumps(payload, ensure_ascii=False)
-        frame = f"id: {self.stream_id}:{self.sequence}\ndata: {encoded}\n\n".encode("utf-8")
-        self.entries.append((self.sequence, frame))
-        for sig in list(self.subscribers):
-            sig.set()
+        with self._lock:
+            self.sequence += 1
+            frame = f"id: {self.stream_id}:{self.sequence}\ndata: {encoded}\n\n".encode("utf-8")
+            self.entries.append((self.sequence, frame))
+            subs = list(self.subscribers)
+            loop = self._loop
+        try:
+            cur_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            cur_loop = None
+        if loop is None and cur_loop is not None:
+            loop = self._loop = cur_loop
+        for sig in subs:
+            if loop is not None and cur_loop is not loop and not loop.is_closed():
+                try:
+                    loop.call_soon_threadsafe(sig.set)
+                except RuntimeError:
+                    pass
+            else:
+                sig.set()
 
     def emit(self, text: str, *, source="SYS", level="info", error=False, ts=None, write_file=True, file_tag=None):
         clean = " ".join(str(text or "").splitlines()).strip()
@@ -319,67 +359,95 @@ class BackendLogHub:
             clean = clean[:217] + "..."
         stamp = int(ts if ts is not None else time() * 1000)
         if write_file:
-            try:
-                if self.log_file.is_file() and self.log_file.stat().st_size > LOG_ROTATE_BYTES:
-                    backup = self.log_file.with_suffix(".log.1")
-                    self.log_file.replace(backup)
-                clock = datetime.fromtimestamp(stamp / 1000).strftime("%H:%M:%S.%f")[:-3]
-                tag = "ERR" if error else level.upper()
-                with self.log_file.open("a", encoding="utf-8") as fh:
-                    fh.write(f"{clock} [{source}] [{tag}] {clean}\n")
-            except OSError:
-                pass
+            with self._lock:
+                try:
+                    if self.log_file.is_file() and self.log_file.stat().st_size > LOG_ROTATE_BYTES:
+                        backup = self.log_file.with_suffix(".log.1")
+                        self.log_file.replace(backup)
+                    clock = datetime.fromtimestamp(stamp / 1000).strftime("%H:%M:%S.%f")[:-3]
+                    tag = "ERR" if error else level.upper()
+                    with self.log_file.open("a", encoding="utf-8") as fh:
+                        fh.write(f"{clock} [{source}] [{tag}] {clean}\n")
+                except OSError:
+                    pass
         self._append_frame(clean, source=source, level=level, error=error, ts=stamp, file_tag=file_tag)
 
-    def _poll_one(self, path: Path, source: str):
-        key = str(path)
-        try:
-            st = path.stat()
-        except OSError:
-            return
-        prev = self._tail_offsets.get(key)
-        if prev is None:
-            self._tail_offsets[key] = st.st_size
-            return
-        if st.st_size < prev:
-            prev = 0
-        if st.st_size == prev:
-            return
-        try:
-            with path.open("rb") as fh:
-                fh.seek(prev)
-                chunk = fh.read(min(st.st_size - prev, 16384))
-                self._tail_offsets[key] = fh.tell()
-        except OSError:
-            return
-        for raw_line in chunk.decode("utf-8", errors="replace").splitlines()[-24:]:
-            line = raw_line.strip()
-            if not line:
+    @staticmethod
+    def _read_tail_chunks_io(
+        targets: list[tuple[Path, str]],
+        offsets: dict[str, int],
+    ) -> tuple[dict[str, int], list[tuple[str, str, str, bool, str]]]:
+        """Read new tail chunks from monitored log files off the asyncio event loop."""
+        next_offsets = dict(offsets)
+        emitted: list[tuple[str, str, str, bool, str]] = []
+        for path, source in targets:
+            key = str(path)
+            try:
+                if not path.is_file():
+                    continue
+                st = path.stat()
+            except OSError:
                 continue
-            low = line.lower()
-            is_err = any(tok in low for tok in ("error", "traceback", "exception", "fatal", "crit", "failed"))
-            is_warn = not is_err and any(tok in low for tok in ("warn", "timeout", "retry", "slow"))
-            self._append_frame(
-                line[:220], source=source, level="crit" if is_err else "warn" if is_warn else "info",
-                error=is_err, file_tag=path.name,
-            )
+            prev = next_offsets.get(key)
+            if prev is None:
+                next_offsets[key] = st.st_size
+                continue
+            if st.st_size < prev:
+                prev = 0
+            if st.st_size == prev:
+                continue
+            try:
+                with path.open("rb") as fh:
+                    fh.seek(prev)
+                    chunk = fh.read(min(st.st_size - prev, 16384))
+                    next_offsets[key] = fh.tell()
+            except OSError:
+                continue
+            for raw_line in chunk.decode("utf-8", errors="replace").splitlines()[-24:]:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                low = line.lower()
+                is_err = any(tok in low for tok in ("error", "traceback", "exception", "fatal", "crit", "failed"))
+                is_warn = not is_err and any(tok in low for tok in ("warn", "timeout", "retry", "slow"))
+                level = "crit" if is_err else "warn" if is_warn else "info"
+                emitted.append((line[:220], source, level, is_err, path.name))
+        return next_offsets, emitted
+
+    def _tail_targets(self) -> list[tuple[Path, str]]:
+        targets: list[tuple[Path, str]] = [(self.data_dir / "qwen.log", "QWEN")]
+        if self.extra_path:
+            targets.append((self.extra_path, "FILE"))
+        return targets
+
+    def _apply_tail_chunks(self, next_offsets: dict[str, int], emitted: list[tuple[str, str, str, bool, str]]):
+        self._tail_offsets.update(next_offsets)
+        for text, source, level, is_err, fname in emitted:
+            self._append_frame(text, source=source, level=level, error=is_err, file_tag=fname)
 
     def poll_files(self):
-        qwen_log = self.data_dir / "qwen.log"
-        if qwen_log.is_file():
-            self._poll_one(qwen_log, "QWEN")
-        if self.extra_path and self.extra_path.is_file():
-            self._poll_one(self.extra_path, "FILE")
+        next_offsets, emitted = self._read_tail_chunks_io(self._tail_targets(), self._tail_offsets)
+        self._apply_tail_chunks(next_offsets, emitted)
+
+    async def poll_files_async(self):
+        self.bind_loop()
+        targets = self._tail_targets()
+        if not targets:
+            return
+        next_offsets, emitted = await asyncio.to_thread(self._read_tail_chunks_io, targets, dict(self._tail_offsets))
+        self._apply_tail_chunks(next_offsets, emitted)
 
     def attach(self, last_event_id: str):
         prefix, _, seq = (last_event_id or "").partition(":")
-        if prefix == self.stream_id and seq.isascii() and seq.isdigit() and len(seq) < 16:
-            cursor = int(seq)
-            if cursor <= self.sequence:
-                return cursor
-        return max(0, self.sequence - 24)
+        with self._lock:
+            if prefix == self.stream_id and seq.isascii() and seq.isdigit() and len(seq) < 16:
+                cursor = int(seq)
+                if cursor <= self.sequence:
+                    return cursor
+            return max(0, self.sequence - 24)
 
     def pending(self, after: int):
-        return tuple(entry for entry in self.entries if entry[0] > after)
+        with self._lock:
+            return tuple(entry for entry in self.entries if entry[0] > after)
 
 

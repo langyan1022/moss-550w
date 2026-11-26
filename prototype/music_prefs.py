@@ -2,63 +2,100 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 import re
 import sqlite3
 
+from cognitive_utils import normalize_owner_code
+
 
 class MusicPrefsStore:
     def __init__(self, db: sqlite3.Connection):
         self.db = db
-        self.db.execute(
-            """CREATE TABLE IF NOT EXISTS music_prefs (
-                media_id TEXT PRIMARY KEY,
-                status TEXT NOT NULL CHECK(status IN ('favorite', 'blocked')),
-                title TEXT NOT NULL DEFAULT '',
-                artist TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL
-            )"""
-        )
-        self.db.commit()
+        with (nullcontext() if self.db.in_transaction else self.db):
+            self.db.execute(
+                """CREATE TABLE IF NOT EXISTS music_prefs (
+                    media_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL CHECK(status IN ('favorite', 'blocked')),
+                    title TEXT NOT NULL DEFAULT '',
+                    artist TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    owner_code TEXT NOT NULL DEFAULT 'MOSS'
+                )"""
+            )
+            try:
+                self.db.execute("ALTER TABLE music_prefs ADD COLUMN owner_code TEXT NOT NULL DEFAULT 'MOSS'")
+            except sqlite3.OperationalError:
+                pass
 
-    def set_status(self, media_id: str, status: str, *, title: str = "", artist: str = "") -> dict:
+    @staticmethod
+    def _norm_owner(owner_code: str | None) -> str:
+        return normalize_owner_code(owner_code)
+
+    @classmethod
+    def _storage_key(cls, media_id: str, owner_code: str = "MOSS") -> str:
+        owner = cls._norm_owner(owner_code)
+        mid = (media_id or "").strip()
+        return mid if owner == "MOSS" else f"op:{owner}:{mid}"
+
+    @staticmethod
+    def _public_id(stored_id: str, owner: str) -> str:
+        prefix = f"op:{owner}:"
+        return stored_id[len(prefix):] if owner != "MOSS" and stored_id.startswith(prefix) else stored_id
+
+    def set_status(self, media_id: str, status: str, *, title: str = "", artist: str = "", owner_code: str = "MOSS") -> dict:
         mid = (media_id or "").strip()
         if not mid:
             raise ValueError("缺少媒体编号")
+        owner = self._norm_owner(owner_code)
+        skey = self._storage_key(mid, owner)
         now_s = datetime.now().isoformat(timespec="seconds")
         if status in {"none", "clear", ""}:
-            self.db.execute("DELETE FROM music_prefs WHERE media_id=?", (mid,))
-            self.db.commit()
+            with (nullcontext() if self.db.in_transaction else self.db):
+                self.db.execute("DELETE FROM music_prefs WHERE media_id=? AND COALESCE(owner_code, 'MOSS')=?", (skey, owner))
             return {"media_id": mid, "status": "none"}
         if status not in {"favorite", "blocked"}:
             raise ValueError("状态仅支持 favorite、blocked 或 clear")
-        self.db.execute(
-            "INSERT INTO music_prefs (media_id, status, title, artist, updated_at) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(media_id) DO UPDATE SET status=excluded.status, title=CASE WHEN excluded.title<>'' THEN excluded.title ELSE music_prefs.title END, "
-            "artist=CASE WHEN excluded.artist<>'' THEN excluded.artist ELSE music_prefs.artist END, updated_at=excluded.updated_at",
-            (mid, status, (title or "")[:120], (artist or "")[:80], now_s),
-        )
-        self.db.commit()
+        with (nullcontext() if self.db.in_transaction else self.db):
+            self.db.execute(
+                "INSERT INTO music_prefs (media_id, status, title, artist, updated_at, owner_code) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(media_id) DO UPDATE SET status=excluded.status, title=CASE WHEN excluded.title<>'' THEN excluded.title ELSE music_prefs.title END, "
+                "artist=CASE WHEN excluded.artist<>'' THEN excluded.artist ELSE music_prefs.artist END, updated_at=excluded.updated_at, owner_code=excluded.owner_code",
+                (skey, status, (title or "")[:120], (artist or "")[:80], now_s, owner),
+            )
         return {"media_id": mid, "status": status, "title": title, "artist": artist, "updated_at": now_s}
 
-    def get_status(self, media_id: str) -> str:
-        row = self.db.execute("SELECT status FROM music_prefs WHERE media_id=?", (media_id,)).fetchone()
+    def get_status(self, media_id: str, *, owner_code: str = "MOSS") -> str:
+        owner = self._norm_owner(owner_code)
+        skey = self._storage_key(media_id, owner)
+        row = self.db.execute("SELECT status FROM music_prefs WHERE media_id=? AND COALESCE(owner_code, 'MOSS')=?", (skey, owner)).fetchone()
         return row[0] if row else "none"
 
-    def list_by_status(self, status: str) -> list[dict]:
+    def list_by_status(self, status: str, *, owner_code: str = "MOSS") -> list[dict]:
+        owner = self._norm_owner(owner_code)
         rows = self.db.execute(
-            "SELECT media_id, status, title, artist, updated_at FROM music_prefs WHERE status=? ORDER BY updated_at DESC",
-            (status,),
+            "SELECT media_id, status, title, artist, updated_at FROM music_prefs WHERE status=? AND COALESCE(owner_code, 'MOSS')=? ORDER BY updated_at DESC",
+            (status, owner),
         ).fetchall()
-        return [{"media_id": r[0], "status": r[1], "title": r[2], "artist": r[3], "updated_at": r[4]} for r in rows]
+        return [{"media_id": self._public_id(r[0], owner), "status": r[1], "title": r[2], "artist": r[3], "updated_at": r[4]} for r in rows]
 
-    def blocked_ids(self) -> set[str]:
-        return {r[0] for r in self.db.execute("SELECT media_id FROM music_prefs WHERE status='blocked'").fetchall()}
+    def blocked_ids(self, *, owner_code: str = "MOSS") -> set[str]:
+        owner = self._norm_owner(owner_code)
+        return {self._public_id(r[0], owner) for r in self.db.execute(
+            "SELECT media_id FROM music_prefs WHERE status='blocked' AND COALESCE(owner_code, 'MOSS')=?", (owner,)
+        ).fetchall()}
 
-    def snapshot(self) -> dict:
-        favs = self.list_by_status("favorite")
-        blocked = self.list_by_status("blocked")
+    def favorite_ids(self, *, owner_code: str = "MOSS") -> set[str]:
+        owner = self._norm_owner(owner_code)
+        return {self._public_id(r[0], owner) for r in self.db.execute(
+            "SELECT media_id FROM music_prefs WHERE status='favorite' AND COALESCE(owner_code, 'MOSS')=?", (owner,)
+        ).fetchall()}
+
+    def snapshot(self, *, owner_code: str = "MOSS") -> dict:
+        favs = self.list_by_status("favorite", owner_code=owner_code)
+        blocked = self.list_by_status("blocked", owner_code=owner_code)
         return {
             "favorites": favs,
             "blocked": blocked,

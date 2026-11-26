@@ -1,7 +1,7 @@
 # MOSS 550W 下一阶段演进规划（`v5.6` → `v6.0`）
 
 > 文档日期：2026-11-24 · 基线版本：`v5.5+`（公开仓库 [`langyan1022/moss-550w`](https://github.com/langyan1022/moss-550w) 初始基线 `3a975e5`）  
-> 相关文档：[总览 README](../README.md) · [架构评估](./MOSS架构评估.md) · [技术演进路线](./MOSS技术演进路线.md) · [日常验收标准 v2](./MOSS日常验收标准.md) · [实体硬件与 HA 协议](./MOSS实体硬件与HomeAssistant对接协议.md)
+> 相关文档：[总览 README](../README.md) · [架构评估](./MOSS架构评估.md) · [技术演进路线](./MOSS技术演进路线.md) · [**后续 P4–P7 规划（v6.1）**](./MOSS下一阶段演进规划_v6.1.md) · [日常验收标准 v2](./MOSS日常验收标准.md) · [实体硬件与 HA 协议](./MOSS实体硬件与HomeAssistant对接协议.md)
 
 ---
 

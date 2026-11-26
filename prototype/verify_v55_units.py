@@ -220,10 +220,8 @@ async def test_auth_rbac_and_persistence_http():
             await moss.close()
 
     # Use explicit free port so accepted_hosts matches Host header cleanly
-    import socket
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    from testkit import safe_free_port
+    port = safe_free_port()
 
     with tempfile.TemporaryDirectory(prefix="moss-v55-auth2-") as td:
         data_dir = Path(td)
@@ -250,7 +248,7 @@ async def test_auth_rbac_and_persistence_http():
                                         headers=hdr)
                 assert r_pref.status == 200
 
-                # 4. C user is BLOCKED (403) from CS system admin actions!
+                # 4. C user is BLOCKED (403) from CS system admin actions (both POST & sensitive GETs)!
                 for admin_ep, payload in (
                     ("/api/select-model", {"id": "local"}),
                     ("/api/console-settings/providers", {"id": "aliyun"}),
@@ -260,6 +258,19 @@ async def test_auth_rbac_and_persistence_http():
                 ):
                     r_blk = await cli.post(admin_ep, json=payload, headers=hdr)
                     assert r_blk.status == 403, f"Expected 403 for C role on {admin_ep}, got {r_blk.status}"
+                for get_ep in (
+                    "/api/music/prefs",
+                    "/api/skills",
+                    "/api/hardware/moss/stream",
+                    "/api/runtime-log/source",
+                    "/api/online-music/browse",
+                ):
+                    r_gblk = await cli.get(get_ep)
+                    assert r_gblk.status == 403, f"Expected 403 for C role on GET {get_ep}, got {r_gblk.status}"
+                async with cli.get("/api/runtime-log/stream?mode=tail") as r_log_sse:
+                    assert r_log_sse.status == 200
+                    line = (await asyncio.wait_for(r_log_sse.content.readline(), timeout=2)).decode("utf-8", errors="replace")
+                    assert "RESTRICTED C-MODE" in line, line
 
                 # 5. Switch to CS admin "moss" (lowercase -> MOSS -> CS!)
                 r_cs = await cli.post("/api/auth/verify", json={"code": "moss"}, headers=hdr)
@@ -300,6 +311,19 @@ async def test_auth_rbac_and_persistence_http():
                     assert r_stale.status == 401, f"Deleted C cookie should fail with 401, got {r_stale.status}"
                 r_users_after = await cli.get("/api/auth/users")
                 assert not any(u["code"] == "ZK88" for u in (await r_users_after.json())["users"]), "Deleted C user resurrected!"
+                # 10. Headless mode (fui_public=None) still enforces moss_auth_check RBAC!
+                with tempfile.TemporaryDirectory(prefix="moss-v55-nofui-") as td_nf:
+                    nf_port = safe_free_port()
+                    moss_nf = Moss(Path(td_nf), "http://127.0.0.1:19999/v1", "mock-local", prefer_cloud=False)
+                    app_nf = application(moss_nf, lambda: "standby", Path(td_nf), nf_port, "toknf", asyncio.Event(), fui_public=None)
+                    try:
+                        assert app_nf.get("moss_auth_check") is not None
+                        async with TestClient(TestServer(app_nf, port=nf_port)) as cli_nf:
+                            nf_hdr = {"Origin": f"http://127.0.0.1:{nf_port}"}
+                            assert (await cli_nf.post("/api/auth/verify", json={"code": "AB12"}, headers=nf_hdr)).status == 200
+                            assert (await cli_nf.get("/api/music/prefs")).status == 403
+                    finally:
+                        await moss_nf.close()
         finally:
             await moss.close()
     return "4-char CS/C RBAC + persist + disable + deleted cookie reject OK"
@@ -392,9 +416,9 @@ async def test_operator_conversation_isolation():
     from core import Moss
     from serve import application
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    from testkit import safe_free_port
+
+    port = safe_free_port()
 
     fui_public = Path(__file__).resolve().parent / "fui" / "public"
     with tempfile.TemporaryDirectory(prefix="moss-v56-isolation-") as td:
@@ -495,6 +519,12 @@ async def test_operator_conversation_isolation():
                         sr3 = await (await op3_cli.get("/api/chats/search?q=访客小王")).json()
                         assert sr3["hits"] == []
 
+                    # Brain Overview P7.1 telemetry: CS sees provider_health; OP02 stays restricted; concurrent SSE + speak-batch
+                    ov_cs = await (await cs_cli.get("/api/brain/overview")).json()
+                    assert isinstance(ov_cs.get("provider_health"), dict)
+                    ov_op2 = await (await op2_cli.get("/api/brain/overview")).json()
+                    assert ov_op2.get("iot", {}).get("restricted") is True and "provider_health" not in ov_op2
+
                     # CS deleting OP02 wipes OP02's chats, turns, and memories
                     assert (await cs_cli.delete("/api/auth/users/OP02", headers=hdr)).status == 200
                     assert (await op2_cli.get("/api/state")).status == 401
@@ -502,7 +532,181 @@ async def test_operator_conversation_isolation():
                     assert moss.db.execute("SELECT COUNT(*) FROM memories WHERE owner_code='OP02'").fetchone()[0] == 0
         finally:
             await moss.close()
-    return "Multi-operator chats/turns/search/export/SSE/memories isolation OK"
+    return "Multi-operator chats/turns/search/export/SSE/memories + overview RBAC OK"
+
+
+async def test_concurrent_sse_and_speak_batch():
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    import struct, wave, io as _io
+    from unittest.mock import AsyncMock, patch
+    from core import Moss
+    import serve as _serve
+    from testkit import safe_free_port
+
+    port = safe_free_port()
+    fui_public = Path(__file__).resolve().parent / "fui" / "public"
+    with tempfile.TemporaryDirectory(prefix="moss-v61-conc-") as td:
+        data_dir = Path(td)
+        moss = Moss(data_dir, "http://127.0.0.1:19999/v1", "mock-local", prefer_cloud=False)
+        stopped = asyncio.Event()
+        buf = _io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)
+            wf.writeframes(struct.pack("<100h", *([120] * 100)))
+        fake_wav = buf.getvalue()
+        fake_speech = type(
+            "FakeSpeech", (), {
+                "batch_capable": True,
+                "close": AsyncMock(),
+                "render_batch": AsyncMock(return_value=([fake_wav, fake_wav], "batch")),
+                "render": AsyncMock(return_value=fake_wav),
+            }
+        )()
+        try:
+            with patch.object(_serve, "MossSpeech", return_value=fake_speech):
+                app = _serve.application(moss, lambda: "standby", data_dir, port, "tokconc", stopped, fui_public=fui_public)
+            hdr = {"Origin": f"http://127.0.0.1:{port}"}
+            async with TestClient(TestServer(app, port=port)) as cs_cli:
+                await cs_cli.post("/api/auth/verify", json={"code": "MOSS"}, headers=hdr)
+                assert (await cs_cli.post("/api/auth/users", json={"code": "OP11", "label": "S1"}, headers=hdr)).status == 200
+                assert (await cs_cli.post("/api/auth/users", json={"code": "OP12", "label": "S2"}, headers=hdr)).status == 200
+                # Multipart /api/speak-batch verification
+                r_batch = await cs_cli.post("/api/speak-batch", json={"texts": ["第一段播报。", "第二段播报。"], "category": "reply"}, headers=hdr)
+                assert r_batch.status == 200 and r_batch.headers.get("X-MOSS-Batch-Capable") == "1"
+                raw_mp = await r_batch.read()
+                assert raw_mp.count(b"RIFF") == 2 and raw_mp.count(b"WAVE") == 2
+
+                # Concurrent OP11 + OP12 SSE streams stay completely isolated
+                async with aiohttp.ClientSession(base_url=f"http://127.0.0.1:{port}", trust_env=False, cookie_jar=aiohttp.CookieJar(unsafe=True)) as c1, \
+                           aiohttp.ClientSession(base_url=f"http://127.0.0.1:{port}", trust_env=False, cookie_jar=aiohttp.CookieJar(unsafe=True)) as c2:
+                    assert (await c1.post("/api/auth/verify", json={"code": "OP11"}, headers=hdr)).status == 200
+                    assert (await c2.post("/api/auth/verify", json={"code": "OP12"}, headers=hdr)).status == 200
+                    await c1.post("/api/message", json={"text": "记住：OP11 秘密火星任务"}, headers=hdr)
+                    await c2.post("/api/message", json={"text": "记住：OP12 秘密木星任务"}, headers=hdr)
+                    async with c1.get("/api/events") as s1, c2.get("/api/events") as s2:
+                        txt1 = (await s1.content.read(1600)).decode("utf-8", errors="ignore")
+                        txt2 = (await s2.content.read(1600)).decode("utf-8", errors="ignore")
+                        assert "OP11" in txt1 and "木星" not in txt1
+                        assert "OP12" in txt2 and "火星" not in txt2
+        finally:
+            await moss.close()
+    return "Concurrent OP11/OP12 SSE + /api/speak-batch multipart WAV OK"
+
+
+async def test_v62_streaming_asr_rbac_and_cascade_cleanup():
+    from unittest.mock import AsyncMock, patch
+    import aiohttp
+    from aiohttp.test_utils import TestClient, TestServer
+    from core import Moss
+    import serve as _serve
+    from testkit import safe_free_port
+
+    with tempfile.TemporaryDirectory(prefix="moss-v62-u-") as td:
+        tp = Path(td)
+        data_dir = tp / "data"
+        data_dir.mkdir()
+        port = safe_free_port()
+        moss = Moss(data_dir, "http://127.0.0.1:0/v1", "moss-chat-qwen35-4b", prefer_cloud=False)
+        stopped = asyncio.Event()
+        try:
+            fui_public = Path(__file__).resolve().parent / "fui" / "public"
+            app = _serve.application(moss, lambda: "standby", data_dir, port, "tok62", stopped, fui_public=fui_public)
+            hdr = {"Origin": f"http://127.0.0.1:{port}"}
+            async with TestClient(TestServer(app, port=port)) as cli:
+                await cli.post("/api/auth/verify", json={"code": "MOSS"}, headers=hdr)
+                assert (await cli.post("/api/auth/users", json={"code": "OP19", "label": "Cascade"}, headers=hdr)).status == 200
+                # Seed OP19 cognitive records
+                moss.sag.upsert_event(title="OP19 档案", content="秘密测试数据", source="memory", source_ref="m:19", owner_code="OP19")
+                moss.soul.upsert_profile(key="city", value="合肥", source="user_edit", owner_code="OP19")
+                moss.rsi.promote_lesson(scope="fact", trigger="op19", rule="测试规则请勿泄露", owner_code="OP19")
+                moss.routines.create_task(name="op19_r", schedule="interval 15m", action_kind="skill", payload="早报", owner_code="OP19")
+
+                # Verify CS runtime-log guard & /api/rsi/eval endpoint
+                r_eval = await cli.post("/api/rsi/eval", json={}, headers=hdr)
+                assert r_eval.status == 200
+                ev_data = (await r_eval.json())["eval"]
+                assert "composite_score" in ev_data
+
+                # Verify streaming ASR start -> chunk -> commit HTTP pipeline with odd bytes + reset
+                r_st = await cli.post("/api/transcribe/stream/start", json={}, headers=hdr)
+                assert r_st.status == 200
+                sid = (await r_st.json())["session"]
+                with patch("serve.LocalVoice.stream_chunk", AsyncMock(return_value={"buffered_bytes": 1000})), \
+                     patch("serve.LocalVoice.stream_commit", AsyncMock(return_value="今天天气不错")), \
+                     patch("serve.LocalVoice.stream_reset", AsyncMock(return_value=None)):
+                    r_ch = await cli.post(f"/api/transcribe/stream/chunk?session={sid}", data=b"\x01\x02" * 500, headers={**hdr, "Content-Type": "application/octet-stream"})
+                    assert r_ch.status == 200
+                    r_cm = await cli.post("/api/transcribe/stream/commit", json={"session": sid}, headers=hdr)
+                    assert r_cm.status == 200 and (await r_cm.json())["text"] == "今天天气不错"
+                    r_rs = await cli.post("/api/transcribe/stream/reset", json={"session": sid}, headers=hdr)
+                    assert r_rs.status == 200
+
+                # Verify C-role gets 403 on direct /conversation/runtime-log, /api/context/ocr, and internal Navidrome cover/stream
+                async with aiohttp.ClientSession(base_url=f"http://127.0.0.1:{port}", trust_env=False, cookie_jar=aiohttp.CookieJar(unsafe=True)) as c_cli:
+                    assert (await c_cli.post("/api/auth/verify", json={"code": "OP19"}, headers=hdr)).status == 200
+                    r_rt_c = await c_cli.get("/conversation/runtime-log")
+                    assert r_rt_c.status == 403, f"Expected 403 for C runtime-log, got {r_rt_c.status}"
+                    r_ocr_c = await c_cli.post("/api/context/ocr", json={}, headers=hdr)
+                    assert r_ocr_c.status == 403, f"Expected 403 for C /api/context/ocr, got {r_ocr_c.status}"
+                    with patch.object(moss.online_music, "resolve_cover_target", return_value={"url": "http://127.0.0.1:4533/rest/getCoverArt", "allow_http": True, "allow_internal": True}), \
+                         patch.object(moss.online_music, "resolve_stream_target", return_value={"url": "http://127.0.0.1:4533/rest/stream", "allow_http": True, "allow_internal": True, "headers": {}}):
+                        r_cov_c = await c_cli.get("/api/media/online-cover/nv123")
+                        r_str_c = await c_cli.get("/api/media/online-stream/nv123")
+                        assert r_cov_c.status == 403 and r_str_c.status == 403, f"C accessed internal Navidrome: {(r_cov_c.status, r_str_c.status)}"
+
+                # Verify remote CS admin_pass & lan_cs_local_only enforcement + normalize_owner_code across stores
+                from aiohttp.test_utils import make_mocked_request
+                from cognitive_utils import normalize_owner_code
+                from music_prefs import MusicPrefsStore
+                from semantic_memory import LocalMemoryIndex
+                from sleep_consolidator import SleepConsolidator
+
+                assert (await cli.post("/api/auth/config", json={"admin_pass": "Secret99", "lan_cs_local_only": False}, headers=hdr)).status == 200
+                verify_handler = next(
+                    r.handler for r in app.router.routes()
+                    if r.method == "POST" and getattr(r.resource, "canonical", "") == "/api/auth/verify"
+                )
+                async def _mock_remote_verify(payload: dict):
+                    raw_b = json.dumps(payload).encode("utf-8")
+                    req = make_mocked_request(
+                        "POST",
+                        "/api/auth/verify",
+                        headers={
+                            "Host": f"127.0.0.1:{port}",
+                            "Origin": f"http://127.0.0.1:{port}",
+                            "Content-Type": "application/json",
+                        },
+                    ).clone(remote="192.168.50.99")
+                    req._read_bytes = raw_b  # aiohttp cached body shortcut for req.json()
+                    return await verify_handler(req)
+                r_bad_pw = await _mock_remote_verify({"code": "MOSS", "password": "wrong"})
+                assert r_bad_pw.status == 403, f"Remote CS with wrong admin_pass should return 403, got {r_bad_pw.status}"
+                r_good_pw = await _mock_remote_verify({"code": "MOSS", "password": "Secret99"})
+                assert r_good_pw.status == 200, f"Remote CS with valid admin_pass failed: {r_good_pw.status}"
+                assert (await cli.post("/api/auth/config", json={"lan_cs_local_only": True, "admin_pass": ""}, headers=hdr)).status == 200
+                r_lan_blk = await _mock_remote_verify({"code": "MOSS"})
+                assert r_lan_blk.status == 403, f"lan_cs_local_only should block remote CS, got {r_lan_blk.status}"
+                assert (await cli.post("/api/auth/config", json={"lan_cs_local_only": False, "admin_pass": ""}, headers=hdr)).status == 200
+
+                assert normalize_owner_code("cs") == "MOSS" and normalize_owner_code("op19") == "OP19"
+                MusicPrefsStore(moss.db).set_status("m1", "favorite", owner_code="cs")
+                assert MusicPrefsStore(moss.db).get_status("m1", owner_code="MOSS") == "favorite"
+                lmi = LocalMemoryIndex("http://127.0.0.1:8888", moss.db)
+                assert lmi.scope and len(lmi.scope) >= 16
+                assert SleepConsolidator._norm_owner("cs") == "MOSS" if hasattr(SleepConsolidator, "_norm_owner") else normalize_owner_code("cs") == "MOSS"
+
+                # Verify DELETE /api/auth/users/OP19 cascades across all cognitive stores
+                r_del = await cli.delete("/api/auth/users/OP19", headers=hdr)
+                assert r_del.status == 200
+                assert moss.db.execute("SELECT COUNT(*) FROM sag_events WHERE COALESCE(owner_code,'MOSS')='OP19'").fetchone()[0] == 0
+                assert moss.db.execute("SELECT COUNT(*) FROM soul_profile WHERE COALESCE(owner_code,'MOSS')='OP19'").fetchone()[0] == 0
+                assert moss.db.execute("SELECT COUNT(*) FROM rsi_lessons WHERE COALESCE(owner_code,'MOSS')='OP19'").fetchone()[0] == 0
+                assert moss.db.execute("SELECT COUNT(*) FROM recurring_tasks WHERE COALESCE(owner_code,'MOSS')='OP19'").fetchone()[0] == 0
+        finally:
+            stopped.set()
+            await moss.close()
+    return "Streaming ASR HTTP + C runtime-log 403 + /api/rsi/eval + cascade user delete OK"
 
 
 async def main():
@@ -515,6 +719,8 @@ async def main():
         "music_prefs_lrc_sleep": test_music_prefs_lrc_sleep(),
         "auth_cs_c_rbac": await test_auth_rbac_and_persistence_http(),
         "operator_isolation": await test_operator_conversation_isolation(),
+        "concurrent_sse_and_speak_batch": await test_concurrent_sse_and_speak_batch(),
+        "v62_stream_asr_rbac_cascade": await test_v62_streaming_asr_rbac_and_cascade_cleanup(),
         "voice_process_guards": await test_voice_process_guards(),
         "secret_store_iot": test_secret_store_and_iot_encryption(),
     }

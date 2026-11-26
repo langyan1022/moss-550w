@@ -22,8 +22,9 @@ import re
 import sqlite3
 from time import time
 
+from cognitive_utils import is_sensitive_fs_path
 from model_catalog import before_model_request
-from sag_knowledge import _BLOCKED_INGEST_TOKENS, SAGKnowledgeBase
+from sag_knowledge import SAGKnowledgeBase
 
 
 def _now_iso() -> str:
@@ -31,10 +32,10 @@ def _now_iso() -> str:
 
 
 DEFAULT_SKILLS = (
-    ("briefing", "一键态势简报", "立即生成包含时间、日程、硬件、RSI 与 SAG 状态的 550W 态势简报", "请给我一份当前时刻的态势简报", "pulse"),
-    ("dream_rsi", "深度整理与复盘", "执行夜间做梦式世界模型整合与 RSI 自我迭代复盘", "请帮我做一次深度整理并自我复盘最近的经验规则", "brain"),
-    ("sleep_music", "深夜助眠纯音乐", "从本机曲库自动挑选舒缓纯音乐（排鼓排摇滚）并播放", "来一首助眠的纯音乐吧", "media"),
-    ("hw_check", "全机硬件体检", "读取 CPU/GPU 负载温度、内存、电量与磁盘并给出诊断", "帮我全面体检一下电脑当前的硬件状态", "system"),
+    ("briefing", "一键态势简报", "立即生成包含时间、日程、硬件、RSI 与 SAG 状态的 550W 态势简报", "请给我一份当前时刻的态势简报", "pulse", ["get_situational_briefing", "get_time", "query_calendar"]),
+    ("dream_rsi", "深度整理与复盘", "执行夜间做梦式世界模型整合与 RSI 自我迭代复盘", "请帮我做一次深度整理并自我复盘最近的经验规则", "brain", ["consolidate_world_model", "review_self_lessons", "search_knowledge"]),
+    ("sleep_music", "深夜助眠纯音乐", "从本机曲库自动挑选舒缓纯音乐（排鼓排摇滚）并播放", "来一首助眠的纯音乐吧", "media", ["play_song", "list_media_catalog", "set_music_sleep_timer"]),
+    ("hw_check", "全机硬件体检", "读取 CPU/GPU 负载温度、内存、电量与磁盘并给出诊断", "帮我全面体检一下电脑当前的硬件状态", "system", ["get_device_status"]),
 )
 
 
@@ -49,7 +50,18 @@ class BackgroundJobManager:
         self._tasks: dict[int, asyncio.Task] = {}
         self._watcher_offsets: dict[int, int] = {}
         self._init_schema()
+        self.reconcile_stalled_jobs()
         self._seed_default_skills()
+
+    def reconcile_stalled_jobs(self) -> int:
+        """Mark interrupted queued/running jobs from previous crashed runs as error cleanly."""
+        now = _now_iso()
+        with self.db:
+            cur = self.db.execute(
+                "UPDATE bg_jobs SET status='error', step_text='上次进程退出，后台任务已中断', updated_at=? WHERE status IN ('queued', 'running')",
+                (now,),
+            )
+        return max(0, int(cur.rowcount or 0))
 
     def _init_schema(self):
         with self.db:
@@ -85,18 +97,33 @@ class BackgroundJobManager:
                     prompt TEXT NOT NULL,
                     category TEXT NOT NULL DEFAULT 'custom',
                     use_count INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    required_tools_json TEXT NOT NULL DEFAULT '[]',
+                    steps_json TEXT NOT NULL DEFAULT '[]'
                 );
             """)
+            for col_sql in (
+                "ALTER TABLE custom_skills ADD COLUMN required_tools_json TEXT NOT NULL DEFAULT '[]'",
+                "ALTER TABLE custom_skills ADD COLUMN steps_json TEXT NOT NULL DEFAULT '[]'",
+            ):
+                try:
+                    self.db.execute(col_sql)
+                except sqlite3.OperationalError:
+                    pass
 
     def _seed_default_skills(self):
         now = _now_iso()
         with self.db:
-            for slug, name, desc, prompt, cat in DEFAULT_SKILLS:
+            for slug, name, desc, prompt, cat, req_tools in DEFAULT_SKILLS:
+                tools_json = json.dumps(req_tools, ensure_ascii=False)
                 self.db.execute(
-                    """INSERT OR IGNORE INTO custom_skills(slug, name, description, prompt, category, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (slug, name, desc, prompt, cat, now),
+                    """INSERT OR IGNORE INTO custom_skills(slug, name, description, prompt, category, created_at, required_tools_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (slug, name, desc, prompt, cat, now, tools_json),
+                )
+                self.db.execute(
+                    "UPDATE custom_skills SET required_tools_json=? WHERE slug=? AND (required_tools_json='' OR required_tools_json='[]')",
+                    (tools_json, slug),
                 )
 
     def _log(self, text: str, level: str = "info"):
@@ -240,26 +267,50 @@ class BackgroundJobManager:
 
     async def _exec_folder_digest(self, job_id: int, title: str, params: dict):
         raw_path = str(params.get("path") or "").strip()
-        target = Path(raw_path).expanduser().resolve()
-        if any(tok in target.as_posix().lower() for tok in _BLOCKED_INGEST_TOKENS):
-            raise ValueError("出于安全与隐私保护，拒绝扫描敏感目录或凭据文件。")
-        if not target.exists():
-            raise ValueError(f"路径不存在：{target}")
-        files = [target] if target.is_file() else [
-            p for p in sorted(target.iterdir())
-            if p.is_file()
-            and p.suffix.lower() in {".md", ".txt", ".json", ".csv"}
-            and not any(tok in p.as_posix().lower() for tok in _BLOCKED_INGEST_TOKENS)
-        ][:12]
-        if not files:
-            raise ValueError("目录下未找到可索引的 .md / .txt / .json / .csv 文件。")
+
+        def _scan_chunks():
+            target = Path(raw_path).expanduser().resolve()
+            if is_sensitive_fs_path(target, block_token_substr=True):
+                raise ValueError("出于安全与隐私保护，拒绝扫描敏感目录或凭据文件。")
+            if not target.exists():
+                raise ValueError(f"路径不存在：{target}")
+            def _safe_child(p: Path) -> Path | None:
+                if not p.is_file() or p.is_symlink():
+                    return None
+                try:
+                    rp = p.resolve()
+                except OSError:
+                    return None
+                if rp.suffix.lower() not in {".md", ".txt", ".json", ".csv"}:
+                    return None
+                if is_sensitive_fs_path(rp, block_token_substr=True):
+                    return None
+                return rp
+
+            files = [target] if target.is_file() else [
+                rp for p in sorted(target.iterdir()) if (rp := _safe_child(p)) is not None
+            ][:12]
+            if not files:
+                raise ValueError("目录下未找到可索引的 .md / .txt / .json / .csv 文件。")
+            prepared = []
+            for fpath in files:
+                with fpath.open("rb") as fh:
+                    raw_txt = fh.read(524_288).decode("utf-8", errors="replace")
+                paragraphs = [p.strip() for p in re.split(r"\n\s*\n+", raw_txt) if len(p.strip()) >= 12]
+                if not paragraphs and raw_txt.strip():
+                    paragraphs = [raw_txt.strip()[:2000]]
+                prepared.append((fpath.name, [c[:1500] for c in paragraphs[:12]]))
+            return files, prepared
+
+        files, prepared = await asyncio.to_thread(_scan_chunks)
         event_ids = []
-        for idx, fpath in enumerate(files, 1):
-            pct = 20 + int(70 * idx / len(files))
-            self._update_job(job_id, progress=pct, step_text=f"索引文件 ({idx}/{len(files)}): {fpath.name}")
-            created = self.sag.ingest_file(fpath, max_chunks=12)
-            event_ids.extend(c["id"] for c in created)
-            await asyncio.sleep(0)
+        for idx, (fname, chunks) in enumerate(prepared, 1):
+            pct = 20 + int(70 * idx / len(prepared))
+            self._update_job(job_id, progress=pct, step_text=f"索引文件 ({idx}/{len(prepared)}): {fname}")
+            for c_idx, chunk in enumerate(chunks, 1):
+                ev = self.sag.upsert_event(content=chunk, title=f"{fname} #{c_idx}", source="file", source_ref=f"{fname}#{c_idx}")
+                event_ids.append(ev["id"])
+                await asyncio.sleep(0)
         summary = f"已完成 {len(files)} 份文档分块入库，共写入 {len(event_ids)} 个 SAG 知识节点（{', '.join(f.name for f in files[:4])}）。"
         self._update_job(
             job_id,
@@ -284,6 +335,8 @@ class BackgroundJobManager:
     # ── Standing Watchers (Log Keyword Sentinels) ──
     def add_watcher(self, *, name: str, file_path: str, pattern: str) -> dict:
         p = Path(file_path).expanduser().resolve()
+        if is_sensitive_fs_path(p, block_token_substr=True):
+            raise ValueError("出于安全与隐私保护，拒绝守望敏感凭据或数据库文件。")
         if not p.is_file():
             raise ValueError(f"找不到要守望的文件：{p}")
         try:
@@ -318,19 +371,30 @@ class BackgroundJobManager:
         keys = ("id", "name", "file_path", "pattern", "enabled", "hit_count", "last_hit_text", "created_at")
         return [{**dict(zip(keys, r)), "enabled": bool(r[4])} for r in rows]
 
-    def poll_watchers(self) -> list[dict]:
-        hits = []
-        for w in self.list_watchers():
-            if not w["enabled"]:
+    def has_enabled_watchers(self) -> bool:
+        row = self.db.execute("SELECT 1 FROM standing_watchers WHERE enabled=1 LIMIT 1").fetchone()
+        return row is not None
+
+    @staticmethod
+    def _scan_watcher_chunks_io(
+        enabled_watchers: list[dict],
+        offsets: dict[int, int],
+    ) -> tuple[dict[int, int], list[tuple[dict, list[str]]]]:
+        """Read incremental file chunks & match regexes off the event loop (pure disk/CPU work)."""
+        next_offsets = dict(offsets)
+        events: list[tuple[dict, list[str]]] = []
+        for w in enabled_watchers:
+            try:
+                p = Path(w["file_path"]).expanduser().resolve()
+            except OSError:
                 continue
-            p = Path(w["file_path"])
-            if not p.is_file():
+            if is_sensitive_fs_path(p, block_token_substr=True) or not p.is_file():
                 continue
             try:
                 size = p.stat().st_size
-                prev = self._watcher_offsets.get(w["id"])
+                prev = next_offsets.get(w["id"])
                 if prev is None:
-                    self._watcher_offsets[w["id"]] = size
+                    next_offsets[w["id"]] = size
                     continue
                 if size < prev:
                     prev = 0
@@ -339,63 +403,171 @@ class BackgroundJobManager:
                 with p.open("rb") as fh:
                     fh.seek(prev)
                     chunk = fh.read(min(65536, size - prev))
-                self._watcher_offsets[w["id"]] = prev + len(chunk)
+                next_offsets[w["id"]] = prev + len(chunk)
                 rx = re.compile(w["pattern"], re.I)
-                for line in chunk.decode("utf-8", errors="replace").splitlines():
-                    if rx.search(line):
-                        snippet = line.strip()[:160]
-                        with self.db:
-                            self.db.execute(
-                                "UPDATE standing_watchers SET hit_count=hit_count+1, last_hit_text=? WHERE id=?",
-                                (snippet, w["id"]),
-                            )
-                        hits.append({"watcher_id": w["id"], "name": w["name"], "line": snippet})
-                        if self.on_alert is not None:
-                            self.on_alert(
-                                kind="watcher_hit",
-                                level="warn",
-                                title=f"守望命中 · {w['name']}",
-                                body=snippet,
-                                dedup_key=f"watcher:{w['id']}:{int(time() // 30)}",
-                                cooldown_sec=30,
-                                bypass_budget=True,
-                            )
-                        break
+                matched_lines = [line.strip()[:160] for line in chunk.decode("utf-8", errors="replace").splitlines() if rx.search(line)]
+                if matched_lines:
+                    events.append((w, matched_lines))
             except (OSError, re.error):
                 continue
+        return next_offsets, events
+
+    def _apply_watcher_events(self, next_offsets: dict[int, int], events: list[tuple[dict, list[str]]]) -> list[dict]:
+        self._watcher_offsets.update(next_offsets)
+        hits = []
+        for w, matched_lines in events:
+            last_snip = matched_lines[-1]
+            count = len(matched_lines)
+            with self.db:
+                self.db.execute(
+                    "UPDATE standing_watchers SET hit_count=hit_count+?, last_hit_text=? WHERE id=?",
+                    (count, last_snip, w["id"]),
+                )
+            for snippet in matched_lines:
+                hits.append({"watcher_id": w["id"], "name": w["name"], "line": snippet})
+            if self.on_alert is not None:
+                prefix = f"[命中 {count} 行] " if count > 1 else ""
+                self.on_alert(
+                    kind="watcher_hit",
+                    level="warn",
+                    title=f"守望命中 · {w['name']}",
+                    body=f"{prefix}{last_snip}"[:180],
+                    dedup_key=f"watcher:{w['id']}:{int(time() // 30)}",
+                    cooldown_sec=30,
+                    bypass_budget=True,
+                )
         return hits
 
+    def poll_watchers(self) -> list[dict]:
+        enabled = [w for w in self.list_watchers() if w["enabled"]]
+        if not enabled:
+            return []
+        next_offsets, events = self._scan_watcher_chunks_io(enabled, self._watcher_offsets)
+        return self._apply_watcher_events(next_offsets, events)
+
+    async def poll_watchers_async(self) -> list[dict]:
+        enabled = [w for w in self.list_watchers() if w["enabled"]]
+        if not enabled:
+            return []
+        next_offsets, events = await asyncio.to_thread(self._scan_watcher_chunks_io, enabled, dict(self._watcher_offsets))
+        return self._apply_watcher_events(next_offsets, events)
+
     # ── Self-Authoring Reusable Skills ──
+    @staticmethod
+    def _infer_skill_tools(prompt: str, extra: list[str] | tuple[str, ...] | None = None) -> list[str]:
+        inferred = [str(x).strip() for x in (extra or ()) if str(x).strip()]
+        p = str(prompt or "")
+        rules = (
+            (r"简报|态势", "get_situational_briefing"),
+            (r"做梦|整理|世界模型|冲突", "consolidate_world_model"),
+            (r"复盘|反思|经验规则|RSI", "review_self_lessons"),
+            (r"新闻|热搜|头条", "get_news_headlines"),
+            (r"https?://|抓(?:取)?网页|读网页", "fetch_web_page"),
+            (r"搜|联网|网页|http", "web_search"),
+            (r"天气|下雨|气温", "get_weather"),
+            (r"几点|现在时间|日期|星期几", "get_time"),
+            (r"音量|声音大小", "get_volume"),
+            (r"计算|算一下|利息|复利|折扣", "calculate_math"),
+            (r"几天|推算|倒计时|星期几|周几", "calculate_date"),
+            (r"读.*文件|查看.*文件", "read_local_file"),
+            (r"目录|文件夹|列出文件", "list_local_directory"),
+            (r"日程|会议|排期", "query_calendar"),
+            (r"提醒|闹钟", "list_timers"),
+            (r"例行|周期任务", "list_recurring_tasks"),
+            (r"便签|备忘", "search_notes"),
+            (r"个人记忆|记住的偏好|长期记忆", "search_user_memory"),
+            (r"知识库|SAG|资料", "search_knowledge"),
+            (r"硬件|CPU|GPU|温度|内存", "get_device_status"),
+            (r"曲库分类|有什么歌|歌手列表", "list_media_catalog"),
+            (r"睡眠定时", "set_music_sleep_timer"),
+            (r"音乐|曲库|纯音乐|助眠|播放", "play_song"),
+            (r"打开.*灯|关闭.*灯|空调|调控.*设备", "ha_control_device"),
+            (r"家居|灯光|设备", "ha_list_devices"),
+            (r"组件|看板|对比表|计算器", "render_fui_widget"),
+            (r"能做什么|有哪些能力|工具列表", "list_capabilities"),
+        )
+        for pat, tname in rules:
+            if re.search(pat, p, re.I) and tname not in inferred:
+                inferred.append(tname)
+        return inferred[:12]
+
     def list_skills(self) -> list[dict]:
         rows = self.db.execute(
-            """SELECT id, slug, name, description, prompt, category, use_count, created_at
+            """SELECT id, slug, name, description, prompt, category, use_count, created_at,
+                      COALESCE(required_tools_json, '[]'), COALESCE(steps_json, '[]')
                FROM custom_skills ORDER BY CASE category WHEN 'custom' THEN 0 ELSE 1 END, use_count DESC, id ASC"""
         ).fetchall()
-        keys = ("id", "slug", "name", "description", "prompt", "category", "use_count", "created_at")
-        return [dict(zip(keys, r)) for r in rows]
+        out = []
+        for sid, slug, name, desc, prompt, cat, uc, cat_at, rt_raw, st_raw in rows:
+            try:
+                req_tools = json.loads(rt_raw)
+                if not isinstance(req_tools, list):
+                    req_tools = []
+            except json.JSONDecodeError:
+                req_tools = []
+            if not req_tools:
+                req_tools = self._infer_skill_tools(prompt)
+            try:
+                steps = json.loads(st_raw)
+                if not isinstance(steps, list):
+                    steps = []
+            except json.JSONDecodeError:
+                steps = []
+            out.append({
+                "id": sid, "slug": slug, "name": name, "description": desc,
+                "prompt": prompt, "category": cat, "use_count": uc, "created_at": cat_at,
+                "required_tools": req_tools, "steps": steps,
+            })
+        return out
 
-    def save_skill(self, *, name: str, prompt: str, description: str = "", category: str = "custom") -> dict:
+    def save_skill(
+        self,
+        *,
+        name: str,
+        prompt: str,
+        description: str = "",
+        category: str = "custom",
+        required_tools: list[str] | tuple[str, ...] | None = None,
+        steps: list[dict] | None = None,
+    ) -> dict:
         clean_name = name.strip()[:40]
         clean_prompt = prompt.strip()[:600]
         if not clean_name or not clean_prompt:
             raise ValueError("技能名称与执行指令不能为空。")
         slug = re.sub(r"[^a-z0-9_\u4e00-\u9fff]+", "-", clean_name.casefold()).strip("-")[:32] or f"skill-{int(time())}"
         now = _now_iso()
+        req_list = self._infer_skill_tools(clean_prompt, required_tools)
+        tools_json = json.dumps(req_list, ensure_ascii=False)
+        steps_json = json.dumps(list(steps or ())[:12], ensure_ascii=False)
         with self.db:
             existing = self.db.execute("SELECT id FROM custom_skills WHERE slug=?", (slug,)).fetchone()
             if existing:
                 self.db.execute(
-                    "UPDATE custom_skills SET name=?, description=?, prompt=?, category=? WHERE id=?",
-                    (clean_name, description.strip()[:140], clean_prompt, category[:20], existing[0]),
+                    "UPDATE custom_skills SET name=?, description=?, prompt=?, category=?, required_tools_json=?, steps_json=? WHERE id=?",
+                    (clean_name, description.strip()[:140], clean_prompt, category[:20], tools_json, steps_json, existing[0]),
                 )
             else:
                 self.db.execute(
-                    """INSERT INTO custom_skills(slug, name, description, prompt, category, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (slug, clean_name, description.strip()[:140], clean_prompt, category[:20], now),
+                    """INSERT INTO custom_skills(slug, name, description, prompt, category, created_at, required_tools_json, steps_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (slug, clean_name, description.strip()[:140], clean_prompt, category[:20], now, tools_json, steps_json),
                 )
-        self._log(f"Saved skill [{clean_name}]", level="ok")
+        self._log(f"Saved skill [{clean_name}] (tools={len(req_list)})", level="ok")
         return next(s for s in self.list_skills() if s["slug"] == slug)
+
+    def compile_skill_from_trace(self, *, name: str, user_prompt: str, tool_trace: list[dict]) -> dict:
+        """Synthesize a reusable structured skill macro from an observed successful multi-tool trace."""
+        ok_tools = [str(tr.get("name") or "") for tr in (tool_trace or ()) if tr.get("status") == "ok" and tr.get("name")]
+        unique_tools = list(dict.fromkeys(ok_tools))
+        steps = [{"step": i + 1, "tool": tn} for i, tn in enumerate(unique_tools[:8])]
+        return self.save_skill(
+            name=name,
+            description=f"由成功轨迹沉淀（{len(unique_tools)}步工具链）",
+            prompt=f"按既定工具顺序（{' -> '.join(unique_tools) or '默认推理'}）执行：{user_prompt[:380]}",
+            category="compiled",
+            required_tools=unique_tools,
+            steps=steps,
+        )
 
     def delete_skill(self, skill_id: int) -> bool:
         with self.db:

@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DEFAULT_MOSS_ASSETS = path.resolve(__dirname, '..', 'moss', 'agent-lab', 'prototype', 'static', 'conversation-assets');
-const DEFAULT_MOSS_STATIC = path.resolve(__dirname, '..', 'moss', 'agent-lab', 'prototype', 'static');
+const DEFAULT_MOSS_ASSETS = path.resolve(__dirname, '..', 'static', 'conversation-assets');
+const DEFAULT_MOSS_STATIC = path.resolve(__dirname, '..', 'static');
 
 const args = process.argv.slice(2);
 function getArg(flag, fallback) {
@@ -64,7 +64,12 @@ const WEATHER_CACHE = new Map();
 const WEATHER_TTL_MS = 10 * 60 * 1000;
 
 function safeResolve(baseDir, reqSubpath) {
-  const decoded = decodeURIComponent(reqSubpath.split('?')[0]);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(reqSubpath.split('?')[0]);
+  } catch {
+    return null;
+  }
   const cleaned = decoded.replace(/^\/+/, '').replace(/\\/g, '/');
   const resolved = path.resolve(baseDir, cleaned);
   if (resolved !== baseDir && !resolved.startsWith(baseDir + path.sep)) return null;
@@ -123,7 +128,7 @@ function serveFile(req, res, filePath, cacheControl = 'no-cache') {
 }
 
 function proxyToUpstream(req, res) {
-  const isRuntimeLog = req.url?.startsWith('/conversation/runtime-log');
+  const isRuntimeLog = req.url?.startsWith('/conversation/runtime-log') || req.url?.startsWith('/api/runtime-log/stream');
   if (OFFLINE_MODE) {
     if (isRuntimeLog) {
       res.writeHead(200, {
@@ -152,7 +157,7 @@ function proxyToUpstream(req, res) {
 
   const proxyReq = http.request(
     {
-      hostname: UPSTREAM.hostname,
+      hostname: UPSTREAM.hostname.replace(/^\[|\]$/g, ''),
       port: Number(UPSTREAM.port || 80),
       path: req.url,
       method: req.method,
@@ -302,12 +307,19 @@ async function handleLocalWeather(req, res, parsedUrl) {
 }
 
 const server = http.createServer((req, res) => {
-  const host = req.headers.host || `127.0.0.1:${PORT}`;
-  const parsedUrl = new URL(req.url || '/', `http://${host}`);
+  let parsedUrl;
+  try {
+    const host = req.headers.host || `127.0.0.1:${PORT}`;
+    parsedUrl = new URL(req.url || '/', `http://${host}`);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad Request');
+    return;
+  }
   const pathname = parsedUrl.pathname;
 
   // Reject non-loopback hosts for local safety
-  const hostname = parsedUrl.hostname;
+  const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (!['127.0.0.1', 'localhost', '::1'].includes(hostname)) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Forbidden');
@@ -337,14 +349,18 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 404, { ok: false, error: 'Model not cached locally in offline mode.' });
     }
     const modelUrl = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
-    https.get(modelUrl, { timeout: 10000 }, (resp) => {
+    let settled = false;
+    const reqModel = https.get(modelUrl, { timeout: 10000 }, (resp) => {
       if (resp.statusCode !== 200) {
         resp.resume();
-        return sendJson(res, 502, { ok: false, error: `Upstream HTTP ${resp.statusCode}` });
+        if (!settled) { settled = true; sendJson(res, 502, { ok: false, error: `Upstream HTTP ${resp.statusCode}` }); }
+        return;
       }
       const chunks = [];
       resp.on('data', (c) => chunks.push(c));
       resp.on('end', () => {
+        if (settled) return;
+        settled = true;
         const buf = Buffer.concat(chunks);
         try {
           fs.mkdirSync(path.dirname(localModel), { recursive: true });
@@ -357,10 +373,27 @@ const server = http.createServer((req, res) => {
         });
         res.end(buf);
       });
-    }).on('error', () => sendJson(res, 503, { ok: false, error: 'Model fetch unavailable.' }));
+    });
+    reqModel.on('timeout', () => {
+      reqModel.destroy(new Error('Upstream timeout'));
+    });
+    reqModel.on('error', () => {
+      if (!settled) { settled = true; sendJson(res, 503, { ok: false, error: 'Model fetch unavailable.' }); }
+    });
     return;
   }
   if (pathname === '/fui/shutdown' && req.method === 'POST') {
+    const host = String(req.headers.host || '');
+    const origin = String(req.headers.origin || '');
+    const referer = String(req.headers.referer || '');
+    const sameOrigin = Boolean(host) && (
+      origin === `http://${host}` || origin === `https://${host}` ||
+      (!origin && (referer.startsWith(`http://${host}/`) || referer.startsWith(`https://${host}/`)))
+    );
+    if (!sameOrigin) {
+      sendJson(res, 403, { ok: false, error: 'Forbidden shutdown request.' });
+      return;
+    }
     sendJson(res, 200, { stopping: true });
     setTimeout(() => server.close(() => process.exit(0)), 60);
     return;
@@ -381,8 +414,8 @@ const server = http.createServer((req, res) => {
     const sub = pathname.slice('/conversation-assets/'.length);
     const localAsset = safeResolve(MOSS_ASSETS_DIR, sub);
     if (localAsset && fs.existsSync(localAsset)) {
-      const immutable = /\.(glb|woff2|ttf|mp4|webp|wasm|task)$/i.test(localAsset);
-      return serveFile(req, res, localAsset, immutable ? 'public, max-age=3600' : 'no-cache');
+      const immutable = /\.(glb|woff2|ttf|mp4|webp|wasm|task)$/i.test(localAsset) || (/\.js$/i.test(localAsset) && path.basename(localAsset) !== 'moss-view.js');
+      return serveFile(req, res, localAsset, immutable ? 'public, max-age=86400' : 'no-cache');
     }
     return proxyToUpstream(req, res);
   }
@@ -399,6 +432,9 @@ const server = http.createServer((req, res) => {
   // Standalone FUI routes
   if (pathname === '/' || pathname === '/index.html' || pathname === '/conversation') {
     return serveFile(req, res, path.join(PUBLIC_DIR, 'index.html'), 'no-cache');
+  }
+  if (pathname === '/mobile' || pathname === '/mobile.html') {
+    return serveFile(req, res, path.join(PUBLIC_DIR, 'mobile.html'), 'no-cache');
   }
   if (pathname === '/status' || pathname === '/status.html') {
     return serveFile(req, res, path.join(PUBLIC_DIR, 'status.html'), 'no-cache');

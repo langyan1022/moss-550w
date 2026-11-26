@@ -11,6 +11,7 @@ Polled inside `serve.py`'s background pulse loop; respects quiet mode / meeting 
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 import json
 import re
@@ -63,36 +64,55 @@ def parse_schedule_spec(raw: str) -> dict:
             raise ValueError("时间必须在 00:00 到 23:59 之间")
         return {"kind": "weekly", "weekday": dow, "hour": hh, "minute": mm, "label": f"每{WEEKDAY_NAMES[dow]} {hh:02d}:{mm:02d}"}
 
-    # 2. Natural Chinese formats
-    m_iv = re.search(r"每隔?\s*(\d+)\s*(?:分钟|分|小时|个?钟头)", s)
-    if m_iv:
-        val = int(m_iv.group(1))
-        mins = val * 60 if any(u in m_iv.group(0) for u in ("小时", "钟头")) else val
-        if not 5 <= mins <= 1440:
-            raise ValueError("间隔分钟数需在 5 到 1440 之间")
-        return {"kind": "interval", "every_min": mins, "label": f"每 {mins} 分钟"}
+    # Parse HH:MM or X点Y分 / X点半 (ASCII & basic Chinese numerals 零一二两三四五六七八九十)
+    def _cn_int(tok: str) -> int | None:
+        if tok.isdigit():
+            return int(tok)
+        digits = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+        if tok == "十":
+            return 10
+        if tok in digits:
+            return digits[tok]
+        if tok.startswith("十") and len(tok) == 2 and tok[1] in digits:
+            return 10 + digits[tok[1]]
+        if tok.endswith("十") and len(tok) == 2 and tok[0] in digits:
+            return digits[tok[0]] * 10
+        if len(tok) == 3 and tok[1] == "十" and tok[0] in digits and tok[2] in digits:
+            return digits[tok[0]] * 10 + digits[tok[2]]
+        return None
 
-    # Parse HH:MM or X点Y分 / X点半
+    m_iv = re.search(r"每隔?\s*([0-9]+|[零〇一二两三四五六七八九十]+)\s*(?:分钟|分|小时|个?钟头)", s)
+    if m_iv:
+        val = _cn_int(m_iv.group(1))
+        if val is not None:
+            mins = val * 60 if any(u in m_iv.group(0) for u in ("小时", "钟头")) else val
+            if not 5 <= mins <= 1440:
+                raise ValueError("间隔分钟数需在 5 到 1440 之间")
+            return {"kind": "interval", "every_min": mins, "label": f"每 {mins} 分钟"}
+
     hh = mm = None
     m_hm = re.search(r"(\d{1,2})\s*[:：]\s*(\d{1,2})", s)
     if m_hm:
         hh, mm = int(m_hm.group(1)), int(m_hm.group(2))
     else:
-        m_zh = re.search(r"(\d{1,2})\s*点\s*(半|(\d{1,2})\s*分?)?", s)
+        m_zh = re.search(r"(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*点\s*(半|(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*分?)?", s)
         if m_zh:
-            hh = int(m_zh.group(1))
-            if m_zh.group(2) == "半":
-                mm = 30
-            elif m_zh.group(3):
-                mm = int(m_zh.group(3))
-            else:
-                mm = 0
-    if hh is not None:
-        if any(k in s for k in ("下午", "傍晚", "晚上", "晚间")) and 1 <= hh <= 11:
+            hh = _cn_int(m_zh.group(1))
+            if hh is not None:
+                if m_zh.group(2) == "半":
+                    mm = 30
+                elif m_zh.group(3):
+                    mm = _cn_int(m_zh.group(3))
+                else:
+                    mm = 0
+    if hh is not None and mm is not None:
+        if any(k in s for k in ("凌晨", "半夜")) and hh == 12:
+            hh = 0
+        elif any(k in s for k in ("下午", "傍晚", "晚上", "晚间")) and 1 <= hh <= 11:
             hh += 12
         if not (0 <= hh <= 23 and 0 <= mm <= 59):
             raise ValueError("时间必须在 00:00 到 23:59 之间")
-        m_wk = re.search(r"每周([一二三四五六日天])", s)
+        m_wk = re.search(r"(?:每周|每星期|每(?:个?)?礼拜)([一二三四五六日天])", s)
         if m_wk:
             dow = _DOW_MAP[m_wk.group(1)]
             return {"kind": "weekly", "weekday": dow, "hour": hh, "minute": mm, "label": f"每{WEEKDAY_NAMES[dow]} {hh:02d}:{mm:02d}"}
@@ -108,22 +128,33 @@ class RecurringTaskStore:
     def __init__(self, db: sqlite3.Connection, *, on_log=None):
         self.db = db
         self.on_log = on_log
-        self.db.execute(
-            """CREATE TABLE IF NOT EXISTS recurring_tasks (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                schedule_json TEXT NOT NULL,
-                action_kind TEXT NOT NULL DEFAULT 'reminder',
-                payload TEXT NOT NULL DEFAULT '',
-                enabled INTEGER NOT NULL DEFAULT 1,
-                last_run_at TEXT DEFAULT '',
-                created_at TEXT NOT NULL
-            )"""
-        )
-        self.db.commit()
+        with (nullcontext() if self.db.in_transaction else self.db):
+            self.db.execute(
+                """CREATE TABLE IF NOT EXISTS recurring_tasks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    schedule_json TEXT NOT NULL,
+                    action_kind TEXT NOT NULL DEFAULT 'reminder',
+                    payload TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_run_at TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    owner_code TEXT NOT NULL DEFAULT 'MOSS'
+                )"""
+            )
+            cols = {r[1] for r in self.db.execute("PRAGMA table_info(recurring_tasks)").fetchall()}
+            if "owner_code" not in cols:
+                self.db.execute("ALTER TABLE recurring_tasks ADD COLUMN owner_code TEXT NOT NULL DEFAULT 'MOSS'")
+            self.db.execute("CREATE INDEX IF NOT EXISTS idx_recurring_owner ON recurring_tasks(owner_code, created_at DESC)")
+
+    @staticmethod
+    def _norm_owner(owner_code: str | None) -> str:
+        raw = str(owner_code or "").strip().upper()
+        return raw if raw and raw != "CS" else "MOSS"
 
     def _row_to_dict(self, row) -> dict:
-        tid, name, sched_json, kind, payload, enabled, last_run, created = row
+        tid, name, sched_json, kind, payload, enabled, last_run, created = row[:8]
+        owner_code = str(row[8] if len(row) > 8 and row[8] else "MOSS")
         try:
             sched = json.loads(sched_json)
         except ValueError:
@@ -138,61 +169,96 @@ class RecurringTaskStore:
             "enabled": bool(enabled),
             "last_run_at": last_run or "",
             "created_at": created,
+            "owner_code": owner_code,
         }
 
-    def list_tasks(self) -> list[dict]:
-        rows = self.db.execute(
-            "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at "
-            "FROM recurring_tasks ORDER BY created_at DESC"
-        ).fetchall()
+    def list_tasks(self, *, owner_code: str | None = None) -> list[dict]:
+        if owner_code is not None:
+            owner = self._norm_owner(owner_code)
+            rows = self.db.execute(
+                "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, COALESCE(owner_code, 'MOSS') "
+                "FROM recurring_tasks WHERE COALESCE(owner_code, 'MOSS')=? ORDER BY created_at DESC",
+                (owner,),
+            ).fetchall()
+        else:
+            rows = self.db.execute(
+                "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, COALESCE(owner_code, 'MOSS') "
+                "FROM recurring_tasks ORDER BY created_at DESC"
+            ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
-    def create_task(self, *, name: str, schedule: str, action_kind: str = "reminder", payload: str = "") -> dict:
+    def create_task(
+        self,
+        *,
+        name: str,
+        schedule: str,
+        action_kind: str = "reminder",
+        payload: str = "",
+        owner_code: str = "MOSS",
+    ) -> dict:
         clean_name = (name or "").strip()[:80]
         if not clean_name:
             raise ValueError("周期任务名称不能为空")
-        kind = action_kind if action_kind in {"reminder", "briefing", "dream", "prompt"} else "reminder"
+        kind = action_kind if action_kind in {"reminder", "briefing", "dream", "prompt", "skill"} else "reminder"
         spec = parse_schedule_spec(schedule)
+        owner = self._norm_owner(owner_code)
         tid = uuid.uuid4().hex[:10]
         created = datetime.now().isoformat(timespec="seconds")
-        self.db.execute(
-            "INSERT INTO recurring_tasks (id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?, 1, '', ?)",
-            (tid, clean_name, json.dumps(spec, ensure_ascii=False), kind, (payload or clean_name).strip()[:500], created),
-        )
-        self.db.commit()
+        with (nullcontext() if self.db.in_transaction else self.db):
+            self.db.execute(
+                "INSERT INTO recurring_tasks (id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, owner_code) "
+                "VALUES (?, ?, ?, ?, ?, 1, '', ?, ?)",
+                (tid, clean_name, json.dumps(spec, ensure_ascii=False), kind, (payload or clean_name).strip()[:500], created, owner),
+            )
         if self.on_log:
-            self.on_log(f"创建周期任务 #{tid}「{clean_name}」({spec['label']})", source="PULSE", level="ok")
+            self.on_log(f"创建周期任务 #{tid} [{owner}]「{clean_name}」({spec['label']})", source="PULSE", level="ok")
         return self.get_task(tid)
 
-    def get_task(self, task_id: str) -> dict | None:
-        row = self.db.execute(
-            "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at "
-            "FROM recurring_tasks WHERE id=?",
-            (task_id,),
-        ).fetchone()
+    def get_task(self, task_id: str, *, owner_code: str | None = None) -> dict | None:
+        if owner_code is not None:
+            owner = self._norm_owner(owner_code)
+            row = self.db.execute(
+                "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, COALESCE(owner_code, 'MOSS') "
+                "FROM recurring_tasks WHERE id=? AND COALESCE(owner_code, 'MOSS')=?",
+                (task_id, owner),
+            ).fetchone()
+        else:
+            row = self.db.execute(
+                "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, COALESCE(owner_code, 'MOSS') "
+                "FROM recurring_tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
         return self._row_to_dict(row) if row else None
 
-    def toggle_task(self, task_id: str, enabled: bool) -> dict | None:
-        self.db.execute("UPDATE recurring_tasks SET enabled=? WHERE id=?", (1 if enabled else 0, task_id))
-        self.db.commit()
-        return self.get_task(task_id)
+    def toggle_task(self, task_id: str, enabled: bool, *, owner_code: str | None = None) -> dict | None:
+        with (nullcontext() if self.db.in_transaction else self.db):
+            if owner_code is not None:
+                self.db.execute(
+                    "UPDATE recurring_tasks SET enabled=? WHERE id=? AND COALESCE(owner_code, 'MOSS')=?",
+                    (1 if enabled else 0, task_id, self._norm_owner(owner_code)),
+                )
+            else:
+                self.db.execute("UPDATE recurring_tasks SET enabled=? WHERE id=?", (1 if enabled else 0, task_id))
+        return self.get_task(task_id, owner_code=owner_code)
 
-    def delete_task(self, task_id_or_name: str) -> dict | None:
+    def delete_task(self, task_id_or_name: str, *, owner_code: str | None = None) -> dict | None:
         needle = (task_id_or_name or "").strip()
         if not needle:
             return None
+        norm_owner = self._norm_owner(owner_code) if owner_code is not None else None
+        owner_clause = " AND COALESCE(owner_code, 'MOSS')=?" if norm_owner is not None else ""
+        owner_args = (norm_owner,) if norm_owner is not None else ()
         row = self.db.execute(
-            "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at "
-            "FROM recurring_tasks WHERE id=?",
-            (needle,),
+            f"SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, COALESCE(owner_code, 'MOSS') "
+            f"FROM recurring_tasks WHERE id=?{owner_clause}",
+            (needle, *owner_args),
         ).fetchone()
         if not row:
             escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             matches = self.db.execute(
-                "SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at "
-                "FROM recurring_tasks WHERE name LIKE ? ESCAPE '\\'",
-                (f"%{escaped}%",),
+                f"SELECT id, name, schedule_json, action_kind, payload, enabled, last_run_at, created_at, COALESCE(owner_code, 'MOSS') "
+                f"FROM recurring_tasks WHERE name LIKE ? ESCAPE '\\'{owner_clause}",
+                (f"%{escaped}%", *owner_args),
             ).fetchall()
             if len(matches) == 1:
                 row = matches[0]
@@ -201,14 +267,15 @@ class RecurringTaskStore:
         if not row:
             return None
         item = self._row_to_dict(row)
-        self.db.execute("DELETE FROM recurring_tasks WHERE id=?", (item["id"],))
-        self.db.commit()
+        with (nullcontext() if self.db.in_transaction else self.db):
+            self.db.execute("DELETE FROM recurring_tasks WHERE id=?", (item["id"],))
         return item
 
     def pop_due_tasks(self, now_dt: datetime | None = None) -> list[dict]:
         """Return enabled tasks due at `now_dt`, marking `last_run_at` to prevent duplicate firing."""
         cur = now_dt or datetime.now()
         due: list[dict] = []
+        updates: list[tuple[str, str]] = []
         for task in self.list_tasks():
             if not task["enabled"]:
                 continue
@@ -239,9 +306,11 @@ class RecurringTaskStore:
                         should_fire = True
             if should_fire:
                 stamp = cur.isoformat(timespec="seconds")
-                self.db.execute("UPDATE recurring_tasks SET last_run_at=? WHERE id=?", (stamp, task["id"]))
+                updates.append((stamp, task["id"]))
                 task["last_run_at"] = stamp
                 due.append(task)
-        if due:
-            self.db.commit()
+        if updates:
+            with (nullcontext() if self.db.in_transaction else self.db):
+                for stamp, task_id in updates:
+                    self.db.execute("UPDATE recurring_tasks SET last_run_at=? WHERE id=?", (stamp, task_id))
         return due

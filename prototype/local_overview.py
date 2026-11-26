@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 import re
 import sqlite3
+import sys
 import unicodedata
 
 from assistant_timers import parse_timer
@@ -54,7 +55,7 @@ LABELS = {"clock":"时间", "volume":"系统音量", "cpu":"CPU", "memory":"内�
 
 def local_clock_reply():
     value = datetime.now().astimezone()
-    return f"{value:%Y年%m月%d日}，星期{'一二三四五六日'[value.weekday()]}，{value:%H:%M:%S}。"
+    return f"{value.year:04d}年{value.month:02d}月{value.day:02d}日，星期{'一二三四五六日'[value.weekday()]}，{value:%H:%M:%S}。"
 
 
 def _weather_query(text):
@@ -278,11 +279,14 @@ async def run_local_overview(intent, *, timers, chat_id, calendar_read=None, on_
             elif kind == "weather":
                 if query.get("outside_forecast_range"):
                     return {"kind":kind, "reply":FORECAST_RANGE_REPLY}, {}
-                # The standalone weather handler also imports local_clock_reply.
-                from assistant_brain import (
-                    BROWSER_POSITION_REQUIRED, WEATHER_CLARIFICATION_LIFETIME,
-                    WEATHER_TEMPORARILY_UNAVAILABLE, get_weather, weather_result,
-                )
+                # Resolve via brain.weather_flow with dynamic assistant_brain test-patch hook (avoids circular import).
+                from brain import weather_flow as _wf
+                _ab = sys.modules.get("assistant_brain")
+                BROWSER_POSITION_REQUIRED = getattr(_ab, "BROWSER_POSITION_REQUIRED", _wf.BROWSER_POSITION_REQUIRED)
+                WEATHER_CLARIFICATION_LIFETIME = getattr(_ab, "WEATHER_CLARIFICATION_LIFETIME", _wf.WEATHER_CLARIFICATION_LIFETIME)
+                WEATHER_TEMPORARILY_UNAVAILABLE = getattr(_ab, "WEATHER_TEMPORARILY_UNAVAILABLE", _wf.WEATHER_TEMPORARILY_UNAVAILABLE)
+                get_weather = getattr(_ab, "get_weather", _wf.get_weather)
+                weather_result = getattr(_ab, "weather_result", _wf.weather_result)
 
                 place, part, period, focus = (query[key] for key in ("place", "part_of_day", "period", "focus"))
                 location = intent.get("weather_location")

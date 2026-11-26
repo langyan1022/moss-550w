@@ -5,11 +5,13 @@
  * + Neural Micro-Model 1-Inch Portrait Cutout (MediaPipe SelfieSegmenter WASM + Offline Fallback)
  * + Post-Opening Auth Gate + Live Main-Console Front-Badge & Cutout Dock + MOSS Voice Greeting.
  */
+import { escapeHtml } from './hud/utils.js';
 import { getLocale, t } from './i18n.js';
 import { hasChinese, toPinyinCode } from './pinyin.js';
 import { getMattingStatus, importLocalSegmenterModel, runPortraitCutout } from './portrait-matting.js';
 
 const STORAGE_KEY = 'moss-fui.badge.v1';
+let scopedStorageKey = STORAGE_KEY;
 const PRINT_ASSET = '/conversation-assets/staff-badge-print.svg?v=staff-cs-barcode';
 
 const REFERENCE = {
@@ -129,7 +131,7 @@ function loadConfig() {
 }
 
 function saveConfig(cfg) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
+  try { localStorage.setItem(scopedStorageKey, JSON.stringify(cfg)); } catch { /* ignore */ }
 }
 
 /**
@@ -191,6 +193,14 @@ export function renderCredentialCardHtml(cfg, barcodeStr, face = 'identity') {
     </article>`;
 }
 
+function safePortraitUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/i.test(s)) return s;
+  if (s.startsWith('/') && !s.startsWith('//')) return s;
+  return /^(?:https?:|blob:)/i.test(s) ? s : '';
+}
+
 /** Standard 1-Inch FUI Cutout Portrait (25×35mm) with Synchronized Top-to-Bottom Scan-to-Cutout Wipe. */
 export function renderPortraitHtml(cfg, { compact = false, processing = false, pendingRawUrl = '', scanReveal = false } = {}) {
   const toneClass = cfg.photoArchiveTone ? ' moss-id-photo__img--archive' : '';
@@ -201,7 +211,7 @@ export function renderPortraitHtml(cfg, { compact = false, processing = false, p
 
   // While MediaPipe micro-model is computing, display the original raw photo immediately (never a premature cutout!)
   if (processing) {
-    const previewSrc = pendingRawUrl || cfg.photoRawDataUrl || '';
+    const previewSrc = safePortraitUrl(pendingRawUrl || cfg.photoRawDataUrl || '');
     return `
       <div class="moss-id-photo moss-id-photo--busy${compact ? ' moss-id-photo--compact' : ''}">
         <div class="moss-id-photo__backdrop" aria-hidden="true"></div>
@@ -213,15 +223,17 @@ export function renderPortraitHtml(cfg, { compact = false, processing = false, p
       </div>`;
   }
 
-  if (cfg.photoDataUrl) {
+  const safePhoto = safePortraitUrl(cfg.photoDataUrl);
+  if (safePhoto) {
     // Always clip-reveal top-to-bottom during scanReveal so cutout is NEVER shown before the laser beam passes!
     // When photoRawDataUrl is present, the raw original sits below the beam and is wiped away top-to-bottom.
-    const hasRaw = isCutout && Boolean(cfg.photoRawDataUrl);
+    const safeRaw = safePortraitUrl(cfg.photoRawDataUrl);
+    const hasRaw = isCutout && Boolean(safeRaw);
     return `
       <div class="moss-id-photo${compact ? ' moss-id-photo--compact' : ''}${scanReveal ? ' moss-id-photo--scanning' : ''}">
         <div class="moss-id-photo__backdrop" aria-hidden="true"></div>
-        ${scanReveal && hasRaw ? `<img class="moss-id-photo__raw${toneClass}" src="${escapeHtml(cfg.photoRawDataUrl)}" alt="" aria-hidden="true">` : ''}
-        <img class="moss-id-photo__img${cutoutClass}${toneClass}${scanReveal ? ' moss-id-photo__img--reveal' : ''}" src="${escapeHtml(cfg.photoDataUrl)}" alt="${nameRaw} · ${escapeHtml(t('badge.photo_label'))}">
+        ${scanReveal && hasRaw ? `<img class="moss-id-photo__raw${toneClass}" src="${escapeHtml(safeRaw)}" alt="" aria-hidden="true">` : ''}
+        <img class="moss-id-photo__img${cutoutClass}${toneClass}${scanReveal ? ' moss-id-photo__img--reveal' : ''}" src="${escapeHtml(safePhoto)}" alt="${nameRaw} · ${escapeHtml(t('badge.photo_label'))}">
         ${scanReveal ? '<span class="moss-id-photo__scanbeam" aria-hidden="true"></span>' : ''}
         <span class="moss-id-photo__reticle" aria-hidden="true"></span>
         <span class="moss-id-photo__stamp fui-num" aria-hidden="true">${compact ? (isCutout ? 'MATTE' : '1-IN') : `25×35MM · ${idCode}`}</span>
@@ -256,7 +268,7 @@ export function renderPortraitHtml(cfg, { compact = false, processing = false, p
     </div>`;
 }
 
-export function createBadgeController({ onVerified, onSpeakGreeting, onOpenSettings, onChange } = {}) {
+export function createBadgeController({ onVerified, onSpeakGreeting, onOpenSettings, onChange, deferLocalCache = false } = {}) {
   const dlg = document.getElementById('dlg-badge');
   const stageEl = document.getElementById('badge-stage');
   const flipBtn = document.getElementById('badge-flip');
@@ -304,7 +316,7 @@ export function createBadgeController({ onVerified, onSpeakGreeting, onOpenSetti
   const openFromSettingsBtn = document.getElementById('set-badge-open');
   const speakFromSettingsBtn = document.getElementById('set-badge-speak-btn');
 
-  let cfg = loadConfig();
+  let cfg = deferLocalCache ? { ...DEFAULT_BADGE } : loadConfig();
   let viewMode = 'dual'; // 'dual' | 'front' | 'back'
   let photoProcessing = false;
   let pendingRawPreviewUrl = '';
@@ -379,7 +391,7 @@ export function createBadgeController({ onVerified, onSpeakGreeting, onOpenSetti
     photoFileInput.click();
   }
 
-  function renderCards({ forceScan = false, preserveRunningScan = false } = {}) {
+  function renderCards({ forceScan = false, preserveRunningScan = false, silent = false } = {}) {
     const runScan = Boolean(forceScan || pendingScanReveal) && !photoProcessing;
     if (runScan) {
       pendingScanReveal = false;
@@ -428,7 +440,7 @@ export function createBadgeController({ onVerified, onSpeakGreeting, onOpenSetti
       dualBtn.textContent = t(viewMode === 'dual' ? 'badge.single_view' : 'badge.dual_view');
     }
     syncMattingStatusText();
-    onChange?.({ ...cfg });
+    if (!silent) onChange?.({ ...cfg });
   }
 
   function syncSettingsInputs() {
@@ -615,24 +627,46 @@ export function createBadgeController({ onVerified, onSpeakGreeting, onOpenSetti
   return {
     open,
     getConfig: () => ({ ...cfg }),
-    applyExternalConfig(nextCfg, { forcedClearance = '' } = {}) {
+    applyExternalConfig(nextCfg, { forcedClearance = '', silent = true, storageScope = '' } = {}) {
+      if (storageScope) {
+        const cleanScope = String(storageScope).trim().toUpperCase();
+        scopedStorageKey = !cleanScope || cleanScope === 'MOSS' || cleanScope === 'CS'
+          ? STORAGE_KEY
+          : `${STORAGE_KEY}.${cleanScope}`;
+      }
       if (nextCfg && typeof nextCfg === 'object') {
         cfg = { ...DEFAULT_BADGE, ...nextCfg };
+      } else if (storageScope) {
+        let localSaved = null;
+        try {
+          const raw = localStorage.getItem(scopedStorageKey);
+          if (raw) localSaved = JSON.parse(raw);
+        } catch { /* ignore */ }
+        if (localSaved && typeof localSaved === 'object') {
+          cfg = { ...DEFAULT_BADGE, ...localSaved };
+        } else {
+          const cleanScope = String(storageScope).trim().toUpperCase();
+          cfg = (!cleanScope || cleanScope === 'MOSS' || cleanScope === 'CS')
+            ? { ...DEFAULT_BADGE }
+            : {
+                ...DEFAULT_BADGE,
+                name: cleanScope,
+                latin: cleanScope,
+                idCode: `OP-${cleanScope}`,
+                serial: cleanScope,
+                role: 'OPERATOR',
+                clearance: forcedClearance || 'C',
+                photoDataUrl: '',
+                photoRawDataUrl: '',
+              };
+        }
       }
       if (forcedClearance) cfg.clearance = forcedClearance;
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
+      saveConfig(cfg);
       syncSettingsInputs();
-      renderCards({ preserveRunningScan: true });
+      renderCards({ preserveRunningScan: true, silent });
     },
     isShowAfterOpening: () => Boolean(cfg.showAfterOpening),
     refreshI18n: () => renderCards({ preserveRunningScan: true }),
   };
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

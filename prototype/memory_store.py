@@ -9,17 +9,14 @@ import re
 import unicodedata
 from uuid import uuid4
 
+from cognitive_utils import normalize_owner_code
+
 
 LIMITS = {"context_max_items": 12, "context_max_bytes": 900, "max_item_chars": 160, "max_item_bytes": 360}
 
 
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
-
-
-def normalize_owner_code(owner_code=None):
-    norm = str(owner_code or "").strip().upper()
-    return norm if norm else "MOSS"
 
 
 def install_schema(db):
@@ -56,6 +53,7 @@ def install_schema(db):
                        FROM memories""")
             db.execute("DROP TABLE memories")
             db.execute("ALTER TABLE memories_v2 RENAME TO memories")
+        db.execute("UPDATE memories SET owner_code='MOSS' WHERE owner_code IS NULL OR owner_code=''")
         db.execute("CREATE INDEX IF NOT EXISTS memories_by_owner ON memories(owner_code)")
         turn_columns = {row[1] for row in db.execute("PRAGMA table_info(turns)")}
         if "cloud_requests" not in turn_columns:
@@ -95,15 +93,15 @@ def memories(db, owner_code=None):
     fields = ("id", "text", "created_at", "updated_at", "source", "source_chat", "source_turn", "expires_at", "topic")
     rows = db.execute("""SELECT id,text,created_at,COALESCE(updated_at,created_at),COALESCE(source,'legacy'),
                          source_chat,source_turn,expires_at,topic FROM memories
-                         WHERE COALESCE(owner_code,'MOSS')=? AND (expires_at IS NULL OR expires_at>?) ORDER BY rowid""",
+                         WHERE owner_code=? AND (expires_at IS NULL OR expires_at>?) ORDER BY rowid""",
                       (owner, now()))
     return [dict(zip(fields, row)) for row in rows]
 
 
 SEAT = re.compile(r"靠窗|窗边|临窗|靠过道|过道边|靠走道|靠通道|(?:过道|走道|通道)(?=的?座位)")
 SEAT_NAMES = {"seat.rail": "高铁座位", "seat.air": "飞机座位", "seat": "座位"}
-RAIL = re.compile(r"高铁|火车|铁路|动车|列车")
-AIR = re.compile(r"飞机|航班|机票|乘机|坐飞机")
+RAIL = re.compile(r"高铁|火车|铁路|动车|列车|车次|二等座|一等座")
+AIR = re.compile(r"飞机|航班|机票|乘机|坐飞机|飞行|航程|民航|登机|值机")
 
 
 def seat_topic(text):
@@ -160,13 +158,17 @@ def search_terms(text):
 
 
 CODE_PART = re.compile(r"(?<![a-z0-9_-])[a-z0-9]+(?:[-_][a-z0-9]+)*(?![a-z0-9_-])")
-PERSON_SUBJECT = re.compile(r"^(?:我(?:的)?)?\s*(?:一位|这位|那位|某位)?\s*"
-                            r"(朋友|同事|同学|客户(?!机|端|服务器)|访客|家人|父母|孩子|妈妈|爸爸|妻子|丈夫)")
+PERSON_SUBJECT = re.compile(
+    r"^(?:我(?:的)?)?\s*(?:一位|这位|那位|某位)?\s*"
+    r"(朋友(?!圈)|同事|同学|客户(?!机|端|服务器)|访客|家人|父母|孩子|妈妈|爸爸|我?妈|我?爸|"
+    r"老婆|老公|妻子|丈夫|女友|男友|女朋友|男朋友|对象|爱人|儿子|女儿|哥哥|姐姐|弟弟|妹妹|"
+    r"老板|领导|上司|下属|老[张王李陈杨赵周吴])"
+)
 PERSON_QUERY_PREFIX = re.compile(r"^(?:(?:请问|请|麻烦(?:你)?|帮我|给我|告诉我|查(?:询|查|一下)?|看看|"
                                  r"你(?:还)?记得|你知道|我想知道|我记下的|给|替|为)\s*[，,]?\s*)+")
 PERSON_PREDICATE = r"(?:最?(?:喜欢|偏爱|爱喝|爱吃)|偏好|通常|平时|住在|叫|喝|吃|想(?:按|根据|放|听))"
 PERSON_NAME = re.compile(rf"([\u3400-\u9fff·]{{1,8}}?|[a-z][a-z ]{{0,20}}?)\s*(?:的|(?={PERSON_PREDICATE}))", re.I)
-PERSON_ACTIVITY = re.compile(r"^(?:写|发|买|穿|用|选|做)")
+PERSON_ACTIVITY = re.compile(r"^(?:写|发|买|穿|用|选|做|(?:今[天儿晚]|明[天儿]|平[日时]|通常|一般|最近|现在)?(?:吃|喝|穿|用|几点|在哪|过敏|忌口))")
 SELF_CLAUSE = re.compile(r"(?:^|[，,。；;])\s*我(?:的|平时|通常|习惯|一般)")
 
 
@@ -204,7 +206,7 @@ PERSONAL = re.compile(OWN_CONTEXT.pattern + r"|替我|给我|按我|为我|按.{
 PERSONAL_ADVICE = re.compile(
     r"(?:帮我|给我|为我)(?:推荐|挑(?:选)?|选(?:一个|个)?|搭配|安排|规划|设计)|"
     r"推荐(?:一?个|点|些|几)|适合我|吃什么|喝什么|点什么|穿什么|买什么|"
-    r"下午茶|早饭|早餐|午饭|午餐|晚饭|晚餐|夜宵|忌口|过敏|点单|点菜"
+    r"下午茶|早饭|早餐|午饭|午餐|晚饭|晚餐|夜宵|忌口|过敏|点单|点菜|外卖|调料|配料|禁忌"
 )
 GENERAL = re.compile(r"为什么|为何|原理|介绍|科普|解释|讲解|知识")
 PROPERTY = re.compile(r"的([\u3400-\u9fff]{2,18}?)(?:有多|是多少|叫什么|是什么)")
@@ -315,6 +317,65 @@ def sparse_character_match(query, items):
     return []
 
 
+# Paraphrase concept bridges: match personal topic paraphrases strictly when both query and item
+# share the same concrete life/work cluster, without leaking on unrelated general questions.
+_MEMORY_CONCEPT_CLUSTERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("饮食忌口", ("忌口", "不吃", "去掉", "配料", "调料", "菜品", "点菜", "外卖", "下馆子", "避开"),
+     ("香菜", "葱", "蒜", "姜", "辣", "忌口", "不吃", "乳糖", "海鲜", "花生", "麸质", "折耳根")),
+    ("过敏禁忌", ("过敏", "药物", "看病", "体检", "就医", "禁忌", "注意什么", "不能用", "敏感"),
+     ("过敏", "青霉素", "头孢", "花生", "坚果", "海鲜", "乳糖", "麸质", "花粉")),
+    ("饮品咖啡", ("喝什么", "饮品", "点杯", "提神", "点咖啡", "下午茶", "咖啡", "奶茶", "饮料"),
+     ("美式", "拿铁", "黑咖啡", "不加糖", "无糖", "少冰", "去冰", "燕麦", "茶", "喝")),
+    ("居住城市", ("城市", "住在哪", "哪里工作", "常驻", "居住", "定居", "老家", "所在城市", "同城"),
+     ("住在", "居住", "常驻", "坐标", "定居", "老家", "北京", "上海", "深圳", "广州", "杭州", "成都", "武汉", "南京", "郑州", "西安")),
+    ("开发工具", ("用什么", "编程", "写代码", "语言", "工具", "电脑", "笔记本", "工作内容", "做什么工作", "技术栈", "职业"),
+     ("python", "rust", "go", "java", "typescript", "javascript", "c++", "后端", "前端", "开发", "thinkpad", "macbook", "linux", "量化", "算法")),
+    ("作息习惯", ("几点睡", "几点起", "作息", "睡眠", "习惯", "早上", "熬夜"),
+     ("睡眠", "早起", "早睡", "午休", "运动", "跑步", "游泳", "健身", "作息")),
+    ("交流语气", ("说话", "风格", "怎么称呼", "叫我", "称呼", "回复风格"),
+     ("称呼", "叫我", "简短", "直接", "重点", "客套", "废话")),
+)
+
+
+_NEG_CUE_RE = re.compile(r"不喜欢|不爱|讨厌|拉黑|别放|别点|别给|拒绝|厌恶|不要放|不喝")
+_POS_CUE_RE = re.compile(r"喜欢|爱喝|偏爱|想听|常喝|经常|收藏|最爱")
+
+
+def _polarity_conflict(q_low: str, text_low: str) -> bool:
+    """Detect direct sentiment opposition (e.g., query asks for '喜欢' vs item states '不喜欢/拉黑') without suppressing safety allergies."""
+    q_neg = bool(_NEG_CUE_RE.search(q_low))
+    m_neg = bool(_NEG_CUE_RE.search(text_low))
+    if q_neg == m_neg:
+        return False
+    if "过敏" in text_low or "忌口" in text_low or "注意" in q_low or "点菜" in q_low:
+        return False
+    return bool((_POS_CUE_RE.search(q_low) and m_neg) or (q_neg and _POS_CUE_RE.search(text_low)))
+
+
+def concept_bridge_match(question, items):
+    """Map paraphrased Chinese queries to personal memories using dual-anchor concept clusters with polarity awareness."""
+    q_low = unicodedata.normalize("NFKC", str(question or "")).casefold()
+    if not q_low or not items:
+        return []
+    hits = []
+    for index, item in enumerate(items):
+        text_low = unicodedata.normalize("NFKC", str(item.get("text") or "")).casefold()
+        if not text_low:
+            continue
+        score = 0
+        for _, q_cues, item_cues in _MEMORY_CONCEPT_CLUSTERS:
+            q_hit = sum(1 for kw in q_cues if kw in q_low) + sum(1 for kw in item_cues if kw in q_low)
+            m_hit = sum(1 for kw in item_cues if kw in text_low) + sum(1 for kw in q_cues if kw in text_low)
+            if q_hit >= 1 and m_hit >= 1:
+                score += min(4, q_hit) + min(4, m_hit)
+        if score >= 2 and _polarity_conflict(q_low, text_low):
+            score -= 2
+        if score >= 2:
+            hits.append((score, index))
+    hits.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [index for _, index in hits]
+
+
 def select_memories(question, items):
     if general_question(question) or ignore_personal_memory(question):
         return []
@@ -346,8 +407,9 @@ def select_memories(question, items):
     tokens = search_terms(QUERY_WORDS.sub(" ", GENERIC_PHRASES.sub(" ", details)))
     query = {term for term in tokens if not set(term) <= FUNCTION_CHARS}
     matches = [search_terms(item["text"]) & query for item in items]
-    if re.search(r"座位|坐哪|选座|靠窗|过道|走道", question) or (
-            (RAIL.search(question) or AIR.search(question)) and re.search(r"哪一侧|哪边|选.*位置|挑.*位置", question)):
+    seat_query = bool(re.search(r"座位|坐哪|选座|靠窗|过道|走道", question) or (
+        (RAIL.search(question) or AIR.search(question)) and re.search(r"哪一侧|哪边|挑.*位|选.*位|坐哪边", question)))
+    if seat_query:
         topic = seat_topic(question)
         for item, terms in zip(items, matches):
             if item.get("topic") in SEAT_NAMES:
@@ -359,9 +421,22 @@ def select_memories(question, items):
     weights = {word: math.log1p((len(items) - count + 0.5) / (count + 0.5)) for word, count in frequency.items()}
     order = sorted((i for i, terms in enumerate(matches) if terms),
                    key=lambda i: (math.fsum(weights[word] for word in matches[i]), i), reverse=True)
-    if not order and (subject or PERSONAL.search(question) or question.startswith("我") or detail and "我" in question):
-        order = synonym_match(details, items) or sparse_character_match(details, items)
-    if not order and not subject and not detail and not prop and PERSONAL_ADVICE.search(question):
+    personal_intent = (
+        subject or PERSONAL.search(question) or question.startswith("我") or PERSONAL_ADVICE.search(question)
+        or (detail and "我" in question)
+    )
+    if not seat_query and personal_intent:
+        bridge = (
+            synonym_match(details, items)
+            if not order
+            else concept_bridge_match(details, items)
+        )
+        if not order:
+            order = bridge or concept_bridge_match(details, items) or sparse_character_match(details, items)
+        elif bridge:
+            seen = set(order)
+            order = order + [idx for idx in bridge if idx not in seen]
+    if not order and not subject and not detail and not prop and not seat_query and PERSONAL_ADVICE.search(question):
         order = [i for i, item in enumerate(items)
                  if person_subject(item["text"]) is None and not identifiers(item["text"])]
     return limited_items(items, order)
@@ -442,14 +517,15 @@ def save_memory(db, text, *, source, chat=None, turn=None, target=None, owner_co
         old = same or (candidates[0] if candidates else None)
     elif same and same["id"] != old["id"]:
         raise ValueError("已有另一条相同内容的记忆")
-    if old and old["text"] == text and (expires is None or expires == old["expires_at"]):
+    if old and old["text"] == text and (expires is None and old["expires_at"] is None or expires == old["expires_at"]):
         return old["id"], "unchanged"
     stamp = now()
     db.execute("DELETE FROM memories WHERE COALESCE(owner_code,'MOSS')=? AND text=? AND expires_at<=?", (owner, text, stamp))
     if old:
+        new_expires = expires
         db.execute("""UPDATE memories SET text=?,topic=?,updated_at=?,source=?,source_chat=?,source_turn=?,expires_at=?
                       WHERE id=? AND COALESCE(owner_code,'MOSS')=?""",
-                   (text, topic, stamp, source, chat, turn, expires or old["expires_at"], old["id"], owner))
+                   (text, topic, stamp, source, chat, turn, new_expires, old["id"], owner))
         return old["id"], "updated"
     key = uuid4().hex
     db.execute("""INSERT INTO memories(id,text,created_at,updated_at,source,source_chat,source_turn,expires_at,topic,owner_code)
@@ -595,7 +671,7 @@ def memory_command(text):
         r"(?=我的|我叫|我是|我喜欢|我不喜欢|我希望|我习惯|我住在|我听歌|我平时|我通常|以后))(.+)",
         text, re.S,
     )
-    if save:
+    if save and not re.search(r"顺便|顺带|并且|同时|还要|另外|以及|提醒|闹钟|倒计时|查一下|天气|新闻|放一首|播放", text):
         return "remember", save[1].strip()
     if re.fullmatch(r"(?:请(?:你)?|帮我)?记住\s*[：:]\s*", text):
         raise ValueError("请在“记住：”后输入要保存的内容")

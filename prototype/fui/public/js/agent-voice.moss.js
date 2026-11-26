@@ -26,26 +26,34 @@ function playbackVoiceBlocks(blocks, rate, {elapsed, firstVoice, lastVoice}) {
   return kept;
 }
 
-export function pcmWav(chunks, sampleRate) {
+export function pcm16ResampleBytes(chunks, sampleRate) {
   const length = chunks.reduce((sum, block) => sum + block.length, 0);
   const samples = new Float32Array(length);
   let offset = 0;
   for (const block of chunks) { samples.set(block, offset); offset += block.length; }
   const count = Math.floor(length * 16000 / sampleRate);
-  const buffer = new ArrayBuffer(44 + 2 * count);
-  const view = new DataView(buffer);
-  const ascii = (pos, text) => [...text].forEach((char, i) => view.setUint8(pos + i, char.charCodeAt(0)));
-  ascii(0, "RIFF"); view.setUint32(4, 36 + 2 * count, true); ascii(8, "WAVE"); ascii(12, "fmt ");
-  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-  view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true); ascii(36, "data"); view.setUint32(40, 2 * count, true);
+  const pcmBuf = new ArrayBuffer(2 * count);
+  const view = new DataView(pcmBuf);
   for (let i = 0; i < count; i++) {
     const a = Math.floor(i * sampleRate / 16000), b = Math.min(length, Math.max(a + 1, Math.floor((i + 1) * sampleRate / 16000)));
     let total = 0;
     for (let j = a; j < b; j++) total += samples[j];
     const value = Math.max(-1, Math.min(1, total / (b - a)));
-    view.setInt16(44 + 2 * i, Math.round(value * (value < 0 ? 32768 : 32767)), true);
+    view.setInt16(2 * i, Math.round(value * (value < 0 ? 32768 : 32767)), true);
   }
+  return new Uint8Array(pcmBuf);
+}
+
+export function pcmWav(chunks, sampleRate) {
+  const pcm = pcm16ResampleBytes(chunks, sampleRate);
+  const buffer = new ArrayBuffer(44 + pcm.byteLength);
+  const view = new DataView(buffer);
+  const ascii = (pos, text) => [...text].forEach((char, i) => view.setUint8(pos + i, char.charCodeAt(0)));
+  ascii(0, "RIFF"); view.setUint32(4, 36 + pcm.byteLength, true); ascii(8, "WAVE"); ascii(12, "fmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true); ascii(36, "data"); view.setUint32(40, pcm.byteLength, true);
+  new Uint8Array(buffer, 44).set(pcm);
   return new Blob([buffer], {type: "audio/wav"});
 }
 
@@ -200,6 +208,51 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
     if (preview && body.text === null) return null;
     return body.text?.trim() || "";
   }
+  async function transcribeStreamed(blocks, rate, signal, preview = false) {
+    try {
+      const pcm = pcm16ResampleBytes(blocks, rate);
+      if (pcm.byteLength < 6400) return transcribeWav(pcmWav(blocks, rate), signal, preview);
+      const stResp = await fetch("/api/transcribe/stream/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal,
+      });
+      if (!stResp.ok) return transcribeWav(pcmWav(blocks, rate), signal, preview);
+      const { session: sid } = await stResp.json();
+      if (!sid) return transcribeWav(pcmWav(blocks, rate), signal, preview);
+      const SLICE = 64000;
+      for (let off = 0; off < pcm.byteLength; off += SLICE) {
+        const part = pcm.subarray(off, Math.min(pcm.byteLength, off + SLICE));
+        const chResp = await fetch(`/api/transcribe/stream/chunk?session=${encodeURIComponent(sid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: part,
+          signal,
+        });
+        if (!chResp.ok) {
+          void fetch("/api/transcribe/stream/reset", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session: sid }),
+          }).catch(() => {});
+          return transcribeWav(pcmWav(blocks, rate), signal, preview);
+        }
+      }
+      const cmResp = await fetch("/api/transcribe/stream/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session: sid, preview: Boolean(preview) }),
+        signal,
+      });
+      if (!cmResp.ok) return transcribeWav(pcmWav(blocks, rate), signal, preview);
+      const body = await cmResp.json();
+      return body.text?.trim() || "";
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      return transcribeWav(pcmWav(blocks, rate), signal, preview);
+    }
+  }
   async function transcription(blocks, rate, signal, preview) {
     const wav = pcmWav(blocks, rate);
     if (preview && preview.wav.size === wav.size) {
@@ -210,7 +263,7 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
         if (text !== null) return text;
       }
     }
-    return transcribeWav(wav, signal);
+    return transcribeStreamed(blocks, rate, signal);
   }
   function previewConversation(session, samples, rate) {
     if (session.kind !== "conversation") return;
@@ -230,6 +283,39 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
     // A pause followed by more speech invalidates the first draft. Allow one replacement.
     session.recognitionPreview = {wav, voicedSeconds, rearmed:Boolean(previous),
       result:transcribeWav(wav, session.aborter.signal, true).catch(() => null)};
+  }
+  function probeSmartTurn(session, rate) {
+    if (background || speaking || session.busy || session.probing || !owns(session)) return;
+    const timing = session.endpoint?.speechTiming;
+    if (!timing?.lastVoice || session.endpoint.voicedSeconds < .26) return;
+    if (session.endpoint.silenceSeconds < .42 || session.smartTurnInFlight) return;
+    if (session.smartTurnProbedAt === timing.lastVoice) return;
+    session.smartTurnProbedAt = timing.lastVoice;
+    session.smartTurnInFlight = true;
+    const pcmAll = pcm16ResampleBytes(session.blocks, rate);
+    const clip = pcmAll.byteLength > 256000 ? pcmAll.subarray(pcmAll.byteLength - 256000) : pcmAll;
+    const probeCtl = new AbortController();
+    const timer = setTimeout(() => probeCtl.abort(), 260);
+    const sig = session.aborter?.signal;
+    const onSessionAbort = () => probeCtl.abort();
+    sig?.addEventListener("abort", onSessionAbort, { once: true });
+    void fetch("/api/transcribe/turn-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: clip,
+      signal: probeCtl.signal,
+    }).then(r => r.ok ? r.json() : null).then(res => {
+      if (!res?.available || !owns(session) || speaking || session.endpoint?.speechTiming?.lastVoice !== timing.lastVoice) return;
+      if (res.complete && Number(res.probability ?? 0) >= 0.52) {
+        session.endpoint.setAdaptiveSilence?.(0.40);
+      } else if (Number(res.probability ?? 0.5) < 0.42) {
+        session.endpoint.setAdaptiveSilence?.(2.20);
+      }
+    }).catch(() => {}).finally(() => {
+      clearTimeout(timer);
+      sig?.removeEventListener("abort", onSessionAbort);
+      session.smartTurnInFlight = false;
+    });
   }
   function showSpokenStop(session, finished = false) {
     if (session.kind === "conversation") {
@@ -431,7 +517,7 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
       const { stream, track: openedTrack, meta, failedIds = [] } = await openBestMicStream({
         preferredId: inputs.value || "",
         skipIds: activeSkipIds(),
-        baseAudio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        baseAudio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         onSelected: (info) => {
           session.activeMeta = info;
           inputs.setTrack(null, info);
@@ -451,6 +537,18 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
       }
       // 授权后让本机识别器与录音同时启动。准备失败时，提交录音仍会尝试启动。
       void prepareInput();
+      if (!session.permission && navigator.permissions?.query) {
+        void navigator.permissions.query({ name: "microphone" }).then((perm) => {
+          if (!perm || !owns(session)) return;
+          session.permission = perm;
+          perm.addEventListener("change", () => {
+            if (perm.state !== "granted" && owns(session)) {
+              disableWake();
+              cancel("麦克风权限已收回，请重新授权。");
+            }
+          }, { signal: session.aborter.signal });
+        }).catch(() => {});
+      }
       const context = session.context = new AudioContext();
       await context.audioWorklet.addModule("/static/voice-capture.js");
       if (!canContinue(session)) { abortOpen(session); return; }
@@ -531,12 +629,14 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
           } else if (result === "idle") {
             resetCapture(session);
           } else {
+            probeSmartTurn(session, context.sampleRate);
             previewConversation(session, data, context.sampleRate);
             probeSpokenStop(session, context.sampleRate);
           }
         } else {
           if (result === "done") recognize(session);
-          if (result === "idle") { cancel("没有听到说话，本次语音输入已结束。"); resumeWake(); }
+          else if (result === "idle") { cancel("没有听到说话，本次语音输入已结束。"); resumeWake(); }
+          else probeSmartTurn(session, context.sampleRate);
         }
       };
       if (background) {
@@ -622,6 +722,7 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
     if (current?.kind === "conversation") {
       speaking = false;
       captureGeneration++;
+      playbackSegments.length = 0;
       current.echoUntil = performance.now() + ECHO_TAIL_MS;
       if (!current.endpoint.heard) resetCapture(current);
       return;
@@ -682,7 +783,10 @@ export function activateVoice({send, status, draw, onInterrupt, onNextListening,
     void begin("native-next", {eligible, permission});
   }
 
-  return {toggle:() => begin(), stop:note=>{ disableWake(); cancel(note); }, listenAfterWake,
+  return {toggle:() => begin(), stop:note=>{ disableWake(); cancel(note); },
+    pause:note=>{ clearTimeout(resumeTimer); cancel(note); },
+    resumeWake: () => { if (wake.checked && !current && !speaking) resumeWake(200); },
+    listenAfterWake,
     stopNativeNext:() => { if (current?.kind === "native-next") cancel("本次接续录音已结束。"); },
     active:() => current?.kind === "conversation" || current?.kind === "native-next"};
 }

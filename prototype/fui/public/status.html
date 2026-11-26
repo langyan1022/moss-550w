@@ -171,6 +171,8 @@
     function lockForAuth(msg) {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = 0; }
       if (logStream) { logStream.close(); logStream = null; }
+      const pageEl = document.querySelector('.moss-status-page');
+      if (pageEl) pageEl.inert = true;
       if (authErr) {
         authErr.textContent = msg || '请先输入 4 位 550W 授权码';
         authErr.hidden = !msg;
@@ -231,19 +233,24 @@
       if (near !== logFollow) { logFollow = near; syncFollow(); }
     });
 
+    let authRole = 'CS';
     function connectLogStream() {
       if (logStream) logStream.close();
-      fetch('/api/runtime-log/source', { cache: 'no-store' })
-        .then(r => {
-          if (r.status === 401) { lockForAuth('需要验证 4 位授权码'); return null; }
-          return r.ok ? r.json() : null;
-        })
-        .then(info => {
-          if (!info || !logSrcEl) return;
-          const p = info.extra_path || info.runtime_log || 'moss-runtime.log';
-          logSrcEl.textContent = p.split(/[\\/]/).at(-1);
-          logSrcEl.title = p;
-        }).catch(() => {});
+      if (authRole === 'CS') {
+        fetch('/api/runtime-log/source', { cache: 'no-store' })
+          .then(r => {
+            if (r.status === 401) { lockForAuth('需要验证 4 位授权码'); return null; }
+            return r.ok ? r.json() : null;
+          })
+          .then(info => {
+            if (!info || !logSrcEl) return;
+            const p = info.extra_path || info.runtime_log || 'moss-runtime.log';
+            logSrcEl.textContent = p.split(/[\\/]/).at(-1);
+            logSrcEl.title = p;
+          }).catch(() => {});
+      } else if (logSrcEl) {
+        logSrcEl.textContent = 'C-RESTRICTED';
+      }
       logStream = new EventSource('/api/runtime-log/stream');
       logStream.onmessage = ev => {
         if (!logList) return;
@@ -282,6 +289,8 @@
     }
 
     function startStatusLive() {
+      const pageEl = document.querySelector('.moss-status-page');
+      if (pageEl) pageEl.inert = false;
       if (authOverlay) authOverlay.hidden = true;
       void poll();
       if (!pollTimer) pollTimer = setInterval(poll, 5000); // fui-lint-ignore: R15 5s hardware telemetry poll; skips when tab hidden
@@ -291,12 +300,23 @@
     authForm?.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       if (authErr) authErr.hidden = true;
-      const resp = await fetch('/api/auth/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: authInput?.value || '' }),
-      });
+      let resp;
+      try {
+        resp = await fetch('/api/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: authInput?.value || '' }),
+        });
+      } catch {
+        if (authErr) {
+          authErr.textContent = '网络或服务连接失败，请稍后重试';
+          authErr.hidden = false;
+        }
+        return;
+      }
       if (resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        authRole = d.role || 'CS';
         if (authInput) authInput.value = '';
         startStatusLive();
       } else {
@@ -321,6 +341,7 @@
         const r = await fetch('/api/auth/status', { cache: 'no-store' });
         if (r.ok) {
           const info = await r.json();
+          authRole = info.role || 'CS';
           if (info.enabled && !info.authorized) {
             lockForAuth('');
             return;

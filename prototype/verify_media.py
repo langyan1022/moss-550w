@@ -6,13 +6,13 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-from browser_lab import BrowserServer, ROOT, open_browser
+from testkit import BrowserServer, ROOT, open_browser, safe_free_port
 from verify_memory import send
 
 
 async def run():
     folder = ROOT / "runs" / datetime.now().strftime("media-browser-%Y%m%d-%H%M%S")
-    server = BrowserServer(folder, 18248, model_url="http://127.0.0.1:18278/v1")
+    server = BrowserServer(folder, safe_free_port(), model_url="http://127.0.0.1:18378/v1")
     report = {"passed": False, "turns": []}
     try:
         await server.start()

@@ -3,14 +3,7 @@
  * + Safe Declarative Generative FUI Widget Renderer (sliders, comparison tables, checklists, metrics).
  */
 import { t } from './i18n.js';
-
-function esc(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
+import { escapeHtml as esc } from './hud/utils.js';
 
 /* ── Safe Recursive-Descent Arithmetic Evaluator for Generative FUI Calculators (zero eval) ── */
 function safeEvalExpr(expr, vars) {
@@ -25,6 +18,11 @@ function safeEvalExpr(expr, vars) {
     if (/[0-9.]/.test(ch)) {
       let j = i;
       while (j < src.length && /[0-9.]/.test(src[j])) j += 1;
+      if ((src[j] === 'e' || src[j] === 'E') && j + 1 < src.length && /[0-9+-]/.test(src[j + 1])) {
+        j += 1;
+        if (src[j] === '+' || src[j] === '-') j += 1;
+        while (j < src.length && /[0-9]/.test(src[j])) j += 1;
+      }
       tokens.push({ type: 'num', val: Number(src.slice(i, j)) });
       i = j;
       continue;
@@ -93,6 +91,9 @@ function safeEvalExpr(expr, vars) {
         if (tok.val === 'pow') return Math.pow(args[0], args[1]);
         if (tok.val === 'sqrt') return Math.sqrt(args[0]);
         if (tok.val === 'round') return Math.round(args[0]);
+        if (tok.val === 'floor') return Math.floor(args[0]);
+        if (tok.val === 'ceil') return Math.ceil(args[0]);
+        if (tok.val === 'log') return Math.log(args[0]);
         if (tok.val === 'min') return Math.min(...args);
         if (tok.val === 'max') return Math.max(...args);
         if (tok.val === 'abs') return Math.abs(args[0]);
@@ -110,7 +111,7 @@ function safeEvalExpr(expr, vars) {
   }
   try {
     const out = parseExpr();
-    return Number.isFinite(out) ? out : NaN;
+    return Number.isFinite(out) && pos === tokens.length ? out : NaN;
   } catch {
     return NaN;
   }
@@ -153,7 +154,8 @@ export function renderGenerativeWidget(widget) {
       const min = Number.isFinite(Number(inp.min)) ? Number(inp.min) : 0;
       const max = Number.isFinite(Number(inp.max)) ? Number(inp.max) : 100;
       const step = Number.isFinite(Number(inp.step)) && Number(inp.step) > 0 ? Number(inp.step) : 1;
-      const init = Number.isFinite(Number(inp.value)) ? Number(inp.value) : min;
+      const rawInit = Number.isFinite(Number(inp.value)) ? Number(inp.value) : min;
+      const init = Math.min(max, Math.max(min, rawInit));
       state[id] = init;
 
       const row = document.createElement('label');
@@ -204,6 +206,11 @@ export function renderGenerativeWidget(widget) {
       const checked = it?.done ? ' checked' : '';
       const text = typeof it === 'string' ? it : (it?.text || '');
       li.innerHTML = `<label class="moss-check"><input type="checkbox"${checked}><span>${esc(text)}</span></label>`;
+      const cb = li.querySelector('input');
+      cb?.addEventListener('change', () => {
+        if (it && typeof it === 'object') it.done = cb.checked;
+        li.dataset.done = String(cb.checked);
+      });
       list.append(li);
     }
     body.append(list);
@@ -234,6 +241,7 @@ async function apiJson(url, options = {}) {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
   const data = await resp.json().catch(() => ({}));
+  if (resp.status === 401) window.dispatchEvent(new CustomEvent('moss-auth-required'));
   if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
   return data;
 }
@@ -259,13 +267,19 @@ export function createBrainDeckController({
 
   // RSI tab elements
   const rsiRunBtn = document.getElementById('brain-rsi-run');
+  const rsiEvalBtn = document.getElementById('brain-rsi-eval-btn');
   const rsiStatusEl = document.getElementById('brain-rsi-status');
   const rsiListEl = document.getElementById('brain-rsi-list');
+  const rsiCyclesEl = document.getElementById('brain-rsi-cycles');
+  const telemetrySummaryEl = document.getElementById('brain-telemetry-summary');
+  const providerHealthEl = document.getElementById('brain-provider-health');
 
   // SAG tab elements
+  const sagMetaEl = document.getElementById('brain-sag-meta');
   const sagEntitiesEl = document.getElementById('brain-sag-entities');
   const sagSearchForm = document.getElementById('brain-sag-search-form');
   const sagSearchInput = document.getElementById('brain-sag-search-input');
+  const sagIncludeStaleEl = document.getElementById('brain-sag-include-stale');
   const sagSearchResult = document.getElementById('brain-sag-search-result');
   const sagIngestForm = document.getElementById('brain-sag-ingest-form');
   const sagTitleInput = document.getElementById('brain-sag-title');
@@ -280,6 +294,8 @@ export function createBrainDeckController({
   const dreamBtn = document.getElementById('brain-dream-btn');
   const briefingBox = document.getElementById('brain-briefing-box');
   const worldModelBox = document.getElementById('brain-world-model');
+  const pulseBanditEl = document.getElementById('brain-pulse-bandit');
+  const pulseAlertsEl = document.getElementById('brain-pulse-alerts');
 
   // Jobs & Skills tab elements
   const jobForm = document.getElementById('brain-job-form');
@@ -290,6 +306,17 @@ export function createBrainDeckController({
   const skillForm = document.getElementById('brain-skill-form');
   const skillNameEl = document.getElementById('brain-skill-name');
   const skillPromptEl = document.getElementById('brain-skill-prompt');
+  const watcherForm = document.getElementById('brain-watcher-form');
+  const watcherNameEl = document.getElementById('brain-watcher-name');
+  const watcherPathEl = document.getElementById('brain-watcher-path');
+  const watcherPatternEl = document.getElementById('brain-watcher-pattern');
+  const watchersListEl = document.getElementById('brain-watchers-list');
+  const routineForm = document.getElementById('brain-routine-form');
+  const routineNameEl = document.getElementById('brain-routine-name');
+  const routineSchedEl = document.getElementById('brain-routine-schedule');
+  const routineKindEl = document.getElementById('brain-routine-kind');
+  const routinePayloadEl = document.getElementById('brain-routine-payload');
+  const routinesListEl = document.getElementById('brain-routines-list');
 
   // IoT & Physical 550W Hardware tab elements
   const haForm = document.getElementById('brain-ha-form');
@@ -299,12 +326,15 @@ export function createBrainDeckController({
   const haEnabledEl = document.getElementById('brain-ha-enabled');
   const haMsgEl = document.getElementById('brain-ha-msg');
   const haRefreshBtn = document.getElementById('brain-ha-refresh');
+  const haDiscoverBtn = document.getElementById('brain-ha-mcp-discover');
   const haDevicesEl = document.getElementById('brain-ha-devices');
   const hwModeButtons = [...document.querySelectorAll('[data-hw-mode]')];
   const hwGestureButtons = [...document.querySelectorAll('[data-hw-gesture]')];
   const hwYawEl = document.getElementById('brain-hw-yaw');
   const hwPitchEl = document.getElementById('brain-hw-pitch');
   const hwStatusEl = document.getElementById('brain-hw-status');
+  const hwSensorsEl = document.getElementById('brain-hw-sensors');
+  const iotActionsEl = document.getElementById('brain-iot-actions');
   const mobileLinkEl = document.getElementById('brain-mobile-link');
 
   // Proactive Toast Strip on main console
@@ -321,14 +351,55 @@ export function createBrainDeckController({
 
   let overview = null;
   let activeAlertId = null;
+  let activeTab = 'rsi';
+  let hwStream = null;
+
+  function renderHwFrameLine(frame) {
+    if (!hwStatusEl || !frame) return;
+    const sub = overview?.iot?.hardware_stream_subscribers ?? 0;
+    const sat = frame.satellite;
+    const satTxt = sat?.room
+      ? ` · 卫星[${sat.room}${sat.vad_active ? '/VAD' : ''}]`
+      : '';
+    hwStatusEl.textContent = `帧 #${frame.seq ?? 0} · 灯态 ${frame.mode || 'standby'} · 舵机 (${frame.servo?.yaw_deg ?? 0}°, ${frame.servo?.pitch_deg ?? 0}°) · 订阅终端 ${sub}${satTxt}`;
+  }
+
+  function closeHwStream() {
+    if (hwStream) {
+      hwStream.close();
+      hwStream = null;
+    }
+  }
+
+  function syncHwStream() {
+    const want = Boolean(dlg?.open && activeTab === 'iot' && getMode?.() === 'live' && overview && !overview.iot?.restricted);
+    if (!want) {
+      closeHwStream();
+      return;
+    }
+    if (hwStream) return;
+    hwStream = new EventSource('/api/hardware/moss/stream');
+    hwStream.addEventListener('hw-frame', (ev) => {
+      try {
+        renderHwFrameLine(JSON.parse(ev.data));
+      } catch { /* ignore */ }
+    });
+    hwStream.onerror = () => {
+      if (!dlg?.open || activeTab !== 'iot') closeHwStream();
+    };
+  }
 
   function setTab(name) {
-    for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.brainTab === name));
-    for (const pane of panes) pane.hidden = pane.dataset.brainPane !== name;
+    activeTab = name || 'rsi';
+    for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.brainTab === activeTab));
+    for (const pane of panes) pane.hidden = pane.dataset.brainPane !== activeTab;
+    syncHwStream();
   }
   for (const tab of tabs) {
     tab.addEventListener('click', () => setTab(tab.dataset.brainTab));
   }
+  dlg?.addEventListener('close', closeHwStream);
+  window.addEventListener('pagehide', closeHwStream);
 
   function renderOverview(data) {
     if (!data) return;
@@ -386,16 +457,67 @@ export function createBrainDeckController({
           btn.className = 'fui-btn';
           btn.textContent = t('brain.retire');
           btn.addEventListener('click', async () => {
-            await fetch(`/api/rsi/lessons/${l.id}`, { method: 'DELETE' });
-            await refresh();
+            btn.disabled = true;
+            try {
+              await apiJson(`/api/rsi/lessons/${l.id}`, { method: 'DELETE' });
+              await refresh();
+            } catch (err) {
+              onAddLog?.({ time: Date.now(), source: 'RSI', text: err.message, level: 'warn' });
+              btn.disabled = false;
+            }
           });
           li.append(btn);
           return li;
         }));
       }
     }
+    if (rsiCyclesEl) {
+      const cycles = rsi.recent_cycles || [];
+      if (!cycles.length) {
+        rsiCyclesEl.innerHTML = `<li class="moss-card__meta">—</li>`;
+      } else {
+        rsiCyclesEl.replaceChildren(...cycles.slice(0, 4).map(c => {
+          const li = document.createElement('li');
+          li.className = 'moss-modal-row';
+          const pct = Math.round(Number(c.eval_pass_rate ?? 1) * 100);
+          li.innerHTML = `<div class="moss-modal-row__main"><p class="moss-modal-row__text"><span class="fui-badge" data-state="${pct >= 80 ? 'ok' : 'warn'}">#${c.id} · ${esc(c.trigger)}</span> ${esc(c.summary || '')}</p>`
+            + `<span class="moss-modal-row__meta fui-num">REPLAY ${pct}% · +${c.lessons_added} ~${c.lessons_merged} -${c.lessons_retired}</span></div>`;
+          return li;
+        }));
+      }
+    }
+    if (telemetrySummaryEl) {
+      const tt = data.telemetry_totals || {};
+      telemetrySummaryEl.textContent = tt.turns_counted || tt.avg_reply_ms
+        ? `RECENT ${tt.turns_counted ?? 0}T · ${tt.total_tokens ?? 0} TOK · AVG ${tt.avg_reply_ms ?? 0}ms`
+        : '';
+    }
+    if (providerHealthEl) {
+      const ph = data.provider_health || {};
+      const entries = Object.entries(ph);
+      if (!entries.length) {
+        providerHealthEl.innerHTML = `<li class="moss-card__meta">—</li>`;
+      } else {
+        providerHealthEl.replaceChildren(...entries.map(([pid, st]) => {
+          const li = document.createElement('li');
+          li.className = 'moss-modal-row';
+          const cooling = Number(st.cooldown_remaining_s || 0) > 0;
+          const badge = cooling ? 'crit' : Number(st.failures || 0) > 0 ? 'warn' : 'ok';
+          const label = cooling ? `COOLDOWN ${Math.ceil(st.cooldown_remaining_s)}s` : `${Math.round(st.ewma_ms || 0)}ms`;
+          li.innerHTML = `<div class="moss-modal-row__main"><p class="moss-modal-row__text"><span class="fui-badge" data-state="${badge}">${esc(pid.toUpperCase())} · ${esc(label)}</span>`
+            + ` OK ${st.successes ?? 0} · FAIL ${st.failures ?? 0} · FAILOVER ${st.failover_hits ?? 0}</p></div>`;
+          return li;
+        }));
+      }
+    }
 
-    // 2. SAG top entities
+    // 2. SAG v7 status & top entities
+    if (sagMetaEl) {
+      const vecBadge = sag.sqlite_vec_enabled ? `sqlite-vec` : 'dense-fallback';
+      const dimTxt = sag.neural_vector_dim ? `BGE ${sag.neural_vector_dim}d` : 'LEXICAL';
+      const expTxt = sag.invalidated_count ?? 0;
+      sagMetaEl.textContent = `INDEX ${vecBadge} · ${dimTxt} · 历史已废止 ${expTxt} 条`;
+    }
     if (sagEntitiesEl) {
       const ents = sag.top_entities || [];
       if (!ents.length) {
@@ -436,6 +558,61 @@ export function createBrainDeckController({
           + `</div>${conflictsHtml}`;
       }
     }
+    if (pulseBanditEl) {
+      const bstats = pulse.bandit_stats || [];
+      pulseBanditEl.textContent = bstats.length
+        ? `BANDIT: ${bstats.slice(0, 4).map((b) => {
+            const p = Number(b.alpha || 1) / Math.max(1e-6, Number(b.alpha || 1) + Number(b.beta || 1));
+            return `${b.kind}@${b.context_key}=${Math.round(p * 100)}% (+${b.accepts ?? 0}/-${b.dismisses ?? 0})`;
+          }).join(' · ')}`
+        : 'BANDIT: COLD-START PRIOR';
+    }
+    if (pulseAlertsEl) {
+      const alerts = pulse.alerts || [];
+      if (!alerts.length) {
+        pulseAlertsEl.innerHTML = `<li class="moss-card__meta">—</li>`;
+      } else {
+        pulseAlertsEl.replaceChildren(...alerts.slice(0, 12).map((al) => {
+          const li = document.createElement('li');
+          li.className = 'moss-modal-row';
+          const badge = al.dismissed ? 'idle' : (al.level === 'crit' ? 'crit' : al.level === 'warn' ? 'warn' : 'info');
+          li.innerHTML = `<div class="moss-modal-row__main"><p class="moss-modal-row__text"><span class="fui-badge" data-state="${badge}">${esc((al.kind || 'pulse').toUpperCase())}</span> ${esc(al.title || '')}</p>`
+            + `<span class="moss-modal-row__meta">${esc(al.body || '')}</span></div>`;
+          if (!al.dismissed) {
+            const ackBtn = document.createElement('button');
+            ackBtn.type = 'button';
+            ackBtn.className = 'fui-btn fui-btn--primary';
+            ackBtn.textContent = t('brain.pulse_ack');
+            ackBtn.addEventListener('click', async () => {
+              ackBtn.disabled = true;
+              try {
+                await apiJson(`/api/proactive/alerts/${al.id}/dismiss`, { method: 'POST', body: JSON.stringify({ accepted: true }) });
+                await refresh();
+              } catch (err) {
+                onAddLog?.({ time: Date.now(), source: 'PULSE', text: err.message, level: 'warn' });
+                ackBtn.disabled = false;
+              }
+            });
+            const disBtn = document.createElement('button');
+            disBtn.type = 'button';
+            disBtn.className = 'fui-btn';
+            disBtn.textContent = t('soul.dismiss_alert');
+            disBtn.addEventListener('click', async () => {
+              disBtn.disabled = true;
+              try {
+                await apiJson(`/api/proactive/alerts/${al.id}/dismiss`, { method: 'POST', body: JSON.stringify({ accepted: false }) });
+                await refresh();
+              } catch (err) {
+                onAddLog?.({ time: Date.now(), source: 'PULSE', text: err.message, level: 'warn' });
+                disBtn.disabled = false;
+              }
+            });
+            li.append(ackBtn, disBtn);
+          }
+          return li;
+        }));
+      }
+    }
 
     // 4. Jobs & Skills
     if (jobsListEl) {
@@ -466,13 +643,100 @@ export function createBrainDeckController({
         runBtn.className = 'fui-btn fui-btn--primary';
         runBtn.textContent = t('brain.skill_run');
         runBtn.addEventListener('click', async () => {
-          void apiJson('/api/skills', { method: 'POST', body: JSON.stringify({ mark_used: sk.id }) }).catch(() => {});
+          void apiJson('/api/skills', { method: 'POST', body: JSON.stringify({ mark_used: sk.id }) }).catch((err) => {
+            onAddLog?.({ time: Date.now(), source: 'SKILL', text: err.message, level: 'warn' });
+          });
           dlg?.close();
           onSendPrompt?.(sk.prompt);
         });
-        li.append(runBtn);
+        const delSkBtn = document.createElement('button');
+        delSkBtn.type = 'button';
+        delSkBtn.className = 'fui-btn';
+        delSkBtn.textContent = t('brain.skill_delete');
+        delSkBtn.addEventListener('click', async () => {
+          delSkBtn.disabled = true;
+          try {
+            await apiJson(`/api/skills/${sk.id}`, { method: 'DELETE' });
+            await refresh();
+          } catch (err) {
+            onAddLog?.({ time: Date.now(), source: 'SKILL', text: err.message, level: 'warn' });
+            delSkBtn.disabled = false;
+          }
+        });
+        li.append(runBtn, delSkBtn);
         return li;
       }));
+    }
+    if (watchersListEl) {
+      const watchers = data.watchers || [];
+      if (!watchers.length) {
+        watchersListEl.innerHTML = `<li class="moss-card__meta">—</li>`;
+      } else {
+        watchersListEl.replaceChildren(...watchers.slice(0, 8).map(w => {
+          const li = document.createElement('li');
+          li.className = 'moss-modal-row';
+          li.innerHTML = `<div class="moss-modal-row__main"><p class="moss-modal-row__text">${esc(w.name)}</p><span class="moss-modal-row__meta fui-num">${esc(w.file_path)} · /${esc(w.pattern)}/ · HIT ${w.match_count ?? 0}</span></div>`;
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'fui-btn';
+          del.textContent = '移除';
+          del.addEventListener('click', async () => {
+            del.disabled = true;
+            try {
+              await apiJson(`/api/watchers/${w.id}`, { method: 'DELETE' });
+              await refresh();
+            } catch (err) {
+              onAddLog?.({ time: Date.now(), source: 'WATCH', text: err.message, level: 'warn' });
+              del.disabled = false;
+            }
+          });
+          li.append(del);
+          return li;
+        }));
+      }
+    }
+    if (routinesListEl) {
+      const routines = data.routines || [];
+      if (!routines.length) {
+        routinesListEl.innerHTML = `<li class="moss-card__meta">—</li>`;
+      } else {
+        routinesListEl.replaceChildren(...routines.slice(0, 8).map(rt => {
+          const li = document.createElement('li');
+          li.className = 'moss-modal-row';
+          li.innerHTML = `<div class="moss-modal-row__main"><p class="moss-modal-row__text"><span class="fui-badge" data-state="${rt.enabled ? 'ok' : 'idle'}">${esc(rt.action_kind)}</span> ${esc(rt.name)}</p>`
+            + `<span class="moss-modal-row__meta fui-num">${esc(rt.schedule_label || '')}${rt.last_run_at ? ` · LAST ${esc(rt.last_run_at)}` : ''}</span></div>`;
+          const tgl = document.createElement('button');
+          tgl.type = 'button';
+          tgl.className = 'fui-btn';
+          tgl.textContent = rt.enabled ? '暂停' : '启用';
+          tgl.addEventListener('click', async () => {
+            tgl.disabled = true;
+            try {
+              await apiJson(`/api/routines/${rt.id}/toggle`, { method: 'POST', body: JSON.stringify({ enabled: !rt.enabled }) });
+              await refresh();
+            } catch (err) {
+              onAddLog?.({ time: Date.now(), source: 'ROUTINE', text: err.message, level: 'warn' });
+              tgl.disabled = false;
+            }
+          });
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'fui-btn';
+          del.textContent = '删除';
+          del.addEventListener('click', async () => {
+            del.disabled = true;
+            try {
+              await apiJson(`/api/routines/${encodeURIComponent(rt.id)}`, { method: 'DELETE' });
+              await refresh();
+            } catch (err) {
+              onAddLog?.({ time: Date.now(), source: 'ROUTINE', text: err.message, level: 'warn' });
+              del.disabled = false;
+            }
+          });
+          li.append(tgl, del);
+          return li;
+        }));
+      }
     }
 
     // 5. IoT & Physical 550W
@@ -482,15 +746,34 @@ export function createBrainDeckController({
     if (haModeEl && document.activeElement !== haModeEl) haModeEl.value = icfg.ha_mode || 'dry_run';
     if (haEnabledEl) haEnabledEl.checked = Boolean(icfg.ha_enabled);
     if (haTokenEl && icfg.ha_token_configured) haTokenEl.placeholder = `已保存令牌 (${icfg.ha_token_hint}) · 留空保持不变`;
-    const frame = iot.hardware_frame || {};
-    if (hwStatusEl) {
-      const sub = iot.hardware_stream_subscribers ?? 0;
-      hwStatusEl.textContent = `帧 #${frame.seq ?? 0} · 灯态 ${frame.mode || 'standby'} · 舵机 (${frame.servo?.yaw_deg ?? 0}°, ${frame.servo?.pitch_deg ?? 0}°) · 订阅终端 ${sub}`;
+    renderHwFrameLine(iot.hardware_frame || {});
+    if (hwSensorsEl) {
+      const sen = iot.hardware_sensors || {};
+      const pres = sen.person_present === true ? '在席' : sen.person_present === false ? '离席' : '未知';
+      const dist = sen.distance_cm != null ? `${sen.distance_cm}cm` : '—';
+      const lux = sen.ambient_lux != null ? `${sen.ambient_lux}lx` : '—';
+      const temp = sen.chassis_temp_c != null ? `${sen.chassis_temp_c}°C` : '—';
+      hwSensorsEl.textContent = `物理传感 · ${sen.connected ? 'ONLINE' : 'STANDBY'} · 人员 ${pres} · 距 ${dist} · 光 ${lux} · 机温 ${temp}`;
     }
-    if (mobileLinkEl && data.mobile_url && /^(\/|https?:\/\/)/i.test(String(data.mobile_url))) {
+    if (iotActionsEl) {
+      const acts = iot.recent_actions || [];
+      if (!acts.length) {
+        iotActionsEl.innerHTML = `<li class="moss-card__meta">—</li>`;
+      } else {
+        iotActionsEl.replaceChildren(...acts.slice(0, 5).map(a => {
+          const li = document.createElement('li');
+          li.className = 'moss-modal-row';
+          li.innerHTML = `<div class="moss-modal-row__main"><p class="moss-modal-row__text"><span class="fui-badge" data-state="${a.ok ? 'ok' : 'warn'}">${esc(a.action)}</span> ${esc(a.target)}</p>`
+            + `<span class="moss-modal-row__meta fui-num">${esc(a.detail || '')} · ${esc(a.created_at || '')}</span></div>`;
+          return li;
+        }));
+      }
+    }
+    if (mobileLinkEl && data.mobile_url && /^(\/|https?:\/\/)/i.test(String(data.mobile_url)) && !String(data.mobile_url).startsWith('//')) {
       mobileLinkEl.href = data.mobile_url;
       mobileLinkEl.textContent = data.mobile_url;
     }
+    syncHwStream();
   }
 
   async function refresh() {
@@ -505,7 +788,7 @@ export function createBrainDeckController({
   }
 
   async function refreshHaDevices() {
-    if (!haDevicesEl || getMode?.() !== 'live') return;
+    if (!haDevicesEl || getMode?.() !== 'live' || document.body.dataset.authRole === 'C') return;
     try {
       const res = await apiJson('/api/ha/entities');
       const items = res.entities || [];
@@ -547,14 +830,24 @@ export function createBrainDeckController({
     void refresh();
     void refreshHaDevices();
   });
-  toastOpenBtn?.addEventListener('click', () => openBtn?.click());
+  toastOpenBtn?.addEventListener('click', () => {
+    openBtn?.click();
+    tabs.find((tb) => tb.dataset.brainTab === 'pulse')?.click();
+  });
   toastDismissBtn?.addEventListener('click', async () => {
-    if (activeAlertId) {
-      await apiJson(`/api/proactive/alerts/${activeAlertId}/dismiss`, { method: 'POST', body: '{}' }).catch(() => {});
+    toastDismissBtn.disabled = true;
+    try {
+      if (activeAlertId) {
+        await apiJson(`/api/proactive/alerts/${activeAlertId}/dismiss`, { method: 'POST', body: '{}' });
+      }
+      if (toastEl) toastEl.hidden = true;
+      activeAlertId = null;
+      void refresh();
+    } catch (err) {
+      onAddLog?.({ time: Date.now(), source: 'PULSE', text: err.message, level: 'warn' });
+    } finally {
+      toastDismissBtn.disabled = false;
     }
-    if (toastEl) toastEl.hidden = true;
-    activeAlertId = null;
-    void refresh();
   });
 
   rsiRunBtn?.addEventListener('click', async () => {
@@ -570,13 +863,31 @@ export function createBrainDeckController({
     }
   });
 
+  rsiEvalBtn?.addEventListener('click', async () => {
+    rsiEvalBtn.disabled = true;
+    try {
+      const res = await apiJson('/api/rsi/eval', { method: 'POST', body: '{}' });
+      const ev = res.eval || {};
+      if (rsiStatusEl) {
+        rsiStatusEl.textContent = `DPO Eval: score ${(Number(ev.composite_score || 0) * 100).toFixed(0)}% · recall ${(Number(ev.playbook_recall_rate || 0) * 100).toFixed(0)}% · grounding ${(Number(ev.rule_grounding_rate || 0) * 100).toFixed(0)}% · episodes ${ev.total_episodes ?? 0}`;
+      }
+    } catch (err) {
+      if (rsiStatusEl) rsiStatusEl.textContent = err.message;
+    } finally {
+      rsiEvalBtn.disabled = false;
+    }
+  });
+
   sagSearchForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const q = (sagSearchInput?.value || '').trim();
     if (!q || !sagSearchResult) return;
     sagSearchResult.textContent = '正在执行混合向量 + 动态超边检索…';
     try {
-      const res = await apiJson('/api/sag/query', { method: 'POST', body: JSON.stringify({ query: q, limit: 6, hops: 1 }) });
+      const res = await apiJson('/api/sag/query', {
+        method: 'POST',
+        body: JSON.stringify({ query: q, limit: 6, hops: 1, include_invalidated: Boolean(sagIncludeStaleEl?.checked) }),
+      });
       sagSearchResult.textContent = res.evidence_text || '未检索到直接命中或超边关联条目。';
     } catch (err) {
       sagSearchResult.textContent = err.message;
@@ -606,7 +917,9 @@ export function createBrainDeckController({
     }
   });
 
-  const savePulseCfg = async () => {
+  const savePulseCfg = async (ev) => {
+    const ctrl = ev?.target;
+    if (ctrl) ctrl.disabled = true;
     try {
       await apiJson('/api/proactive/config', {
         method: 'POST',
@@ -614,7 +927,10 @@ export function createBrainDeckController({
       });
       await refresh();
     } catch (err) {
+      if (ctrl && typeof ctrl.checked === 'boolean') ctrl.checked = !ctrl.checked;
       onAddLog?.({ time: Date.now(), source: 'PULSE', text: err.message, level: 'warn' });
+    } finally {
+      if (ctrl) ctrl.disabled = false;
     }
   };
   pulseEnableEl?.addEventListener('change', savePulseCfg);
@@ -654,6 +970,8 @@ export function createBrainDeckController({
     const kind = jobKindEl?.value || 'web_research';
     const target = (jobTargetEl?.value || '').trim();
     if (!target) return;
+    const submitBtn = jobForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
       await apiJson('/api/jobs', {
         method: 'POST',
@@ -668,6 +986,8 @@ export function createBrainDeckController({
       await refresh();
     } catch (err) {
       onAddLog?.({ time: Date.now(), source: 'JOB', text: err.message, level: 'warn' });
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
     }
   });
 
@@ -676,6 +996,8 @@ export function createBrainDeckController({
     const name = (skillNameEl?.value || '').trim();
     const prompt = (skillPromptEl?.value || '').trim();
     if (!name || !prompt) return;
+    const submitBtn = skillForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
     try {
       await apiJson('/api/skills', { method: 'POST', body: JSON.stringify({ name, prompt }) });
       if (skillNameEl) skillNameEl.value = '';
@@ -683,6 +1005,51 @@ export function createBrainDeckController({
       await refresh();
     } catch (err) {
       onAddLog?.({ time: Date.now(), source: 'SKILL', text: err.message, level: 'warn' });
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  watcherForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = (watcherNameEl?.value || '').trim();
+    const file_path = (watcherPathEl?.value || '').trim();
+    const pattern = (watcherPatternEl?.value || '').trim();
+    if (!name || !file_path || !pattern) return;
+    const submitBtn = watcherForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      await apiJson('/api/watchers', { method: 'POST', body: JSON.stringify({ name, file_path, pattern }) });
+      if (watcherNameEl) watcherNameEl.value = '';
+      if (watcherPathEl) watcherPathEl.value = '';
+      if (watcherPatternEl) watcherPatternEl.value = '';
+      await refresh();
+    } catch (err) {
+      onAddLog?.({ time: Date.now(), source: 'WATCH', text: err.message, level: 'warn' });
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  routineForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = (routineNameEl?.value || '').trim();
+    const schedule = (routineSchedEl?.value || '').trim();
+    const action_kind = routineKindEl?.value || 'prompt';
+    const payload = (routinePayloadEl?.value || '').trim();
+    if (!name || !schedule) return;
+    const submitBtn = routineForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      await apiJson('/api/routines', { method: 'POST', body: JSON.stringify({ name, schedule, action_kind, payload }) });
+      if (routineNameEl) routineNameEl.value = '';
+      if (routineSchedEl) routineSchedEl.value = '';
+      if (routinePayloadEl) routinePayloadEl.value = '';
+      await refresh();
+    } catch (err) {
+      onAddLog?.({ time: Date.now(), source: 'ROUTINE', text: err.message, level: 'warn' });
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
     }
   });
 
@@ -707,6 +1074,18 @@ export function createBrainDeckController({
     }
   });
   haRefreshBtn?.addEventListener('click', () => void refreshHaDevices());
+  haDiscoverBtn?.addEventListener('click', async () => {
+    haDiscoverBtn.disabled = true;
+    try {
+      const res = await apiJson('/api/iot/ha-mcp-discover', { method: 'POST', body: JSON.stringify({}) });
+      const n = (res.tools || []).length;
+      if (haMsgEl) haMsgEl.textContent = `HA Streamable HTTP MCP 已发现 ${n} 项可用控制工具 (${res.mcp_url || ''})。`;
+    } catch (err) {
+      if (haMsgEl) haMsgEl.textContent = err.message;
+    } finally {
+      haDiscoverBtn.disabled = false;
+    }
+  });
 
   for (const btn of hwModeButtons) {
     btn.addEventListener('click', async () => {
@@ -765,9 +1144,22 @@ export function createBrainDeckController({
     }
   });
 
-  // Gentle 20s poll for Proactive Pulse alerts & background job completions (skips when hidden/paused)
-  setInterval(() => { // fui-lint-ignore: R15 polls proactive pulse alerts and background job progress; skips when hidden or paused
-    if (!document.hidden && !isPaused?.() && getMode?.() === 'live') {
+  // Immediate alert wakeup from /api/events SSE + 20s safety poll
+  window.addEventListener('moss-brain-alert', (ev) => {
+    const al = ev.detail;
+    if (!al || !toastEl || al.dismissed) return;
+    activeAlertId = al.id;
+    toastEl.hidden = false;
+    toastEl.dataset.state = al.level || 'info';
+    if (toastBadge) toastBadge.textContent = (al.level || 'pulse').toUpperCase();
+    if (toastTitle) toastTitle.textContent = al.title || '主动感知提醒';
+    if (toastBody) toastBody.textContent = al.body || '';
+    if (dlg?.open) void refresh();
+  });
+
+  // Gentle 20s poll while Brain Deck dialog is open (alerts arrive immediately via SSE moss-brain-alert)
+  setInterval(() => { // fui-lint-ignore: R15 polls overview details while #dlg-brain dialog is open; skips when closed, hidden, or paused
+    if (dlg?.open && !document.hidden && !isPaused?.() && getMode?.() === 'live') {
       void refresh();
     }
   }, 20000);

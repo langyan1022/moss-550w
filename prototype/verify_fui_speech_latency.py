@@ -823,6 +823,8 @@ async def main():
     result_path = out_dir / "result.json"
     result_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(result_path, "passed=", report["passed"], flush=True)
+    if not report["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

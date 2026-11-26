@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#010305">
   <title>550W · MOSS 战术控制台</title>
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/vendor/logos/550w.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/fonts.css">
   <link rel="stylesheet" href="/vendor/fui.css">
@@ -58,7 +59,7 @@
             <button class="fui-lang__opt" type="button" lang="en" aria-pressed="false">EN</button>
             <button class="fui-lang__opt" type="button" lang="zh-CN" aria-pressed="true">中文</button>
           </div>
-          <button class="fui-key fui-key--sm moss-strip__brain-btn" id="strip-brain-btn" type="button">
+          <button class="fui-key fui-key--sm moss-strip__brain-btn" id="strip-brain-btn" type="button" data-cs-only="true">
             <span data-i18n="strip.brain">大脑</span>
             <span class="fui-badge fui-badge--solid moss-strip__brain-badge" id="strip-brain-badge" data-state="warn" hidden>0</span>
           </button>
@@ -90,7 +91,7 @@
         <span class="moss-pulse-toast__body" id="pulse-toast-body"></span>
         <div class="moss-row moss-row--tight">
           <button class="fui-key fui-key--sm" id="pulse-toast-open" type="button" data-i18n="brain.open">大脑中枢</button>
-          <button class="fui-key fui-key--sm" id="pulse-toast-dismiss" type="button" data-i18n="banner.ack">确认</button>
+          <button class="fui-key fui-key--sm" id="pulse-toast-dismiss" type="button" data-i18n="banner.ack" data-cs-only="true">确认</button>
         </div>
       </div>
     </header>
@@ -195,7 +196,7 @@
           <h2 id="p-camfeed"><span class="moss-rail-grip" aria-hidden="true">⋮⋮</span><span data-i18n="panel.cam_feed">光学摄像头监测</span><span lang="en" aria-hidden="true">CAM-IN</span></h2>
           <div class="moss-row moss-row--tight">
             <button class="fui-key fui-key--sm" id="rail-cam-gesture" type="button" aria-pressed="false" data-i18n="cam.gesture" data-i18n-title="cam.gesture_title" title="开启/关闭手势控制（Alt+G）· ☝下机位 · ✌上机位 · 🤟滑轨 · 🖐姿态 · 🤏缩放 · ✊复位">手势</button>
-            <button class="fui-key fui-key--sm" id="rail-cam-sag" type="button" data-i18n="camfeed.sag" title="截取当前镜头画面识图并入库 SAG 知识库">识图入库</button>
+            <button class="fui-key fui-key--sm" id="rail-cam-sag" type="button" data-i18n="camfeed.sag" title="截取当前镜头画面识图并入库 SAG 知识库" data-cs-only="true">识图入库</button>
             <button class="fui-key fui-key--sm" id="rail-cam-toggle" type="button" aria-pressed="false" data-i18n="camfeed.start">开启</button>
           </div>
         </header>
@@ -658,7 +659,7 @@
             <span data-i18n="comms.memory">记忆</span>
             <span class="fui-num moss-deck-key__count" id="deck-memory-count">00</span>
           </button>
-          <button class="moss-deck-key" type="button" data-open-modal="notes">
+          <button class="moss-deck-key" type="button" data-open-modal="notes" data-cs-only="true">
             <span class="fui-num moss-deck-key__code">NOTE</span>
             <span data-i18n="comms.notes">便签</span>
           </button>
@@ -680,6 +681,8 @@
               </div>
             </li>
           </ol>
+
+          <div class="moss-elicit-rack" id="comms-elicit-rack" hidden aria-live="polite"></div>
 
           <div class="fui-chat__typing" id="comms-typing" role="status" hidden>
             <span data-i18n="comms.typing">MOSS 正在计算回复</span>
@@ -847,16 +850,26 @@
       <section class="moss-stack" data-brain-pane="rsi">
         <div class="moss-row">
           <p class="moss-card__meta" id="brain-rsi-status" style="flex:1"></p>
+          <button class="fui-btn" id="brain-rsi-eval-btn" type="button" data-i18n="brain.dpo_eval">DPO 离线评测</button>
           <button class="fui-btn fui-btn--primary" id="brain-rsi-run" type="button" data-i18n="brain.rsi_run">执行 RSI 复盘迭代</button>
         </div>
         <ul class="moss-modal-list" id="brain-rsi-list"></ul>
+        <p class="moss-card__meta" data-i18n="brain.cycles_title">近期 RSI 回放复盘周期</p>
+        <ul class="moss-modal-list" id="brain-rsi-cycles"></ul>
+        <div class="moss-row">
+          <p class="moss-card__meta" data-i18n="brain.provider_title" style="flex:1">模型引擎健康与时延（EWMA）</p>
+          <span class="moss-card__meta fui-num" id="brain-telemetry-summary"></span>
+        </div>
+        <ul class="moss-modal-list" id="brain-provider-health"></ul>
       </section>
 
       <!-- Tab 2: SQLite-SAG -->
       <section class="moss-stack" data-brain-pane="sag" hidden>
+        <p class="moss-card__meta fui-num" id="brain-sag-meta"></p>
         <div class="moss-row moss-row--tight" id="brain-sag-entities"></div>
         <form class="moss-row" id="brain-sag-search-form">
           <input class="fui-dialog__input" id="brain-sag-search-input" type="search" placeholder="输入问题或实体，测试向量 + 动态超边多跳检索…" style="flex:1">
+          <label class="moss-check"><input id="brain-sag-include-stale" type="checkbox"><span data-i18n="brain.sag_stale">含失效历史</span></label>
           <button class="fui-btn fui-btn--primary" type="submit" data-i18n="brain.sag_search">多跳检索</button>
         </form>
         <pre class="moss-brain-pre" id="brain-sag-search-result"></pre>
@@ -885,6 +898,9 @@
         </div>
         <p class="moss-brain-briefing" id="brain-briefing-box"></p>
         <div class="moss-stack" id="brain-world-model"></div>
+        <p class="moss-card__meta fui-num" id="brain-pulse-bandit"></p>
+        <p class="moss-card__meta" data-i18n="brain.alerts_title">主动脉搏与告警历史</p>
+        <ul class="moss-modal-list" id="brain-pulse-alerts"></ul>
       </section>
 
       <!-- Tab 4: Background Jobs & Self-Authoring Skills -->
@@ -904,6 +920,29 @@
           <button class="fui-btn" type="submit" data-i18n="brain.skill_save">保存技能</button>
         </form>
         <ul class="moss-modal-list" id="brain-skills-list"></ul>
+        <p class="moss-card__meta" data-i18n="brain.watchers_title">目录守望规则</p>
+        <form class="moss-row" id="brain-watcher-form" data-cs-only="true">
+          <input class="fui-dialog__input" id="brain-watcher-name" type="text" placeholder="守望名称" style="flex:0 1 110px">
+          <input class="fui-dialog__input" id="brain-watcher-path" type="text" placeholder="监听文件或目录路径" style="flex:1">
+          <input class="fui-dialog__input" id="brain-watcher-pattern" type="text" placeholder="匹配正则 (如 ERROR|DDL)" style="flex:0 1 150px">
+          <button class="fui-btn" type="submit" data-i18n="brain.watcher_add">添加守望</button>
+        </form>
+        <ul class="moss-modal-list" id="brain-watchers-list"></ul>
+        <p class="moss-card__meta" data-i18n="brain.routines_title">周期性定时任务</p>
+        <form class="moss-row" id="brain-routine-form" data-cs-only="true">
+          <input class="fui-dialog__input" id="brain-routine-name" type="text" placeholder="任务名称" style="flex:0 1 110px">
+          <input class="fui-dialog__input" id="brain-routine-schedule" type="text" placeholder="如 daily 08:30 / interval 45m" style="flex:0 1 160px">
+          <select class="fui-dialog__input" id="brain-routine-kind" style="flex:0 0 auto">
+            <option value="prompt">prompt</option>
+            <option value="briefing">briefing</option>
+            <option value="dream">dream</option>
+            <option value="skill">skill</option>
+            <option value="reminder">reminder</option>
+          </select>
+          <input class="fui-dialog__input" id="brain-routine-payload" type="text" placeholder="推演问题、技能名或正文…" style="flex:1">
+          <button class="fui-btn" type="submit" data-i18n="brain.routine_add">添加定时</button>
+        </form>
+        <ul class="moss-modal-list" id="brain-routines-list"></ul>
       </section>
 
       <!-- Tab 5: Home Assistant & Physical 550W Hardware Embodiment & /mobile -->
@@ -921,6 +960,7 @@
             <label class="moss-check"><input id="brain-ha-enabled" type="checkbox"><span>允许实机控制</span></label>
             <button class="fui-btn fui-btn--primary" type="submit">保存 HA</button>
             <button class="fui-btn" id="brain-ha-refresh" type="button">刷新设备</button>
+            <button class="fui-btn" id="brain-ha-mcp-discover" type="button" data-i18n="brain.ha_mcp_discover">发现 HA MCP</button>
           </div>
           <p class="moss-card__meta" id="brain-ha-msg" role="status"></p>
         </form>
@@ -943,6 +983,9 @@
             <button class="fui-key fui-key--sm" type="button" data-hw-gesture="patrol">巡航</button>
             <button class="fui-key fui-key--sm" type="button" data-hw-gesture="reset">回中</button>
           </div>
+          <p class="moss-card__meta fui-num" id="brain-hw-sensors">传感器未连接</p>
+          <p class="moss-card__meta" data-i18n="brain.iot_actions_title">智能家居与实体动作审计</p>
+          <ul class="moss-modal-list" id="brain-iot-actions"></ul>
           <p class="moss-card__meta">实体硬件 SSE 帧流：<code class="fui-num">/api/hardware/moss/stream</code> · 手机精简分身：<a id="brain-mobile-link" href="/mobile" target="_blank" rel="noopener">/mobile</a></p>
         </div>
       </section>
@@ -1064,7 +1107,7 @@
             <span class="moss-settings-nav__sub" data-i18n="set.tab_auth_sub">CS 管理员 · 用户档案</span>
           </span>
         </button>
-        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="soul" aria-selected="false">
+        <button class="moss-settings-nav__item" type="button" role="tab" data-set-tab="soul" aria-selected="false" data-cs-only="true">
           <span class="moss-settings-nav__code fui-num">07</span>
           <span class="moss-settings-nav__meta">
             <strong class="moss-settings-nav__title" data-i18n="set.tab_soul">灵魂记忆</strong>
@@ -1121,6 +1164,10 @@
                 </fieldset>
                 <p class="moss-card__meta moss-console-settings__status" id="set-provider-feedback" role="status" hidden></p>
               </form>
+              <label class="moss-check moss-console-settings__cascade" data-cs-only="true">
+                <input id="set-local-cascade" type="checkbox">
+                <span data-i18n="console.local_cascade">本地 9B 置信度不足或工具失败时自动级联云端核心</span>
+              </label>
             </details>
           </div>
 
@@ -1450,6 +1497,7 @@
             <div class="moss-row moss-row--tight">
               <button class="fui-btn fui-btn--primary" id="set-soul-distill-btn" type="button" data-i18n="soul.distill_btn" data-cs-only="true">立即蒸馏整理</button>
               <button class="fui-btn" id="set-soul-export-btn" type="button" data-i18n="soul.export_btn">预览 / 导出 .md 档案</button>
+              <button class="fui-btn" id="set-soul-copy-btn" type="button" hidden data-i18n="soul.copy_md">复制正文</button>
               <button class="fui-btn" id="set-soul-download-btn" type="button" hidden data-i18n="soul.download_btn">下载 .md 文件</button>
             </div>
             <p class="moss-card__meta fui-num" id="set-soul-stats" role="status"></p>

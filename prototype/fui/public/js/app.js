@@ -8,7 +8,7 @@ import { buildGreetingSpeech, createBadgeController } from './badge.js';
 import { createBenBenController } from './benben.js';
 import { createBrainDeckController } from './brain-deck.js';
 import { createCityPickerController } from './city-picker.js';
-import { createDialogueController } from './dialogue.js';
+import { createDialogueController, isExplicitPlaybackControl } from './dialogue.js';
 import { createDuplexVoice } from './duplex-voice.js';
 import { createHandGestureController } from './gestures.js';
 import { createHudPopupsController } from './hud-popups.js';
@@ -518,6 +518,7 @@ function prepareGreetingAfterSettings() {
 }
 
 const badge = createBadgeController({
+  deferLocalCache: true,
   async onSpeakGreeting(speech) {
     const attempt = ++badgeVoiceAttempt;
     pauseGreetingPreparation({retry:true});
@@ -559,6 +560,7 @@ const api = createMossApi({
     if (tagTurnCodeEl) tagTurnCodeEl.textContent = String(lastTurnCount).padStart(2, '0');
 
     dialogue.renderState(state);
+    renderMcpElicitations(state.mcp_elicitations || []);
     telemetry.renderReminders(state.timers || []);
     modals.renderHistory(state);
     modals.renderMemories(state);
@@ -643,9 +645,10 @@ const api = createMossApi({
     updateStripLink();
     updateBannerAndStage();
     if (info.mode === 'live' && info.online && !wasLive) {
-    void loadLiveLocation();
-    void telemetry.refreshLogSource?.();
-  }
+      void loadLiveLocation();
+      voice.connectionRestored?.();
+      if (document.body.dataset.authRole === 'CS') void telemetry.refreshLogSource?.();
+    }
   },
   onLog(entry) {
     telemetry.addLog(entry);
@@ -661,6 +664,163 @@ const api = createMossApi({
     dialogue.showError(msg);
   },
 });
+
+function renderMcpElicitations(items) {
+  const rack = document.getElementById('comms-elicit-rack');
+  if (!rack) return;
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    rack.hidden = true;
+    rack.replaceChildren();
+    return;
+  }
+  rack.hidden = false;
+  if (commsDrawer && !commsDrawer.isOpen()) commsDrawer.markUnread();
+  const isVisitor = document.body?.dataset?.authRole === 'C';
+  const activeIds = new Set(list.map((it) => it.id));
+  for (const child of [...rack.children]) {
+    if (!activeIds.has(child.dataset.elicitId)) child.remove();
+  }
+  const rendered = new Set([...rack.children].map((c) => c.dataset.elicitId));
+  for (const item of list) {
+    if (!item?.id || rendered.has(item.id)) continue;
+    const card = document.createElement('form');
+    card.className = 'moss-card moss-elicit-card';
+    card.dataset.state = 'warn';
+    card.dataset.elicitId = item.id;
+
+    const head = document.createElement('div');
+    head.className = 'moss-card__head';
+    const title = document.createElement('strong');
+    title.className = 'moss-card__title';
+    title.textContent = `${item.server || 'MCP'} (${String(item.mode || 'form').toUpperCase()})`;
+    const badge = document.createElement('span');
+    badge.className = 'fui-badge';
+    badge.dataset.state = 'warn';
+    badge.textContent = t('elicit.badge');
+    head.append(title, badge);
+    card.append(head);
+
+    const msg = document.createElement('p');
+    msg.className = 'moss-card__body';
+    msg.textContent = item.message || '';
+    card.append(msg);
+
+    const fieldRefs = [];
+    const props = item.schema?.properties;
+    if (item.mode !== 'url' && props && typeof props === 'object') {
+      const reqSet = new Set(Array.isArray(item.schema.required) ? item.schema.required : []);
+      const formGrid = document.createElement('div');
+      formGrid.className = 'moss-elicit-form';
+      for (const [key, spec] of Object.entries(props)) {
+        const s = spec && typeof spec === 'object' ? spec : {};
+        const wrap = document.createElement('label');
+        wrap.className = s.type === 'boolean' ? 'moss-check' : 'moss-field';
+        const lbl = document.createElement('span');
+        lbl.className = 'fui-label';
+        lbl.textContent = s.title || key;
+        let ctrl;
+        if (s.type === 'boolean') {
+          ctrl = document.createElement('input');
+          ctrl.type = 'checkbox';
+          ctrl.checked = Boolean(s.default);
+          wrap.append(ctrl, lbl);
+        } else if (Array.isArray(s.enum) && s.enum.length) {
+          ctrl = document.createElement('select');
+          ctrl.className = 'fui-dialog__input';
+          for (const optVal of s.enum) {
+            const opt = document.createElement('option');
+            opt.value = String(optVal);
+            opt.textContent = String(optVal);
+            if (s.default === optVal) opt.selected = true;
+            ctrl.append(opt);
+          }
+          wrap.append(lbl, ctrl);
+        } else {
+          ctrl = document.createElement('input');
+          ctrl.className = 'fui-dialog__input';
+          ctrl.type = s.type === 'number' || s.type === 'integer'
+            ? 'number'
+            : /secret|token|password|key/i.test(key) ? 'password' : 'text';
+          if (s.default !== undefined) ctrl.value = String(s.default);
+          if (s.description) ctrl.placeholder = String(s.description);
+          ctrl.required = reqSet.has(key);
+          wrap.append(lbl, ctrl);
+        }
+        ctrl.disabled = isVisitor;
+        formGrid.append(wrap);
+        fieldRefs.push({ key, spec: s, ctrl });
+      }
+      card.append(formGrid);
+    }
+
+    if (item.mode === 'url' && typeof item.url === 'string' && /^https?:\/\//i.test(item.url)) {
+      const link = document.createElement('a');
+      link.className = 'fui-btn fui-btn--primary';
+      link.href = item.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = t('elicit.open_url');
+      card.append(link);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'moss-row moss-row--tight moss-elicit-actions';
+    if (isVisitor) {
+      const note = document.createElement('span');
+      note.className = 'moss-card__meta';
+      note.textContent = t('elicit.cs_only');
+      actions.append(note);
+    } else {
+      const sendDecision = async (action) => {
+        for (const b of actions.querySelectorAll('button')) b.disabled = true;
+        const content = {};
+        if (action === 'accept') {
+          for (const { key, spec, ctrl } of fieldRefs) {
+            if (spec.type === 'boolean') content[key] = Boolean(ctrl.checked);
+            else if (spec.type === 'integer') content[key] = Number.parseInt(ctrl.value || '0', 10);
+            else if (spec.type === 'number') content[key] = Number(ctrl.value || '0');
+            else content[key] = ctrl.value;
+          }
+        }
+        try {
+          const resp = await fetch(`/api/mcp/elicitations/${encodeURIComponent(item.id)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(action === 'accept' ? { action, content } : { action }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          card.remove();
+          if (!rack.children.length) rack.hidden = true;
+        } catch (err) {
+          telemetry.addLog({ time: Date.now(), source: 'MCP', text: `Elicitation failed: ${err.message}`, level: 'warn' });
+          for (const b of actions.querySelectorAll('button')) b.disabled = false;
+        }
+      };
+      const okBtn = document.createElement('button');
+      okBtn.type = 'submit';
+      okBtn.className = 'fui-btn fui-btn--primary';
+      okBtn.textContent = t('elicit.accept');
+      const decBtn = document.createElement('button');
+      decBtn.type = 'button';
+      decBtn.className = 'fui-btn';
+      decBtn.textContent = t('elicit.decline');
+      decBtn.addEventListener('click', () => void sendDecision('decline'));
+      const canBtn = document.createElement('button');
+      canBtn.type = 'button';
+      canBtn.className = 'fui-btn';
+      canBtn.textContent = t('elicit.cancel');
+      canBtn.addEventListener('click', () => void sendDecision('cancel'));
+      card.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        void sendDecision('accept');
+      });
+      actions.append(okBtn, decBtn, canBtn);
+    }
+    card.append(actions);
+    rack.append(card);
+  }
+}
 
 const telemetry = createTelemetryController({
   fetchLocalWeather: (lat, lon) => api.fetchLocalWeather(lat, lon),
@@ -740,9 +900,26 @@ const hudPopups = createHudPopupsController({
   onAutoModeChange: () => syncAuthorityDeck(),
 });
 
+let _micDuckedEls = [];
 function onMicState({ active }) {
   if (active && greetingPlan?.controller) pauseGreetingPreparation({retry:true});
   voiceMicActive = active;
+  for (const el of _micDuckedEls) {
+    if (el && typeof el.dataset?.mossPreDuckVol === 'string') {
+      el.volume = Number(el.dataset.mossPreDuckVol) || 1;
+      delete el.dataset.mossPreDuckVol;
+    }
+  }
+  _micDuckedEls = [];
+  if (active) {
+    for (const el of (hudPopups.getMediaElements?.() || [])) {
+      if (el && !el.paused && el.volume > 0.28) {
+        el.dataset.mossPreDuckVol = String(el.volume);
+        el.volume = 0.25;
+        _micDuckedEls.push(el);
+      }
+    }
+  }
   benben?.updateContext({ micActive: active });
   syncVoiceUi();
   updateBannerAndStage();
@@ -791,7 +968,7 @@ const voice = createDuplexVoice(voiceOutput, {
   onTranscript: (text, context) => dialogue.submitText(text, context),
   onMicState, onMicFrame, onStatus: syncVoiceUi,
   focusComposer: () => dialogue.focusInput(),
-  targetsPlayback: () => hudPopups.hasPlayingMedia(),
+  targetsPlayback: (instruction) => isExplicitPlaybackControl(instruction) && hudPopups.hasPlayingMedia(),
 });
 
 function reportFailure(error) {
@@ -895,13 +1072,17 @@ const dialogue = createDialogueController({
     voice.prepareOutput();
     void voice.speakText(turn.reply, { category: 'reply', optional: false });
   },
-  onRetryTurn: (turn) => {
+  onRetryTurn: (turn, opts = {}) => {
     if (!turn?.user) return;
     commsDrawer?.open();
+    if (opts?.editFirst) {
+      dialogue.fillComposer(turn.user, { submit: false });
+      return;
+    }
     void dialogue.submitText(turn.user);
   },
   async onSaveNoteTurn(turn) {
-    if (!turn?.reply) return false;
+    if (!turn?.reply || document.body.dataset.authRole === 'C') return false;
     try {
       const resp = await fetch('/api/notes', {
         method: 'POST',
@@ -1298,12 +1479,13 @@ commsDrawer = createCommsDrawerController({
   },
 });
 
+let suppressLayoutSave = false;
 railLayout = initLeftRailOrder(
   document.getElementById('left-rail'),
   document.getElementById('right-rail-cards'),
 );
 window.addEventListener('moss-rail-layout-change', (ev) => {
-  if (ev.detail) authPrefs?.savePrefs({ rail_layout: ev.detail });
+  if (!suppressLayoutSave && ev.detail) authPrefs?.savePrefs({ rail_layout: ev.detail });
 });
 
 function buildCmdkItems() {
@@ -1402,14 +1584,29 @@ cmdkInput?.addEventListener('keydown', (ev) => {
 authPrefs = createAuthPrefsController({
   onApplyPrefs(prefs, ident) {
     if (!prefs || typeof prefs !== 'object') return;
+    const scope = ident.code || (ident.role === 'CS' ? 'MOSS' : 'C');
     if (prefs.badge && typeof prefs.badge === 'object') {
-      badge.applyExternalConfig(prefs.badge, { forcedClearance: ident.role === 'CS' ? '' : 'C' });
-    } else if (ident.role !== 'CS') {
-      badge.applyExternalConfig(badge.getConfig(), { forcedClearance: 'C' });
+      badge.applyExternalConfig(prefs.badge, {
+        forcedClearance: ident.role === 'CS' ? '' : 'C',
+        storageScope: scope,
+        silent: true,
+      });
+    } else {
+      badge.applyExternalConfig(null, {
+        forcedClearance: ident.role === 'CS' ? '' : 'C',
+        storageScope: scope,
+        silent: true,
+      });
     }
+    syncSubsystemChipRows();
     if (prefs.rail_layout && Array.isArray(prefs.rail_layout.left)) {
-      for (const id of prefs.rail_layout.right || []) railLayout.moveCard(id, 'right');
-      for (const id of prefs.rail_layout.left || []) railLayout.moveCard(id, 'left');
+      suppressLayoutSave = true;
+      try {
+        for (const id of prefs.rail_layout.right || []) railLayout.moveCard(id, 'right');
+        for (const id of prefs.rail_layout.left || []) railLayout.moveCard(id, 'left');
+      } finally {
+        suppressLayoutSave = false;
+      }
     }
     if (typeof prefs.meeting_mute === 'boolean') {
       setMeetingMute(prefs.meeting_mute, { persist: false });
@@ -1419,7 +1616,13 @@ authPrefs = createAuthPrefsController({
     }
   },
   onIdentityChange(ident) {
-    if (ident.role === 'CS') void authPrefs?.refreshUsersList();
+    if (ident.role === 'CS') {
+      void authPrefs?.refreshUsersList();
+      void telemetry?.refreshLogSource?.();
+    } else {
+      telemetry?.clearLogs?.();
+      modals?.clearAdminCaches?.();
+    }
   },
 });
 
@@ -1440,12 +1643,16 @@ telemetry.setFrozen(bootPaused);
 benben.setFrozen(bootPaused);
 window.addEventListener('moss-providers-changed', () => void api.refreshModels());
 void authPrefs.init().then((ident) => {
-  if (ident?.authorized !== false) api.start();
+  if (ident?.statusUnavailable || !ident?.enabled) {
+    badge.applyExternalConfig(null, { storageScope: 'MOSS', silent: true });
+  }
+  if (ident?.statusUnavailable || ident?.authorized !== false) api.start();
   if (!opening.isActive()) authPrefs.maybePromptAfterOpening();
   if (ident?.role === 'CS') void authPrefs.refreshUsersList();
 });
 window.addEventListener('moss-auth-switched', () => {
   api.reconnect({ reset: true });
+  void brainDeck?.refresh();
 });
 window.addEventListener('moss-auth-required', () => {
   authPrefs?.openGate({ forceRequired: true });
@@ -1459,4 +1666,7 @@ syncAuthorityDeck();
 opening.start(false);
 if (new URLSearchParams(location.search).get('badge') === '1') {
   badge.open({ mode: 'dual' });
+}
+if ('serviceWorker' in navigator && !new URLSearchParams(location.search).has('sim')) {
+  void navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
 }

@@ -6,6 +6,7 @@
  * - "MOSS" (case-insensitive) => CS admin (full system configuration + user manager).
  * - Any other 4-char alphanumeric code => C operator (persistent personal profile; system config locked).
  */
+import { escapeHtml } from './hud/utils.js';
 import { t } from './i18n.js';
 
 export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {}) {
@@ -33,6 +34,7 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
     enabled: true,
     scope: 'lan',
     authorized: false,
+    statusUnavailable: false,
     code: '',
     role: 'C',
     is_admin: false,
@@ -68,12 +70,16 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
   async function fetchStatus() {
     try {
       const resp = await fetch('/api/auth/status', { cache: 'no-store' });
-      if (!resp.ok) return identity;
+      if (!resp.ok) {
+        identity.statusUnavailable = true;
+        return identity;
+      }
       const data = await resp.json();
       Object.assign(identity, {
         enabled: Boolean(data.enabled),
         scope: data.scope || 'lan',
         authorized: Boolean(data.authorized),
+        statusUnavailable: false,
         code: data.code || '',
         role: data.role || '',
         is_admin: Boolean(data.is_admin),
@@ -85,6 +91,7 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
       }
       return identity;
     } catch {
+      identity.statusUnavailable = true;
       return identity;
     }
   }
@@ -229,14 +236,27 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
         toggleBtn.className = 'fui-key fui-key--sm';
         toggleBtn.textContent = t(u.disabled ? 'auth.user_enable' : 'auth.user_disable');
         toggleBtn.addEventListener('click', async () => {
-          const resp = await fetch('/api/auth/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: u.code, disabled: !u.disabled }),
-          });
-          if (resp.ok) {
-            const d = await resp.json();
-            renderUsers(d.users);
+          toggleBtn.disabled = true;
+          try {
+            const resp = await fetch('/api/auth/users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code: u.code, disabled: !u.disabled }),
+            });
+            const d = await resp.json().catch(() => ({}));
+            if (resp.ok) {
+              renderUsers(d.users);
+            } else if (authGateFeedback) {
+              authGateFeedback.hidden = false;
+              authGateFeedback.textContent = d.error || `HTTP ${resp.status}`;
+            }
+          } catch (err) {
+            if (authGateFeedback) {
+              authGateFeedback.hidden = false;
+              authGateFeedback.textContent = err.message || 'Network error';
+            }
+          } finally {
+            toggleBtn.disabled = false;
           }
         });
         const delBtn = document.createElement('button');
@@ -244,10 +264,23 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
         delBtn.className = 'fui-key fui-key--sm';
         delBtn.textContent = t('auth.user_delete');
         delBtn.addEventListener('click', async () => {
-          const resp = await fetch(`/api/auth/users/${encodeURIComponent(u.code)}`, { method: 'DELETE' });
-          if (resp.ok) {
-            const d = await resp.json();
-            renderUsers(d.users);
+          delBtn.disabled = true;
+          try {
+            const resp = await fetch(`/api/auth/users/${encodeURIComponent(u.code)}`, { method: 'DELETE' });
+            const d = await resp.json().catch(() => ({}));
+            if (resp.ok) {
+              renderUsers(d.users);
+            } else if (authGateFeedback) {
+              authGateFeedback.hidden = false;
+              authGateFeedback.textContent = d.error || `HTTP ${resp.status}`;
+            }
+          } catch (err) {
+            if (authGateFeedback) {
+              authGateFeedback.hidden = false;
+              authGateFeedback.textContent = err.message || 'Network error';
+            }
+          } finally {
+            delBtn.disabled = false;
           }
         });
         btns.append(toggleBtn, delBtn);
@@ -333,6 +366,7 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
     getIdentity: () => ({ ...identity }),
     isAdmin: () => identity.role === 'CS',
     maybePromptAfterOpening() {
+      if (identity.statusUnavailable) return false;
       if (identity.enabled && !identity.authorized) {
         openGate({ switchMode: false });
         return true;
@@ -340,12 +374,4 @@ export function createAuthPrefsController({ onApplyPrefs, onIdentityChange } = {
       return false;
     },
   };
-}
-
-function escapeHtml(str) {
-  return String(str ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

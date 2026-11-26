@@ -386,8 +386,8 @@ async def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=18225)
-    parser.add_argument("--model-url", default="http://127.0.0.1:18222/v1")
+    parser.add_argument("--port", type=int, default=18335)
+    parser.add_argument("--model-url", default="http://127.0.0.1:18332/v1")
     parser.add_argument("--model", default="moss-chat-qwen35-4b")
     parser.add_argument("--provider", help="测试页面选择的模型服务")
     parser.add_argument("--cases", nargs="+", choices=[case.__name__ for case in CASES])

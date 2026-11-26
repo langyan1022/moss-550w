@@ -49,6 +49,9 @@ def collect_core_py_files() -> list[Path]:
         if not p.name.startswith("verify_") and p.name != "release_gate.py"
     )
     files += sorted((ROOT / "voice").glob("*.py"))
+    files += sorted((ROOT / "holojarvis_runtime").glob("*.py"))
+    files += sorted((ROOT / "brain").glob("*.py"))
+    files += sorted((ROOT / "testkit").glob("*.py"))
     return files
 
 
@@ -146,8 +149,13 @@ def audit_js_contracts():
         var_name, factory_name = m.group(1), m.group(2)
         if factory_name in factory_methods:
             bindings[var_name] = factory_name
+    bindings_by_canonical = {
+        **bindings,
+        "voice": "createDuplexVoice",
+        "voiceOutput": "createVoiceEngine",
+    }
 
-    # Check every `varName.prop(` call in app.js
+    # Check every `varName.prop(` call in app.js AND cross-module destructured controller params
     bad_calls = []
     for var_name, factory_name in bindings.items():
         allowed = factory_methods[factory_name]
@@ -156,24 +164,48 @@ def audit_js_contracts():
             if method not in allowed:
                 line_no = app_src[: m.start()].count("\n") + 1
                 bad_calls.append(f"app.js:{line_no} calls {var_name}.{method}() not exported by {factory_name}")
+    cross_checked = len(bindings)
+    for js_file in sorted(js_dir.glob("*.js")):
+        if js_file.name == "app.js":
+            continue
+        src = js_file.read_text(encoding="utf-8")
+        for m_sig in re.finditer(r"export\s+function\s+create\w+\s*\([^{]*\{([^}]+)\}", src):
+            params = {tok.strip().split("=")[0].split(":")[0].strip() for tok in m_sig.group(1).split(",")}
+            for p in params:
+                factory_name = bindings_by_canonical.get(p)
+                if not factory_name or factory_name not in factory_methods:
+                    continue
+                cross_checked += 1
+                allowed = factory_methods[factory_name]
+                for mc in re.finditer(rf"(?<![.\w$]){re.escape(p)}\??\.([A-Za-z_$][\w$]*)\s*\(", src):
+                    method = mc.group(1)
+                    if method not in allowed:
+                        line_no = src[: mc.start()].count("\n") + 1
+                        bad_calls.append(f"{js_file.name}:{line_no} calls {p}.{method}() not exported by {factory_name}")
 
     if bad_calls:
         raise RuntimeError("JS cross-module call mismatch:\n  " + "\n  ".join(bad_calls))
 
-    # 2. Check every document.getElementById('...') in main console JS files exists in index.html
+    # 2. Check every document.getElementById('...') in JS files matches its SCOPED HTML document
     index_html = (FUI_PUBLIC / "index.html").read_text(encoding="utf-8")
-    html_ids = set(re.findall(r'\bid=["\']([^"\']+)["\']', index_html))
-    # Include IDs created dynamically inside JS template strings
-    all_js_text = "\n".join(p.read_text(encoding="utf-8") for p in js_dir.glob("*.js"))
-    dynamic_ids = set(re.findall(r'\bid=["\']([a-zA-Z0-9_-]+)["\']', all_js_text))
-    known_ids = html_ids | dynamic_ids
+    mobile_html = (FUI_PUBLIC / "mobile.html").read_text(encoding="utf-8") if (FUI_PUBLIC / "mobile.html").is_file() else ""
+    status_html = (FUI_PUBLIC / "status.html").read_text(encoding="utf-8") if (FUI_PUBLIC / "status.html").is_file() else ""
+    dyn_by_scope: dict[str, set[str]] = {"index": set(), "mobile": set(), "status": set()}
+    for jf in sorted(js_dir.rglob("*.js")):
+        sc = "mobile" if jf.name == "mobile.js" else ("status" if jf.name == "status.js" else "index")
+        dyn_by_scope[sc].update(re.findall(r'\bid=["\']([a-zA-Z0-9_-]+)["\']', jf.read_text(encoding="utf-8")))
+    html_ids_by_scope = {
+        "index": set(re.findall(r'\bid=["\']([^"\']+)["\']', index_html)) | dyn_by_scope["index"],
+        "mobile": set(re.findall(r'\bid=["\']([^"\']+)["\']', mobile_html)) | dyn_by_scope["mobile"],
+        "status": set(re.findall(r'\bid=["\']([^"\']+)["\']', status_html)) | dyn_by_scope["status"],
+    }
 
     # Explicit allowlist for intentionally optional progressive DOM hooks
     optional_dom_ids = {"set-badge-model-file", "set-badge-model-btn"}
     missing_ids = []
-    for js_file in sorted(js_dir.glob("*.js")):
-        if js_file.name in {"status.js", "mobile.js"}:
-            continue
+    for js_file in sorted(js_dir.rglob("*.js")):
+        scope = "mobile" if js_file.name == "mobile.js" else ("status" if js_file.name == "status.js" else "index")
+        known_ids = html_ids_by_scope[scope]
         src = js_file.read_text(encoding="utf-8")
         for m in re.finditer(r"document\.getElementById\(\s*['\"]([a-zA-Z0-9_-]+)['\"]\s*\)", src):
             dom_id = m.group(1)
@@ -183,37 +215,52 @@ def audit_js_contracts():
     if missing_ids:
         raise RuntimeError("Missing HTML DOM IDs:\n  " + "\n  ".join(missing_ids))
 
-    # 3. Check every static /api/... endpoint referenced in fui/public/js/*.js exists in backend route files
+    # 3. Check every static /api/... endpoint referenced in fui/public/js/**/*.js matches an ACTUAL registered backend route regex
     route_paths = [
         ROOT / p for p in ("serve.py", "console_settings.py") if (ROOT / p).is_file()
     ] + sorted(ROOT.glob("*_routes.py"))
-    route_sources = "\n".join(p.read_text(encoding="utf-8") for p in route_paths)
+    route_regexes: list[re.Pattern[str]] = []
+    for rp in route_paths:
+        rsrc = rp.read_text(encoding="utf-8")
+        vars_map = dict(re.findall(r"^\s*([a-zA-Z_]\w*)\s*=\s*['\"](/api[^'\"]*)['\"]", rsrc, re.M))
+        for m_rt in re.finditer(r"web\.(?:get|post|put|delete|patch)\(\s*(?:([a-zA-Z_]\w*)\s*\+\s*)?r?['\"]([^'\"]+)['\"]", rsrc):
+            prefix_var, raw_pat = m_rt.group(1), m_rt.group(2)
+            full_pat = (vars_map.get(prefix_var, "") + raw_pat) if prefix_var else raw_pat
+            if not full_pat.startswith("/api/"):
+                continue
+            # Expand {name:regex} / {name} placeholders cleanly into non-capturing regex groups
+            rx_parts = ["^"]
+            pos = 0
+            for ph in re.finditer(r"\{([a-zA-Z_]\w*)(?::([^}]+))?\}", full_pat):
+                rx_parts.append(re.escape(full_pat[pos:ph.start()]))
+                inner = ph.group(2) if ph.group(2) else "[^/]+"
+                rx_parts.append(f"(?:{inner})")
+                pos = ph.end()
+            rx_parts.append(re.escape(full_pat[pos:]))
+            rx_parts.append("$")
+            route_regexes.append(re.compile("".join(rx_parts)))
+
+    base_prefixes = {"/api/console-settings"}
     missing_routes = []
-    for js_file in sorted(js_dir.glob("*.js")):
-        src = js_file.read_text(encoding="utf-8")
-        for m in re.finditer(r"['\"](/api/[a-zA-Z0-9/_-]+)['\"]", src):
+    scan_sources = [(jf.name, jf.read_text(encoding="utf-8")) for jf in sorted(js_dir.rglob("*.js"))]
+    if status_html:
+        scan_sources.append(("status.html", status_html))
+    for src_name, src in scan_sources:
+        for m in re.finditer(r"['\"`](/api/[a-zA-Z0-9/_-]+)['\"`]", src):
             ep = m.group(1)
-            if ep.endswith("/"):
+            if ep.endswith("/") or ep in base_prefixes:
                 continue
-            # Direct literal match or parameterized verb/segment match
-            if ep in route_sources:
-                continue
-            parts = ep.split("/")
-            # /api/{verb:...}
-            if len(parts) == 3 and parts[2] in route_sources:
-                continue
-            # Parameterized sub-routes like /api/notes/123 or /api/wake/activate
-            prefix = "/".join(parts[:3])
-            if prefix in route_sources:
+            if any(rx.match(ep) for rx in route_regexes):
                 continue
             line_no = src[: m.start()].count("\n") + 1
-            missing_routes.append(f"{js_file.name}:{line_no} calls unknown API route {ep}")
+            missing_routes.append(f"{src_name}:{line_no} calls unknown API route {ep}")
     if missing_routes:
         raise RuntimeError("Unknown /api/* routes:\n  " + "\n  ".join(missing_routes))
 
     return {
-        "factories_checked": len(bindings),
-        "html_ids_indexed": len(known_ids),
+        "factories_checked": cross_checked,
+        "html_ids_indexed": sum(len(v) for v in html_ids_by_scope.values()),
+        "routes_compiled": len(route_regexes),
         "bad_calls": 0,
         "missing_ids": 0,
         "missing_routes": 0,
@@ -246,7 +293,7 @@ def run_stage_static():
     print(f"  [PASS] py_compile ({len(py_files)} core Python files)")
 
     # 2. node --check on all frontend JS + static/speech-delivery.js
-    js_files = sorted((FUI_PUBLIC / "js").glob("*.js")) + [ROOT / "static" / "speech-delivery.js"]
+    js_files = sorted((FUI_PUBLIC / "js").rglob("*.js")) + [ROOT / "static" / "speech-delivery.js"]
     for jf in js_files:
         run_cmd(["node", "--check", str(jf)], label=f"node --check {jf.name}")
     results["node_check"] = f"{len(js_files)} JS files OK"
@@ -262,20 +309,18 @@ def run_stage_static():
     results["js_contracts"] = contract_info
     print(f"  [PASS] JS contracts ({contract_info['factories_checked']} controllers, {contract_info['html_ids_indexed']} DOM IDs, 0 broken calls/routes)")
 
-    # 5. fui_lint.py (0 blocker / 0 major / 0 minor)
-    if FUI_LINT.is_file():
-        lint_proc = subprocess.run(
-            [sys.executable, str(FUI_LINT), str(FUI_PUBLIC)],
-            cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-        lint_out = (lint_proc.stdout + "\n" + lint_proc.stderr).strip()
-        if lint_proc.returncode != 0 or not re.search(r"0 blocker\s*[·•]\s*0 major\s*[·•]\s*0 minor", lint_out):
-            raise RuntimeError(f"fui_lint failed or non-zero findings:\n{lint_out}")
-        results["fui_lint"] = lint_out.splitlines()[-1]
-        print(f"  [PASS] fui_lint ({results['fui_lint']})")
-    else:
-        results["fui_lint"] = f"skipped (missing optional linter: {FUI_LINT.name})"
-        print(f"  [SKIP] fui_lint (optional linter not found at {FUI_LINT})")
+    # 5. fui_lint.py (0 blocker / 0 major / 0 minor — mandatory!)
+    if not FUI_LINT.is_file():
+        raise RuntimeError(f"Required fui_lint.py not found at {FUI_LINT}")
+    lint_proc = subprocess.run(
+        [sys.executable, str(FUI_LINT), str(FUI_PUBLIC)],
+        cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    lint_out = (lint_proc.stdout + "\n" + lint_proc.stderr).strip()
+    if lint_proc.returncode != 0 or not re.search(r"0 blocker\s*[·•]\s*0 major\s*[·•]\s*0 minor", lint_out):
+        raise RuntimeError(f"fui_lint failed or non-zero findings:\n{lint_out}")
+    results["fui_lint"] = lint_out.splitlines()[-1]
+    print(f"  [PASS] fui_lint ({results['fui_lint']})")
 
     # 6. 3D model certification guard
     r_model = run_cmd([sys.executable, "check_model_release.py"], label="check_model_release")
@@ -462,8 +507,11 @@ def run_stage_unit():
     results["erhua_unit"] = run_cmd([sys.executable, "verify_multimodel_erhua_tone.py", "--models", "", "--no-audio", "--tag", "gate-unit"], label="verify_multimodel_erhua_tone unit")
     print(f"  [PASS] verify_multimodel_erhua_tone unit ({results['erhua_unit']['seconds']}s)")
 
-    results["daily_golden_230"] = run_cmd([sys.executable, "verify_daily_golden_200.py", "--tier", "full", "--tag", "gate"], label="verify_daily_golden_200 (230 samples)")
-    print(f"  [PASS] verify_daily_golden_200 (230/230 samples, {results['daily_golden_230']['seconds']}s)")
+    results["daily_golden_260"] = run_cmd([sys.executable, "verify_daily_golden_200.py", "--tier", "full", "--tag", "gate"], label="verify_daily_golden_200 (260 samples)")
+    print(f"  [PASS] verify_daily_golden_200 (260/260 samples, {results['daily_golden_260']['seconds']}s)")
+
+    results["brain_cognitive_138"] = run_cmd([sys.executable, "verify_brain_cognitive_suite.py"], label="verify_brain_cognitive_suite (138 samples)")
+    print(f"  [PASS] verify_brain_cognitive_suite (138/138 samples, {results['brain_cognitive_138']['seconds']}s, {results['brain_cognitive_138']['tail']})")
 
     results["v53_units"] = run_v53_unit_checks()
     print(f"  [PASS] v5.3 unit checks ({results['v53_units']})")
@@ -479,6 +527,9 @@ def run_stage_unit():
 
     results["gesture_replay"] = run_cmd(["node", "verify_gesture_replay.mjs"], label="verify_gesture_replay.mjs")
     print(f"  [PASS] verify_gesture_replay ({results['gesture_replay']['seconds']}s, {results['gesture_replay']['tail']})")
+
+    results["fui_voice_longchat"] = run_cmd([sys.executable, "verify_fui_voice_longchat.py"], label="verify_fui_voice_longchat.py")
+    print(f"  [PASS] verify_fui_voice_longchat ({results['fui_voice_longchat']['seconds']}s, {results['fui_voice_longchat']['tail']})")
     return results
 
 
@@ -490,7 +541,7 @@ def run_warm_gpu_check():
     import io
     import wave
     import numpy as np
-    from voice_output import MossSpeech
+    from voice_output import MossSpeech, SESSION_CUDA_MIN_FREE_MIB, SESSION_MIN_AVAILABLE, memory_sample
 
     async def _run():
         with tempfile.TemporaryDirectory(prefix="moss-gate-warm-") as td:
@@ -498,7 +549,14 @@ def run_warm_gpu_check():
             try:
                 ok = await sp.prepare_session("gate", eligible=lambda: True, ttl_seconds=60, prime=True)
                 if not ok:
-                    raise RuntimeError("prepare_session(prime=True) failed on CUDA")
+                    await asyncio.sleep(2.0)
+                    ok = await sp.prepare_session("gate", eligible=lambda: True, ttl_seconds=60, prime=True)
+                if not ok:
+                    m = memory_sample()
+                    raise RuntimeError(
+                        f"prepare_session(prime=True) failed on CUDA "
+                        f"(avail_ram={m.available}, avail_pf={m.available_pagefile}, need_ram={SESSION_MIN_AVAILABLE}, need_vram_mib={SESSION_CUDA_MIN_FREE_MIB})"
+                    )
                 t0 = perf_counter()
                 timing = {}
                 wav_bytes = await sp.render(
@@ -610,10 +668,9 @@ def analyze_intel_logo_pixels(report_path: Path):
 
 
 def _pick_free_port() -> int:
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+    from testkit import safe_free_port
+
+    return safe_free_port()
 
 
 def _run_stage_ui_against(base_url: str, out_dir: Path, *, mode_label: str):
@@ -736,8 +793,9 @@ try {
   await page.goto(`${process.env.MOSS_URL}/?skipOpening=1`, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForFunction(() => document.body.dataset.backend === 'live', { timeout: 15000 });
   await page.waitForTimeout(450);
-  if (await page.locator('#opening-skip').isVisible({ timeout: 500 }).catch(() => false)) {
-    await page.locator('#opening-skip').click().catch(() => {});
+  const skipBtn = page.locator('#skip-opening, #opening-skip').first();
+  if (await skipBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+    await skipBtn.click().catch(() => {});
   }
   if (await page.locator('#dlg-badge').evaluate((el) => Boolean(el?.open)).catch(() => false)) {
     await page.locator('#badge-verify').click().catch(() => {});

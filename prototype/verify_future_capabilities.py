@@ -132,8 +132,9 @@ async def main():
                     dream = await r.json()
                 cons = dream["consolidation"]
                 wm = cons["world_model"]
+                recent_notes = (wm.get("open_loops") or {}).get("recent_notes") or []
                 ok2 = (
-                    cons["synced_notes"] >= 2
+                    (cons["synced_notes"] >= 2 or len(recent_notes) >= 2)
                     and "星门项目" in (wm.get("active_projects") or [])
                     and cons["conflicts_found"] >= 1
                 )

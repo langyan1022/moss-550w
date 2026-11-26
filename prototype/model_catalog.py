@@ -8,6 +8,7 @@ from email.utils import parsedate_to_datetime
 import json
 import os
 from pathlib import Path
+from time import monotonic
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
@@ -127,6 +128,108 @@ class Profile:
         return AsyncOpenAI(base_url=self.url, api_key=self.secret.get_secret_value(), max_retries=0,
                            http_client=CloudHTTPClient(transport=CompletionTransport(self.id), trust_env=False,
                                                        follow_redirects=False, timeout=90))
+
+
+class ProviderHealthTracker:
+    """Adaptive provider health, EWMA latency, and bounded cooldown circuit-breaker."""
+
+    def __init__(self, *, clock=monotonic, base_cooldown_s: float = 25.0, max_cooldown_s: float = 120.0):
+        self._clock = clock
+        self._base_cooldown_s = float(base_cooldown_s)
+        self._max_cooldown_s = float(max_cooldown_s)
+        self._stats: dict[str, dict] = {}
+
+    def _entry(self, provider_id: str) -> dict:
+        key = str(provider_id or "local")
+        if key not in self._stats:
+            self._stats[key] = {
+                "ok_count": 0,
+                "err_count": 0,
+                "consecutive_failures": 0,
+                "ewma_latency_ms": None,
+                "cooldown_until": 0.0,
+                "last_error": "",
+                "failover_hits": 0,
+            }
+        return self._stats[key]
+
+    def record_success(self, provider_id: str, latency_ms: float | None = None):
+        row = self._entry(provider_id)
+        row["ok_count"] += 1
+        row["consecutive_failures"] = 0
+        row["cooldown_until"] = 0.0
+        row["last_error"] = ""
+        if latency_ms is not None and latency_ms >= 0:
+            prev = row["ewma_latency_ms"]
+            row["ewma_latency_ms"] = round(float(latency_ms) if prev is None else 0.35 * float(latency_ms) + 0.65 * prev, 1)
+
+    def record_failure(self, provider_id: str, error_text: str = "", *, status_code: int | None = None):
+        row = self._entry(provider_id)
+        row["err_count"] += 1
+        row["consecutive_failures"] += 1
+        row["last_error"] = str(error_text or "")[:160]
+        streak = row["consecutive_failures"]
+        factor = 1.8 if status_code == 429 else (1 if streak == 1 else min(4, 2 ** (streak - 1)))
+        cooldown = min(self._max_cooldown_s, self._base_cooldown_s * factor)
+        row["cooldown_until"] = self._clock() + cooldown
+
+    def record_failover(self, provider_id: str):
+        self._entry(provider_id)["failover_hits"] += 1
+
+    def reset(self, provider_id: str | None = None):
+        if provider_id is None:
+            self._stats.clear()
+        else:
+            self._stats.pop(str(provider_id or "local"), None)
+
+    def is_cooling(self, provider_id: str) -> bool:
+        row = self._stats.get(str(provider_id or "local"))
+        return bool(row and self._clock() < row["cooldown_until"])
+
+    def rank_candidates(self, primary_tuple, backups: list | tuple) -> tuple[list, bool]:
+        """Return latency-and-health-ordered candidates plus whether primary was bypassed via cooldown."""
+        primary_id = primary_tuple[0]
+        unique = []
+        seen = {primary_id}
+        for item in (backups or ()):
+            if item and item[0] not in seen:
+                seen.add(item[0])
+                unique.append(item)
+        if not unique:
+            return [primary_tuple], False
+
+        now_t = self._clock()
+
+        def score(item):
+            row = self._stats.get(item[0]) or {}
+            cooling = now_t < float(row.get("cooldown_until") or 0.0)
+            streak = int(row.get("consecutive_failures") or 0)
+            ewma = row.get("ewma_latency_ms")
+            return (1 if cooling else 0, streak, float(ewma) if ewma is not None else 1800.0)
+
+        healthy_backups = [it for it in unique if not self.is_cooling(it[0])]
+        ordered_backups = sorted(unique, key=score)
+        if self.is_cooling(primary_id) and healthy_backups:
+            return [*ordered_backups, primary_tuple], True
+        return [primary_tuple, *ordered_backups], False
+
+    def snapshot(self) -> dict:
+        now_t = self._clock()
+        out = {}
+        for pid, row in sorted(self._stats.items()):
+            rem = max(0.0, float(row["cooldown_until"]) - now_t)
+            status = "cooldown" if rem > 0 else ("degraded" if row["consecutive_failures"] > 0 else "healthy")
+            out[pid] = {
+                "status": status,
+                "ok_count": row["ok_count"],
+                "err_count": row["err_count"],
+                "consecutive_failures": row["consecutive_failures"],
+                "cooldown_remaining_s": round(rem, 1),
+                "ewma_latency_ms": row["ewma_latency_ms"],
+                "failover_hits": row["failover_hits"],
+                "last_error": row["last_error"],
+            }
+        return out
 
 
 def allowed(provider_id, url):

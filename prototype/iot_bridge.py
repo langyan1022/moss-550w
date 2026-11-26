@@ -17,8 +17,10 @@ Provides two clean, production-ready, zero-extra-dependency integration layers:
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import json
+import re
 import sqlite3
 from time import time
 from urllib.parse import urlsplit
@@ -40,11 +42,13 @@ DEFAULT_IOT_CONFIG = {
     "ha_mode": "dry_run",          # "dry_run" | "live"
     "ha_url": "",                  # e.g. "http://homeassistant.local:8123"
     "ha_token": "",                # Long-Lived Access Token (never leaked in full to UI)
+    "ha_mcp_path": "/mcp_server/sse",  # Native Home Assistant MCP endpoint path
     "ha_allowed_domains": list(SAFE_HA_DOMAINS),
     "hw_enabled": True,
     "hw_device_name": "MOSS-550W-PHYSICAL-01",
     "hw_webhook_url": "",          # Optional ESP32/Pi HTTP endpoint e.g. "http://192.168.1.50/moss/frame"
-    "hw_protocol_version": "moss-hw-v1",
+    "hw_protocol_version": "moss-hw-v2",
+    "satellite_room": "study",
 }
 
 DEMO_HA_ENTITIES = (
@@ -92,11 +96,12 @@ class IoTAndHardwareBridge:
         self.config = self._load_config()
         self._demo_states = {e["entity_id"]: json.loads(json.dumps(e)) for e in DEMO_HA_ENTITIES}
 
-        # Physical 550W Hardware State Frame
+        # Physical 550W Hardware State Frame (moss-hw-v2 + ESP32-S3 Satellite Telemetry)
         self.hw_seq = 0
         self.hw_subscribers: set[asyncio.Event] = set()
+        self._webhook_tasks: set[asyncio.Task] = set()
         self.hw_state = {
-            "protocol": "moss-hw-v1",
+            "protocol": "moss-hw-v2",
             "seq": 0,
             "mode": "standby",
             "led": dict(LED_PRESETS["standby"]),
@@ -104,6 +109,13 @@ class IoTAndHardwareBridge:
             "screen": {"headline": "MOSS 550W", "line1": "SYSTEM ONLINE", "line2": "STANDBY", "level": "ok"},
             "speaker": {"active": False, "rms": 0.0, "volume_hint": 75},
             "camera": {"active": False, "track_face": False},
+            "satellite": {
+                "type": "esp32-s3",
+                "wake_word": "microWakeWord",
+                "room": self.config.get("satellite_room", "study"),
+                "vad_active": False,
+                "last_transcript": "",
+            },
             "updated_at": _now_iso(),
         }
         self.hw_sensors = {
@@ -179,7 +191,11 @@ class IoTAndHardwareBridge:
         prev_url = self.config.get("ha_url", "")
         if "ha_url" in patch:
             merged["ha_url"] = _validate_local_or_lan_url(patch["ha_url"])
-        url_changed = bool(merged["ha_url"] and prev_url and urlsplit(merged["ha_url"]).netloc != urlsplit(prev_url).netloc)
+        url_changed = bool(
+            merged["ha_url"] and prev_url
+            and (urlsplit(merged["ha_url"]).scheme, urlsplit(merged["ha_url"]).netloc)
+            != (urlsplit(prev_url).scheme, urlsplit(prev_url).netloc)
+        )
         if patch.get("clear_ha_token") is True:
             merged["ha_token"] = ""
         elif "ha_token" in patch and isinstance(patch["ha_token"], str) and patch["ha_token"].strip():
@@ -192,6 +208,13 @@ class IoTAndHardwareBridge:
             merged["hw_device_name"] = patch["hw_device_name"].strip()[:48] or "MOSS-550W-PHYSICAL-01"
         if "hw_webhook_url" in patch:
             merged["hw_webhook_url"] = _validate_local_or_lan_url(patch["hw_webhook_url"])
+        if "ha_mcp_path" in patch and isinstance(patch["ha_mcp_path"], str):
+            p = patch["ha_mcp_path"].strip()
+            if p and not p.startswith("/"):
+                p = "/" + p
+            merged["ha_mcp_path"] = (p or "/mcp_server/sse")[:128]
+        if "satellite_room" in patch and isinstance(patch["satellite_room"], str):
+            merged["satellite_room"] = patch["satellite_room"].strip()[:32] or "study"
 
         self.config = merged
         to_persist = dict(merged)
@@ -223,14 +246,16 @@ class IoTAndHardwareBridge:
 
     async def ha_list_entities(self, domain: str = "") -> dict:
         dom = str(domain or "").strip().lower()
-        if self.config["ha_mode"] == "live" and self.config["ha_url"] and self.config["ha_token"]:
+        if self.config["ha_mode"] == "live" and self.config["ha_enabled"] and self.config["ha_url"] and self.config["ha_token"]:
             url = f"{self.config['ha_url']}/api/states"
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5), trust_env=False) as http:
-                    async with http.get(url, headers=self._ha_headers()) as resp:
+                    async with http.get(url, headers=self._ha_headers(), allow_redirects=False) as resp:
                         if resp.status != 200:
                             raise ValueError(f"Home Assistant 返回 HTTP {resp.status}")
                         raw = await resp.json()
+                if not isinstance(raw, list):
+                    raise ValueError("Home Assistant 返回的状态列表格式无效")
                 entities = [
                     {
                         "entity_id": e.get("entity_id", ""),
@@ -265,16 +290,18 @@ class IoTAndHardwareBridge:
         svc = str(service or "").strip().lower()
         if "." not in eid or not svc:
             raise ValueError("需要合法的 Home Assistant entity_id（如 light.living_room）与 service（如 turn_on）。")
+        if not re.fullmatch(r"[a-z0-9_]{1,64}", svc):
+            raise ValueError("Home Assistant service 名称只能包含小写字母、数字与下划线。")
         domain = eid.split(".", 1)[0]
         if domain not in self.config["ha_allowed_domains"]:
             raise ValueError(f"安全策略禁止控制域 `{domain}`（当前允许：{', '.join(self.config['ha_allowed_domains'])}）。")
-        payload = {"entity_id": eid, **(data or {})}
+        payload = {**(data or {}), "entity_id": eid}
 
         if self.config["ha_mode"] == "live" and self.config["ha_enabled"] and self.config["ha_url"] and self.config["ha_token"]:
             url = f"{self.config['ha_url']}/api/services/{domain}/{svc}"
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=6), trust_env=False) as http:
-                    async with http.post(url, headers=self._ha_headers(), json=payload) as resp:
+                    async with http.post(url, headers=self._ha_headers(), json=payload, allow_redirects=False) as resp:
                         if resp.status not in (200, 201):
                             text = await resp.text()
                             raise ValueError(f"HA HTTP {resp.status}: {text[:120]}")
@@ -354,17 +381,24 @@ class IoTAndHardwareBridge:
             source="HW550W",
             level="info",
         )
+        snap = copy.deepcopy(self.hw_state)
         if self.config["hw_enabled"] and self.config["hw_webhook_url"]:
             try:
-                asyncio.get_running_loop().create_task(self._post_webhook(dict(self.hw_state)))
+                t = asyncio.get_running_loop().create_task(self._post_webhook(snap))
+                self._webhook_tasks.add(t)
+                t.add_done_callback(self._webhook_tasks.discard)
             except RuntimeError:
                 pass
-        return dict(self.hw_state)
+        return snap
 
     async def _post_webhook(self, frame: dict):
         try:
+            url = str(self.config.get("hw_webhook_url") or "").strip()
+            parsed = urlsplit(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+                return
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.5), trust_env=False) as http:
-                await http.post(self.config["hw_webhook_url"], json=frame)
+                await http.post(url, json=frame, allow_redirects=False)
         except Exception:
             pass
 
@@ -392,6 +426,53 @@ class IoTAndHardwareBridge:
             )
             self.push_hardware_frame(mode="listening", gesture="look_user", screen_line2="LISTENING")
         return dict(self.hw_sensors)
+
+    async def ha_mcp_discover(self, *, mcp_url: str = "") -> dict:
+        """Connect to Home Assistant's native Streamable HTTP MCP endpoint dynamically without leaking tokens to disk."""
+        target_url = str(mcp_url or "").strip()
+        if not target_url:
+            if not (self.config.get("ha_enabled") and self.config.get("ha_mode") == "live" and self.config.get("ha_url") and self.config.get("ha_token")):
+                return {
+                    "ok": True,
+                    "mode": "dry_run",
+                    "mcp_url": "",
+                    "tools": [
+                        {"name": "HassTurnOn", "description": "按区域/实体开启 Home Assistant 设备"},
+                        {"name": "HassTurnOff", "description": "按区域/实体关闭 Home Assistant 设备"},
+                        {"name": "GetLiveContext", "description": "按需发现当前活跃房间实体状态"},
+                    ],
+                    "note": "当前处于 HA dry_run 演练模式，切至 live 并填好 URL/令牌后将实时连接 HA Streamable HTTP MCP。",
+                }
+            target_url = self.config["ha_url"].rstrip("/") + str(self.config.get("ha_mcp_path") or "/mcp_server/sse")
+        from mcp_stdio import connect_streamable_http
+
+        try:
+            async with connect_streamable_http(
+                target_url,
+                headers={"Authorization": f"Bearer {self.config['ha_token']}"} if self.config.get("ha_token") else None,
+                timeout=12.0,
+            ) as session:
+                listed = await session.list_tools()
+                tools = [{"name": t.name, "description": (t.description or "")[:160]} for t in listed.tools]
+            self._record_action("ha:mcp_discover", target_url, f"tools={len(tools)}", ok=True)
+            return {"ok": True, "mode": "live", "mcp_url": target_url, "tools": tools}
+        except Exception as exc:
+            self._record_action("ha:mcp_discover", target_url, str(exc), ok=False)
+            return {"ok": False, "mode": "live_error", "mcp_url": target_url, "error": str(exc), "tools": []}
+
+    def record_satellite_audio(self, *, room: str = "", transcript: str = "", vad_active: bool = False) -> dict:
+        sat = self.hw_state.setdefault("satellite", {})
+        if room:
+            sat["room"] = str(room)[:32]
+        sat["vad_active"] = bool(vad_active)
+        if transcript:
+            sat["last_transcript"] = str(transcript)[:120]
+        self.push_hardware_frame(
+            mode="thinking" if transcript else ("listening" if vad_active else "standby"),
+            screen_line1=f"SAT:{sat.get('room', 'study').upper()}",
+            screen_line2=str(transcript or ("LISTENING" if vad_active else "STANDBY"))[:44],
+        )
+        return dict(sat)
 
     def status_snapshot(self) -> dict:
         recent_actions = [

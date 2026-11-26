@@ -320,9 +320,9 @@ console.log('MD_FENCE_OK');
 
 
 def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+    from testkit import safe_free_port
+
+    return safe_free_port()
 
 
 async def test_http_e2e() -> dict:

@@ -31,6 +31,11 @@ def install_brain_iot_routes(
         return web.json_response({"cycle": cycle, "status": moss.rsi.status_snapshot()},
                                  headers={"Cache-Control": "no-store"})
 
+    async def rsi_eval(request):
+        ev = moss.rsi.evaluate_dpo_episodes(owner_code=moss.DEFAULT_OWNER)
+        return web.json_response({"eval": ev, "status": moss.rsi.status_snapshot()},
+                                 headers={"Cache-Control": "no-store"})
+
     async def rsi_retire(request):
         lesson_id = int(request.match_info["lesson_id"])
         ok = moss.rsi.retire_lesson(lesson_id, reason="api_delete")
@@ -48,7 +53,7 @@ def install_brain_iot_routes(
             if not isinstance(body, dict):
                 raise ValueError("需要 JSON 对象")
             if body.get("file_path"):
-                created = moss.sag.ingest_file(Path(str(body["file_path"])))
+                created = await asyncio.to_thread(moss.sag.ingest_file, Path(str(body["file_path"])))
                 return web.json_response({"ingested": len(created), "items": created, "status": moss.sag.status_snapshot()},
                                          headers={"Cache-Control": "no-store"})
             ev = moss.sag.upsert_event(
@@ -67,17 +72,83 @@ def install_brain_iot_routes(
             body = await request.json()
             if not isinstance(body, dict) or not isinstance(body.get("query"), str):
                 raise ValueError("需要 query 字符串")
-            res = moss.sag.search(body["query"], limit=int(body.get("limit", 6)), hops=int(body.get("hops", 1)))
+            res = moss.sag.search(
+                body["query"],
+                limit=int(body.get("limit", 6)),
+                hops=int(body.get("hops", 1)),
+                touch=False,
+                as_of=str(body.get("as_of") or "").strip() or None,
+                include_invalidated=bool(body.get("include_invalidated", False)),
+            )
             return web.json_response(res, headers={"Cache-Control": "no-store"})
         except (ValueError, TypeError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
-    def _brain_overview_payload():
+    async def sag_invalidate(request):
+        try:
+            body = await read_json_dict(request)
+            eid = int(body.get("event_id") or 0)
+            if eid <= 0:
+                raise ValueError("需要合法的 event_id")
+            by_id = int(body["invalidated_by_id"]) if body.get("invalidated_by_id") is not None else None
+            valid_to = str(body.get("valid_to") or "").strip() or None
+            ok = moss.sag.invalidate_event(eid, invalidated_by_id=by_id, valid_to=valid_to)
+            return web.json_response({"invalidated": ok, "sag": moss.sag.status_snapshot()},
+                                     status=200 if ok else 404, headers={"Cache-Control": "no-store"})
+        except (ValueError, TypeError) as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    def _brain_overview_payload(*, is_admin: bool = True, owner_code: str = "MOSS"):
+        diag = moss.self_diagnostics(owner_code=owner_code)
+        if not is_admin:
+            iot_snap = moss.iot.status_snapshot()
+            return {
+                "rsi": {"active_count": 0, "retired_count": 0, "episode_count": 0, "dpo_export_count": 0, "lessons": []},
+                "sag": {"event_count": 0, "entity_count": 0, "edge_count": 0},
+                "soul": {"beliefs": 0, "profile": 0},
+                "pulse": {"enabled": False, "alerts": []},
+                "world_model": None,
+                "jobs": [],
+                "watchers": [],
+                "skills": [],
+                "routines": [],
+                "music_prefs": {"liked": 0, "disliked": 0},
+                "iot": {"ha_enabled": bool((iot_snap.get("config") or {}).get("ha_enabled")), "restricted": True},
+                "self_diagnostics": diag,
+                "mobile_url": "",
+                "lan_urls": [],
+            }
+        turns_counted = 0
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        reply_ms_sum = 0
+        reply_ms_cnt = 0
+        try:
+            norm_own = moss.normalize_owner(owner_code)
+            for (raw_doc,) in moss.db.execute(
+                "SELECT t.doc FROM turns t LEFT JOIN chats c ON c.id = t.chat_id "
+                "WHERE COALESCE(c.owner_code, 'MOSS')=? ORDER BY t.rowid DESC LIMIT 40",
+                (norm_own,),
+            ).fetchall():
+                doc = json.loads(raw_doc)
+                tu = doc.get("token_usage")
+                if isinstance(tu, dict):
+                    turns_counted += 1
+                    prompt_tokens += int(tu.get("prompt") or 0)
+                    completion_tokens += int(tu.get("completion") or 0)
+                    total_tokens += int(tu.get("total") or 0)
+                rm = doc.get("reply_ms")
+                if isinstance(rm, (int, float)) and rm > 0:
+                    reply_ms_sum += float(rm)
+                    reply_ms_cnt += 1
+        except Exception:
+            pass
         return {
             "rsi": moss.rsi.status_snapshot(),
             "sag": moss.sag.status_snapshot(),
             "soul": moss.soul.snapshot()["stats"],
-            "pulse": moss.pulse.status_snapshot(),
+            "pulse": moss.pulse.status_snapshot(owner_code=owner_code),
             "world_model": moss.consolidator.latest_snapshot(),
             "jobs": moss.jobs.list_jobs(),
             "watchers": moss.jobs.list_watchers(),
@@ -85,6 +156,15 @@ def install_brain_iot_routes(
             "routines": moss.routines.list_tasks(),
             "music_prefs": moss.music_prefs.snapshot(),
             "iot": moss.iot.status_snapshot(),
+            "provider_health": moss.provider_health.snapshot(),
+            "telemetry_totals": {
+                "turns_counted": turns_counted,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "avg_reply_ms": round(reply_ms_sum / reply_ms_cnt) if reply_ms_cnt else 0,
+            },
+            "self_diagnostics": diag,
             "mobile_url": (f"https://{lan_host_list[0]}:{tls_port}/mobile" if (lan_host_list and tls_port)
                            else f"http://{lan_host_list[0]}:{port}/mobile" if lan_host_list
                            else f"http://127.0.0.1:{port}/mobile"),
@@ -234,6 +314,8 @@ def install_brain_iot_routes(
                 description=str(body.get("description") or ""),
                 prompt=str(body.get("prompt") or ""),
                 category=str(body.get("category") or "custom"),
+                required_tools=body.get("required_tools") if isinstance(body.get("required_tools"), list) else None,
+                steps=body.get("steps") if isinstance(body.get("steps"), list) else None,
             )
             return web.json_response({"skill": sk, "skills": moss.jobs.list_skills()}, headers={"Cache-Control": "no-store"})
         except (ValueError, TypeError) as exc:
@@ -269,10 +351,16 @@ def install_brain_iot_routes(
             return web.json_response({"error": str(exc)}, status=400)
 
     async def brain_overview(request):
-        return web.json_response(_brain_overview_payload(), headers={"Cache-Control": "no-store"})
+        ident = request.get("moss_identity") or {}
+        is_admin = ident.get("role", "CS") == "CS"
+        owner = ident.get("code") or moss.DEFAULT_OWNER
+        return web.json_response(
+            _brain_overview_payload(is_admin=is_admin, owner_code=owner),
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def brain_consolidate(request):
-        result = moss.consolidator.run_consolidation(trigger="api")
+        result = await moss.consolidator.run_consolidation_async(trigger="api")
         return web.json_response({"consolidation": result, "overview": _brain_overview_payload()},
                                  headers={"Cache-Control": "no-store"})
 
@@ -333,7 +421,7 @@ def install_brain_iot_routes(
             return web.json_response({"error": str(exc)}, status=400)
 
     async def soul_distill_now(request):
-        result = moss.consolidator.run_consolidation(trigger="soul_ui")
+        result = await moss.consolidator.run_consolidation_async(trigger="soul_ui")
         return web.json_response(
             {"consolidation": result, "soul": moss.soul.snapshot(), "overview": _brain_overview_payload()},
             headers={"Cache-Control": "no-store"},
@@ -370,9 +458,78 @@ def install_brain_iot_routes(
 
     async def proactive_dismiss(request):
         aid = int(request.match_info["alert_id"])
-        ok = moss.pulse.dismiss_alert(aid)
-        return web.json_response({"dismissed": ok, "pulse": moss.pulse.status_snapshot()},
+        ident = request.get("moss_identity") or {}
+        owner = moss.normalize_owner(ident.get("code") or moss.DEFAULT_OWNER)
+        accepted = False
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                accepted = bool(body.get("accepted"))
+        except Exception:
+            pass
+        ok = moss.pulse.dismiss_alert(aid, owner_code=owner, accepted=accepted)
+        return web.json_response({"dismissed": ok, "accepted": accepted, "pulse": moss.pulse.status_snapshot(owner_code=owner)},
                                  headers={"Cache-Control": "no-store"})
+
+    async def push_vapid_key(request):
+        ident = request.get("moss_identity") or {}
+        owner = moss.normalize_owner(ident.get("code") or moss.DEFAULT_OWNER)
+        return web.json_response(
+            {
+                "enabled": True,
+                "publicKey": moss.webpush.public_key,
+                "subscriptions": moss.webpush.subscription_count(owner_code=owner),
+                "owner_code": owner,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def push_subscribe(request):
+        ident = request.get("moss_identity") or {}
+        owner = moss.normalize_owner(ident.get("code") or moss.DEFAULT_OWNER)
+        try:
+            body = await read_json_dict(request)
+            sub = body.get("subscription") if isinstance(body.get("subscription"), dict) else body
+            res = moss.webpush.subscribe(
+                sub,
+                owner_code=owner,
+                user_agent=request.headers.get("User-Agent", ""),
+            )
+            return web.json_response(res, headers={"Cache-Control": "no-store"})
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def push_unsubscribe(request):
+        ident = request.get("moss_identity") or {}
+        owner = moss.normalize_owner(ident.get("code") or moss.DEFAULT_OWNER)
+        try:
+            body = await read_json_dict(request)
+            ep = str(body.get("endpoint") or "")
+            ok = moss.webpush.unsubscribe(ep, owner_code=owner)
+            return web.json_response({"unsubscribed": ok, "count": moss.webpush.subscription_count(owner_code=owner)},
+                                     headers={"Cache-Control": "no-store"})
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def push_test(request):
+        ident = request.get("moss_identity") or {}
+        owner = moss.normalize_owner(ident.get("code") or moss.DEFAULT_OWNER)
+        body = {}
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                body = {}
+        except Exception:
+            pass
+        payload = {
+            "title": str(body.get("title") or "MOSS 550W 系统测试推送")[:80],
+            "body": str(body.get("body") or "后台 Web Push 通道已就绪，熄屏或切离页面时同样可接收提醒。")[:240],
+            "kind": "test_push",
+            "level": "info",
+            "url": "/mobile",
+        }
+        res = await moss.webpush.send_async(payload, owner_code=owner)
+        return web.json_response(res, headers={"Cache-Control": "no-store"})
 
     async def vision_to_sag(request):
         from window_image import answer_image
@@ -412,16 +569,143 @@ def install_brain_iot_routes(
             )
         except web.HTTPRequestEntityTooLarge:
             return web.json_response({"error": "图像超出大小限制"}, status=413)
+        except (RuntimeError, TimeoutError) as exc:
+            return web.json_response({"error": str(exc) or "本机文字识别服务暂不可用。"}, status=503)
         except (OSError, ValueError, KeyError) as exc:
             return web.json_response({"error": str(exc) or "图像格式无效或无法读取。"}, status=400)
 
+    async def mcp_servers_handler(request):
+        from mcp_configured import MCP_DATA, delete_server, public_servers, upsert_server
+
+        tok = MCP_DATA.set(moss.drafts.parent) if MCP_DATA.get() is None else None
+        try:
+            if request.method == "GET":
+                return web.json_response({"servers": public_servers()}, headers={"Cache-Control": "no-store"})
+            if request.method == "DELETE":
+                name = request.match_info.get("server_name", "")
+                ok = delete_server(name)
+                return web.json_response({"deleted": ok, "servers": public_servers()},
+                                         status=200 if ok else 404, headers={"Cache-Control": "no-store"})
+            try:
+                body = await read_json_dict(request)
+                name = str(body.get("name") or "").strip()
+                cfg = body.get("config") if isinstance(body.get("config"), dict) else {
+                    k: v for k, v in body.items() if k != "name"
+                }
+                servers = upsert_server(name, cfg)
+                return web.json_response({"servers": servers}, headers={"Cache-Control": "no-store"})
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+        finally:
+            if tok is not None:
+                MCP_DATA.reset(tok)
+
+    async def mcp_test_handler(request):
+        from mcp_configured import MCP_DATA, probe_server
+        from mcp_modern import ACTIVE_MCP_BROKER, ACTIVE_MCP_PROGRESS
+
+        tok = MCP_DATA.set(moss.drafts.parent) if MCP_DATA.get() is None else None
+        try:
+            body = await read_json_dict(request)
+            name = str(body.get("name") or "").strip()
+            if not name:
+                raise ValueError("需要 MCP 服务名称 name")
+            b_tok = ACTIVE_MCP_BROKER.set(moss.mcp_broker)
+            p_tok = ACTIVE_MCP_PROGRESS.set(moss.mcp_progress)
+            try:
+                res = await probe_server(name)
+            finally:
+                ACTIVE_MCP_PROGRESS.reset(p_tok)
+                ACTIVE_MCP_BROKER.reset(b_tok)
+            return web.json_response(res, headers={"Cache-Control": "no-store"})
+        except (ValueError, RuntimeError, TimeoutError, OSError, ExceptionGroup) as exc:
+            return web.json_response({"ok": False, "error": str(exc) or "MCP 探测失败"}, status=400)
+        finally:
+            if tok is not None:
+                MCP_DATA.reset(tok)
+
+    async def mcp_elicitations_handler(request):
+        if request.method == "GET":
+            return web.json_response({"items": moss.mcp_broker.list_pending()}, headers={"Cache-Control": "no-store"})
+        elicit_id = request.match_info.get("elicit_id", "")
+        try:
+            body = await read_json_dict(request)
+            action = str(body.get("action") or "accept").strip().lower()
+            content = body.get("content") if isinstance(body.get("content"), dict) else None
+            ok = moss.mcp_broker.resolve(elicit_id, action, content)
+            return web.json_response({"resolved": ok, "items": moss.mcp_broker.list_pending()},
+                                     status=200 if ok else 404, headers={"Cache-Control": "no-store"})
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def mcp_progress_handler(request):
+        return web.json_response({"tasks": moss.mcp_progress.snapshot()}, headers={"Cache-Control": "no-store"})
+
+    async def desktop_uia_handler(request):
+        from desktop_uia import inspect_foreground_uia
+
+        limit = 30
+        try:
+            if "limit" in request.query:
+                limit = max(5, min(50, int(request.query["limit"])))
+        except ValueError:
+            pass
+        res = await inspect_foreground_uia(max_elements=limit)
+        return web.json_response(res, status=200 if res.get("ok") else 422, headers={"Cache-Control": "no-store"})
+
+    async def ha_mcp_discover_handler(request):
+        url = ""
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                url = str(body.get("mcp_url") or "")
+        except Exception:
+            pass
+        res = await moss.iot.ha_mcp_discover(mcp_url=url)
+        return web.json_response(res, status=200 if res.get("ok") else 502, headers={"Cache-Control": "no-store"})
+
+    async def hardware_moss_audio_handler(request):
+        from voice.smart_turn import predict_turn_completion
+
+        room = str(request.query.get("room") or "study").strip()[:32]
+        pcm = await request.read()
+        if not pcm or len(pcm) < 1600:
+            return web.json_response({"error": "卫星音频分片过短"}, status=400)
+        if len(pcm) % 2:
+            pcm = pcm[:-1]
+        turn_res = await asyncio.to_thread(predict_turn_completion, pcm[-256_000:])
+        transcript = ""
+        voice_svc = request.app.get("moss_voice_service")
+        if voice_svc is not None and turn_res.get("complete") and len(pcm) >= 4000:
+            try:
+                import io as _io, wave as _wave
+                buf = _io.BytesIO()
+                with _wave.open(buf, "wb") as w:
+                    w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                    w.writeframes(pcm[-480_000:])
+                transcript = await voice_svc.transcribe(buf.getvalue()) or ""
+            except Exception:
+                transcript = ""
+        sat = moss.iot.record_satellite_audio(room=room, transcript=transcript, vad_active=True)
+        return web.json_response({"room": sat.get("room"), "transcript": transcript, "turn_check": turn_res, "satellite": sat},
+                                 headers={"Cache-Control": "no-store"})
+
     app.add_routes([
+        web.get("/api/mcp/servers", mcp_servers_handler),
+        web.post("/api/mcp/servers", mcp_servers_handler),
+        web.delete(r"/api/mcp/servers/{server_name:[\w\-.]{1,48}}", mcp_servers_handler),
+        web.post("/api/mcp/test", mcp_test_handler),
+        web.get("/api/mcp/elicitations", mcp_elicitations_handler),
+        web.post(r"/api/mcp/elicitations/{elicit_id:elicit-[A-Za-z0-9]{4,32}}", mcp_elicitations_handler),
+        web.get("/api/mcp/progress", mcp_progress_handler),
         web.get("/api/rsi", rsi_status),
         web.post("/api/rsi/iterate", rsi_iterate),
+        web.post("/api/rsi/eval", rsi_eval),
         web.delete(r"/api/rsi/lessons/{lesson_id:[0-9]{1,9}}", rsi_retire),
         web.get("/api/sag", sag_status),
         web.post("/api/sag/ingest", sag_ingest),
         web.post("/api/sag/query", sag_query),
+        web.post("/api/sag/invalidate", sag_invalidate),
         web.get("/api/brain/overview", brain_overview),
         web.post("/api/brain/consolidate", brain_consolidate),
         web.get("/api/soul", soul_snapshot),
@@ -434,6 +718,10 @@ def install_brain_iot_routes(
         web.post("/api/proactive/config", proactive_config),
         web.post("/api/proactive/briefing", proactive_briefing),
         web.post(r"/api/proactive/alerts/{alert_id:[0-9]{1,9}}/dismiss", proactive_dismiss),
+        web.get("/api/push/vapid-key", push_vapid_key),
+        web.post("/api/push/subscribe", push_subscribe),
+        web.post("/api/push/unsubscribe", push_unsubscribe),
+        web.post("/api/push/test", push_test),
         web.post("/api/context/vision-to-sag", vision_to_sag),
         web.get("/api/jobs", jobs_handler),
         web.post("/api/jobs", jobs_handler),
@@ -454,4 +742,7 @@ def install_brain_iot_routes(
         web.get("/api/hardware/moss/stream", hardware_moss_stream),
         web.post("/api/hardware/moss/command", hardware_moss_command),
         web.post("/api/hardware/moss/telemetry", hardware_moss_telemetry),
+        web.post("/api/hardware/moss/audio", hardware_moss_audio_handler),
+        web.post("/api/iot/ha-mcp-discover", ha_mcp_discover_handler),
+        web.get("/api/desktop/uia", desktop_uia_handler),
     ])

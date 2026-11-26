@@ -49,7 +49,7 @@ async def open_browser(playwright):
 
 
 class BrowserServer:
-    def __init__(self, folder, port, write_delay=0, model_url="http://127.0.0.1:18222/v1",
+    def __init__(self, folder, port, write_delay=0, model_url="http://127.0.0.1:18332/v1",
                  model="moss-chat-qwen35-4b", memory_url=None, *, draft_model_reply=False):
         self.folder = Path(folder).resolve()
         self.data = self.folder / "data"
@@ -67,6 +67,10 @@ class BrowserServer:
     async def start(self):
         if self.proc is not None:
             raise RuntimeError("测试页面服务已经启动")
+        if not self.port:
+            from testkit import safe_free_port
+            self.port = safe_free_port()
+            self.url = f"http://127.0.0.1:{self.port}"
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             sock.bind(("127.0.0.1", self.port))

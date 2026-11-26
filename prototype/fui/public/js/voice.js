@@ -365,6 +365,8 @@ export function createVoiceEngine({
     setActiveMicInfo(null, null);
 
     if (micProcessor) {
+      try { micProcessor.port?.postMessage('flush'); } catch { /* ignore */ }
+      if (micProcessor.port) micProcessor.port.onmessage = null;
       try { micProcessor.disconnect(); } catch { /* ignore */ }
       micProcessor = null;
     }
@@ -476,38 +478,62 @@ export function createVoiceEngine({
       micAnalyser.smoothingTimeConstant = 0.75;
       source.connect(micAnalyser);
 
-      micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
       micChunks = [];
       micStartedAt = performance.now();
       micSpokeAt = micStartedAt;
       micHasVoice = false;
+      let micVoiceStreak = 0;
 
-      micProcessor.onaudioprocess = (ev) => {
-        if (!micActive) return;
-        const input = ev.inputBuffer.getChannelData(0);
+      const handlePcmFrame = (input) => {
+        if (!micActive || !input?.length) return;
         micChunks.push(new Float32Array(input));
         let sum = 0;
         for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
         const rms = Math.sqrt(sum / input.length);
         const now = performance.now();
-        if (rms > 0.018) {
+        if (rms > 0.022) {
           micHasVoice = true;
+          micVoiceStreak += 1;
           micSpokeAt = now;
-          if (ttsActive) interruptSpeech();
-        } else if (micHasVoice && now - micSpokeAt > 1250 && now - micStartedAt > 900) {
-          // Keep full-duplex stream continuously open across turns; flush only the finished utterance.
-          const batch = micChunks;
-          micChunks = [];
-          micHasVoice = false;
-          micStartedAt = now;
-          if (batch.length) submitWavForTranscription(encodePcmWav(batch, micCtx?.sampleRate || 48000));
-        } else if (!micHasVoice && micChunks.length > 24) {
-          micChunks.splice(0, micChunks.length - 12);
+          if (ttsActive && micVoiceStreak >= 3) interruptSpeech();
+        } else {
+          micVoiceStreak = 0;
+          if (micHasVoice && now - micSpokeAt > 1250 && now - micStartedAt > 900) {
+            // Keep full-duplex stream continuously open across turns; flush only the finished utterance.
+            const batch = micChunks;
+            micChunks = [];
+            micHasVoice = false;
+            micStartedAt = now;
+            if (batch.length) submitWavForTranscription(encodePcmWav(batch, micCtx?.sampleRate || 48000));
+          } else if (!micHasVoice && micChunks.length > 24) {
+            micChunks.splice(0, micChunks.length - 12);
+          }
         }
       };
 
-      source.connect(micProcessor);
-      micProcessor.connect(micCtx.destination);
+      if (micCtx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+        await micCtx.audioWorklet.addModule('/static/voice-capture.js');
+        if (micOpenAborted || !micCtx) {
+          stopMicCapture({ transcribe: false });
+          return;
+        }
+        const worklet = new AudioWorkletNode(micCtx, 'moss-voice-capture');
+        const silentGain = micCtx.createGain();
+        silentGain.gain.value = 0;
+        worklet.port.onmessage = (ev) => {
+          if (ev.data instanceof Float32Array) handlePcmFrame(ev.data);
+        };
+        source.connect(worklet);
+        worklet.connect(silentGain);
+        silentGain.connect(micCtx.destination);
+        micProcessor = worklet;
+      } else {
+        const proc = micCtx.createScriptProcessor(4096, 1, 1);
+        proc.onaudioprocess = (ev) => handlePcmFrame(ev.inputBuffer.getChannelData(0));
+        source.connect(proc);
+        proc.connect(micCtx.destination);
+        micProcessor = proc;
+      }
       micActive = true;
       onMicState?.({ active: true });
       onStatus?.('voice.listening');
@@ -547,7 +573,7 @@ export function createVoiceEngine({
     const lease = sessionLease;
     sessionLease = null;
     sessionWarmRenewAt = 0;
-    if (lease) {
+    if (lease && document.body?.dataset?.authRole !== 'C') {
       void fetch('/api/prepare-speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -559,6 +585,10 @@ export function createVoiceEngine({
   }
 
   function syncSessionWarm({ force = false } = {}) {
+    if (document.body?.dataset?.authRole === 'C') {
+      releaseSessionWarm('off');
+      return false;
+    }
     if (!voiceResident || !ttsEnabled) {
       releaseSessionWarm('off');
       return false;
@@ -667,7 +697,7 @@ export function createVoiceEngine({
   }
 
   function prepareImports() {
-    if (!ttsEnabled || getMode?.() !== 'live' || document.hidden || !document.hasFocus()) return false;
+    if (document.body?.dataset?.authRole === 'C' || !ttsEnabled || getMode?.() !== 'live' || document.hidden || !document.hasFocus()) return false;
     const now = performance.now();
     if (now - lastImportRequest < 8000) return true;
     lastImportRequest = now;

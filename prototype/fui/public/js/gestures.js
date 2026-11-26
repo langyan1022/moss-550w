@@ -126,18 +126,17 @@ export function createHandGestureController({
   let activeNoticeVars = null;
 
   let lastOptics = { yaw: 0, pitch: 0, x: 0.5, grip: null };
-  if (canvas) {
-    canvas.addEventListener('moss-optics', (ev) => {
-      if (ev.detail) {
-        lastOptics = {
-          yaw: typeof ev.detail.yaw === 'number' ? ev.detail.yaw : lastOptics.yaw,
-          pitch: typeof ev.detail.pitch === 'number' ? ev.detail.pitch : lastOptics.pitch,
-          x: typeof ev.detail.x === 'number' ? ev.detail.x : lastOptics.x,
-          grip: ev.detail.grip !== undefined ? ev.detail.grip : lastOptics.grip,
-        };
-      }
-    });
+  function onOptics(ev) {
+    if (ev.detail) {
+      lastOptics = {
+        yaw: typeof ev.detail.yaw === 'number' ? ev.detail.yaw : lastOptics.yaw,
+        pitch: typeof ev.detail.pitch === 'number' ? ev.detail.pitch : lastOptics.pitch,
+        x: typeof ev.detail.x === 'number' ? ev.detail.x : lastOptics.x,
+        grip: ev.detail.grip !== undefined ? ev.detail.grip : lastOptics.grip,
+      };
+    }
   }
+  canvas?.addEventListener('moss-optics', onOptics);
 
   if (toggle) toggle.checked = false;
   for (const btn of triggerButtons) btn.setAttribute('aria-pressed', 'false');
@@ -474,8 +473,8 @@ export function createHandGestureController({
         ? 'gesture.need_3d'
         : '';
     if (toggle) toggle.disabled = Boolean(unavailableKey);
-    // Keep stage button clickable when only camera is missing so user gets an honest stage notice
-    if (stageButton) stageButton.disabled = !sceneReady();
+    // Keep stage button clickable even when camera or 3D stage is unready so user gets an honest HUD notice
+    if (stageButton) stageButton.disabled = false;
     if (unavailableKey) {
       if (current) stop(unavailableKey);
       else setStatus(unavailableKey);
@@ -498,7 +497,153 @@ export function createHandGestureController({
     } catch { /* Permissions API camera query is optional */ }
   }
 
+  async function createMainThreadHandTracker(session) {
+    const { FilesetResolver, HandLandmarker } = await import(`${ASSETS}/vision_bundle.mjs`);
+    if (current !== session) return null;
+    const files = await FilesetResolver.forVisionTasks(`${ASSETS}/wasm`);
+    if (current !== session) return null;
+    const tracker = await HandLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: `${ASSETS}/hand_landmarker.task`, delegate: 'CPU' },
+      runningMode: 'VIDEO',
+      numHands: 1,
+    });
+    if (current !== session) {
+      try { tracker.close?.(); } catch { /* ignore */ }
+      return null;
+    }
+    return tracker;
+  }
+
+  async function createHandTracker(session) {
+    // Prefer running MediaPipe HandLandmarker inside a Web Worker; automatically fall back to main thread if unsupported or mocked.
+    const hasWindowMock = typeof window.__mockHandFrame === 'function';
+    if (!hasWindowMock && typeof Worker === 'function' && typeof createImageBitmap === 'function') {
+      try {
+        const worker = new Worker('./js/gesture-worker.js', { type: 'module' });
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            try { worker.terminate(); } catch { /* ignore */ }
+            reject(new Error('worker_timeout'));
+          }, 8000);
+          worker.onmessage = (ev) => {
+            if (ev.data?.type === 'ready') {
+              clearTimeout(timer);
+              resolve();
+            } else if (ev.data?.type === 'error') {
+              clearTimeout(timer);
+              try { worker.terminate(); } catch { /* ignore */ }
+              reject(new Error(ev.data.message || 'worker_error'));
+            }
+          };
+          worker.onerror = (err) => {
+            clearTimeout(timer);
+            try { worker.terminate(); } catch { /* ignore */ }
+            reject(err);
+          };
+          worker.postMessage({ type: 'init', assets: ASSETS });
+        });
+        if (current !== session) {
+          worker.terminate();
+          return null;
+        }
+        let pending = false;
+        let pendingTimer = 0;
+        let lastLandmarks = null;
+        let switching = false;
+        let fallbackTracker = null;
+        const switchToMainThread = () => {
+          if (switching || fallbackTracker) return;
+          switching = true;
+          pending = false;
+          clearTimeout(pendingTimer);
+          pendingTimer = 0;
+          try { worker.terminate(); } catch { /* ignore */ }
+          createMainThreadHandTracker(session)
+            .then((mt) => {
+              if (!mt || current !== session) {
+                try { mt?.close?.(); } catch { /* ignore */ }
+                return;
+              }
+              fallbackTracker = mt;
+              if (session.tracker === wrapper) session.tracker = mt;
+            })
+            .catch(() => {
+              switching = false;
+              if (current === session) stop('gesture.failed', null, { notifyStage: true });
+            });
+        };
+        worker.onmessage = (ev) => {
+          pending = false;
+          clearTimeout(pendingTimer);
+          pendingTimer = 0;
+          if (ev.data?.type === 'landmarks') {
+            lastLandmarks = ev.data.hand ? [ev.data.hand] : [];
+          } else if (ev.data?.type === 'fatal') {
+            switchToMainThread();
+          }
+        };
+        worker.onerror = () => {
+          switchToMainThread();
+        };
+        let closed = false;
+        const wrapper = {
+          detectForVideo(vid, ts) {
+            if (closed) return null;
+            if (fallbackTracker) return fallbackTracker.detectForVideo(vid, ts);
+            if (switching) return null;
+            if (typeof window.__mockHandFrame === 'function') {
+              switchToMainThread();
+              return null;
+            }
+            if (!pending && vid.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+              pending = true;
+              pendingTimer = setTimeout(() => {
+                if (closed) return;
+                if (pending) {
+                  pending = false;
+                  switchToMainThread();
+                }
+              }, 4000);
+              createImageBitmap(vid)
+                .then((bitmap) => {
+                  if (closed || switching || fallbackTracker) { try { bitmap?.close?.(); } catch { /* ignore */ } return; }
+                  worker.postMessage({ type: 'frame', bitmap, ts }, [bitmap]);
+                })
+                .catch(() => {
+                  pending = false;
+                  clearTimeout(pendingTimer);
+                  pendingTimer = 0;
+                });
+            }
+            return lastLandmarks ? { landmarks: lastLandmarks } : null;
+          },
+          close() {
+            closed = true;
+            pending = false;
+            switching = false;
+            clearTimeout(pendingTimer);
+            pendingTimer = 0;
+            if (fallbackTracker) {
+              try { fallbackTracker.close?.(); } catch { /* ignore */ }
+              return;
+            }
+            try { worker.postMessage({ type: 'close' }); } catch { /* ignore */ }
+            worker.terminate();
+          },
+        };
+        return wrapper;
+      } catch {
+        // Fallback to main thread below
+      }
+    }
+    return createMainThreadHandTracker(session);
+  }
+
   async function start() {
+    if (startingSession) {
+      stop('gesture.busy', null, { notifyStage: true });
+      return;
+    }
     if (!video || current) return;
     const requestCamera = getCameraApi();
     if (!requestCamera || !sceneReady() || document.hidden) {
@@ -506,10 +651,6 @@ export function createHandGestureController({
       syncButtons(false);
       setStatus(reason);
       if (!document.hidden) showNotice(reason);
-      return;
-    }
-    if (startingSession) {
-      stop('gesture.busy', null, { notifyStage: true });
       return;
     }
     const session = {
@@ -528,17 +669,9 @@ export function createHandGestureController({
     setStatus('gesture.loading');
     setBadge('gesture.badge_ready', 'data');
     try {
-      const { FilesetResolver, HandLandmarker } = await import(`${ASSETS}/vision_bundle.mjs`);
-      if (current !== session) return;
-      const files = await FilesetResolver.forVisionTasks(`${ASSETS}/wasm`);
-      if (current !== session) return;
-      const tracker = await HandLandmarker.createFromOptions(files, {
-        baseOptions: { modelAssetPath: `${ASSETS}/hand_landmarker.task`, delegate: 'CPU' },
-        runningMode: 'VIDEO',
-        numHands: 1,
-      });
-      if (current !== session) {
-        try { tracker.close?.(); } catch { /* ignore */ }
+      const tracker = await createHandTracker(session);
+      if (!tracker || current !== session) {
+        try { tracker?.close?.(); } catch { /* ignore */ }
         return;
       }
       session.tracker = tracker;
@@ -710,9 +843,19 @@ export function createHandGestureController({
   window.addEventListener('pagehide', () => { if (current) stop('gesture.closed'); });
 
   const observer = new MutationObserver(refresh);
-  if (canvas) observer.observe(canvas, { attributes: true, attributeFilter: ['data-ready', 'data-error'] });
-  if (stageMain) observer.observe(stageMain, { attributes: true, attributeFilter: ['data-opening'] });
-  refresh();
+  function bindGestureCanvas(nextCanvas) {
+    canvas?.removeEventListener('moss-optics', onOptics);
+    canvas = nextCanvas || null;
+    observer.disconnect();
+    if (stageMain) observer.observe(stageMain, { attributes: true, attributeFilter: ['data-opening'] });
+    if (canvas) {
+      canvas.addEventListener('moss-optics', onOptics);
+      observer.observe(canvas, { attributes: true, attributeFilter: ['data-ready', 'data-error'] });
+    }
+    refresh();
+  }
+  bindGestureCanvas(canvas);
+  document.addEventListener('moss-stage-canvas-replaced', (ev) => bindGestureCanvas(ev.detail?.canvas));
 
   return {
     refresh,

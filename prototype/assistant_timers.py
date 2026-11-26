@@ -29,7 +29,7 @@ DECIMAL_DATE = r"(?P<year>[0-9]{4})(?P<sep>[-/])(?P<month>[0-9]{1,2})(?P=sep)(?P
 CHINESE_DATE_TOKEN = rf"(?:{CALENDAR_YEAR}年)?{CALENDAR_NUMBER}月{CALENDAR_NUMBER}[日号]"
 ISO_DATE_TOKEN = r"[0-9]{4}(?:-[0-9]{1,2}-[0-9]{1,2}|/[0-9]{1,2}/[0-9]{1,2})"
 DATE_TOKEN = rf"(?:{CHINESE_DATE_TOKEN}|{ISO_DATE_TOKEN})"
-DAY = rf"(?:今天|明天|后天|{WEEKDAY}|{DATE_TOKEN})"
+DAY = rf"(?:今天|明天|大后天|后天|{WEEKDAY}|{DATE_TOKEN})"
 CLOCK = (rf"(?P<day>{DAY})?\s*(?P<period>{PERIOD})?\s*(?P<hour>{NUMBER})"
          rf"(?:(?P<half>点半)|点(?:(?P<minute>{NUMBER})分?)?|:(?P<digits>\d{{1,2}}))")
 TIMER = r"(?:提醒|闹钟|倒计时|计时器)"
@@ -49,7 +49,7 @@ COUNTDOWN = re.compile(
     rf"\s*{TIMER}(?:\s*(?:#|编号|第)?\s*(?P<id>\d+)号?)?"
     r"\s*(?:还(?:有|剩)多久|多久(?:才|会)?到(?:时间)?|几点(?:钟)?(?:提醒|响)?|什么时候(?:到|响)?)"
 )
-DAY_OFFSETS = {"今天": 0, "明天": 1, "后天": 2, "今早": 0, "今晚": 0, "明早": 1, "明晚": 1}
+DAY_OFFSETS = {"今天": 0, "明天": 1, "后天": 2, "大后天": 3, "今早": 0, "今晚": 0, "明早": 1, "明晚": 1}
 WEEK_OFFSETS = {"本":0, "这":0, "上":-7, "下一":7, "下":7, "上一":-7}
 DAY_NAMES = {value:index for index, value in enumerate("一二三四五六七")}
 DAY_NAMES.update({"日":6, "天":6, **{str(index+1):index for index in range(7)}})
@@ -82,9 +82,9 @@ CHAINED_TIMER = re.compile(
     rf"|{CLOCK}\s*(?:提醒我|叫我|通知我))"
 )
 COMPOUND_OTHER_ACTION = re.compile(
-    r"[，,。；;]\s*(?:顺便|顺带|另外|再帮我|再给我|并帮我|并给我|同时帮我)\s*"
+    r"[，,。；;]\s*(?:顺便|顺带|另外|然后|接着|再帮我|再给我|并帮我|并给我|同时帮我|同时)\s*"
     r"(?:请|帮我|给我|麻烦你?\s*)*"
-    r"(?:查|看|算|计算|记|写|搜|搜索|读|打开|关|开|播|放|问|告诉|汇总|总结|列出)"
+    r"(?:查|看|算|计算|记|写|搜|搜索|读|打开|关|开|播|放|问|告诉|汇总|总结|列出|改|调)"
 )
 
 
@@ -186,6 +186,8 @@ def parse_timer(text):
     text = unicodedata.normalize("NFKC", text).strip().rstrip("。！!").strip()
     text = normalize_colloquial_erhua(text)
     text = re.sub(r"^(?:MOSS\s*[,，]?\s*)?(?:(?:请(?:你)?|麻烦(?:你)?|帮我|给我)\s*)*", "", text, flags=re.I)
+    if re.search(r"每天|每日|工作日|每(?:个?)?(?:周|星期|礼拜)|每隔|每月", text):
+        return None
     query = text.rstrip("?？").strip()
     short = re.sub(r"^(?:(?:查看|查(?:看|询)?|列出|显示|看看|看)(?:一下)?\s*)?(?:我(?:的)?\s*)?", "", query)
     window = QUERY_WINDOW.fullmatch(short)
@@ -232,8 +234,8 @@ def parse_timer(text):
 
 def display_time(epoch):
     moment = datetime.fromtimestamp(epoch)
-    label = "%m月%d日 %H:%M:%S" if moment.year == datetime.now().year else "%Y年%m月%d日 %H:%M:%S"
-    return moment.strftime(label)
+    prefix = "" if moment.year == datetime.now().year else f"{moment.year:04d}年"
+    return f"{prefix}{moment.month:02d}月{moment.day:02d}日 {moment:%H:%M:%S}"
 
 
 def calendar_number(value):
@@ -349,7 +351,7 @@ def query_window(window, current):
                 last += timedelta(days=1)
         if last == first:
             raise ValueError(message)
-        return first, last, f"{first:%m月%d日 %H:%M} 到 {last:%m月%d日 %H:%M}"
+        return first, last, f"{first.month:02d}月{first.day:02d}日 {first:%H:%M} 到 {last.month:02d}月{last.day:02d}日 {last:%H:%M}"
     part = part or ALIAS_PARTS.get(day)
     first_hour, last_hour = DAY_PARTS[part] if part else (0, 24)
     if DATE_PATTERN.fullmatch(day) or ISO_DATE_PATTERN.fullmatch(day):

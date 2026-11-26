@@ -71,5 +71,22 @@ def install_fui(app, public):
         return web.FileResponse(public / "vendor/models/selfie_segmenter.tflite",
                                 headers={"Cache-Control": "public, max-age=86400"})
 
+    async def web_manifest(request):
+        return web.FileResponse(
+            public / "manifest.webmanifest",
+            headers={"Content-Type": "application/manifest+json; charset=utf-8", "Cache-Control": "no-cache"},
+        )
+
+    async def service_worker(request):
+        return web.FileResponse(
+            public / "sw.js",
+            headers={
+                "Content-Type": "application/javascript; charset=utf-8",
+                "Service-Worker-Allowed": "/",
+                "Cache-Control": "no-cache",
+            },
+        )
+
     app.add_routes([web.get("/fui/local-weather", weather), web.get("/fui/model/selfie_segmenter.tflite", portrait_model),
+                    web.get("/manifest.webmanifest", web_manifest), web.get("/sw.js", service_worker),
                     *(web.static(f"/{name}", public / name) for name in ("js", "styles", "vendor"))])

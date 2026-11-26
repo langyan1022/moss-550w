@@ -30,6 +30,17 @@ def install_online_music_routes(app, moss):
         except (ValueError, TypeError) as exc:
             return web.json_response({"error": str(exc)}, status=400)
 
+    def _lookup_local_media_sync(db_path, media_id: str) -> tuple[str, str, str]:
+        try:
+            if db_path.is_file():
+                with closing(sqlite3.connect(db_path, timeout=1)) as mdb:
+                    row = mdb.execute("SELECT path, title, artist FROM media WHERE media_id=?", (media_id,)).fetchone()
+                    if row:
+                        return str(row[0] or ""), str(row[1] or ""), str(row[2] or "")
+        except Exception:
+            pass
+        return "", "", ""
+
     async def media_lyrics(request):
         mid = request.match_info.get("media_id", "")
         if not mid:
@@ -38,16 +49,9 @@ def install_online_music_routes(app, moss):
         q_artist = str(request.query.get("artist") or "").strip()[:80]
         audio_path = ""
         if not mid.startswith("ol_"):
-            try:
-                if moss.media.db.is_file():
-                    with closing(sqlite3.connect(moss.media.db, timeout=1)) as mdb:
-                        row = mdb.execute("SELECT path, title, artist FROM media WHERE media_id=?", (mid,)).fetchone()
-                        if row:
-                            audio_path = str(row[0] or "")
-                            q_title = q_title or str(row[1] or "")
-                            q_artist = q_artist or str(row[2] or "")
-            except Exception:
-                audio_path = ""
+            audio_path, row_title, row_artist = await asyncio.to_thread(_lookup_local_media_sync, moss.media.db, mid)
+            q_title = q_title or row_title
+            q_artist = q_artist or row_artist
         lines = await asyncio.to_thread(load_lrc_for_media_path, audio_path) if audio_path else []
         if lines:
             return web.json_response(
@@ -109,14 +113,18 @@ def install_online_music_routes(app, moss):
         if moss.online_music.is_isolated():
             raise web.HTTPServiceUnavailable(text="离线隔离模式已禁用在线封面加载。")
         try:
-            target = moss.online_music.resolve_cover_target(mid)
+            target = await asyncio.to_thread(moss.online_music.resolve_cover_target, mid, False)
         except FileNotFoundError as exc:
             raise web.HTTPNotFound(text=str(exc)) from None
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from None
 
-        cur_url = target["url"]
         allow_internal = bool(target.get("allow_internal"))
+        ident = request.get("moss_identity")
+        if allow_internal and ident is not None and ident.get("role") != "CS":
+            raise web.HTTPForbidden(text="仅 CS 管理员可访问私有曲库封面。")
+
+        cur_url = target["url"]
         allow_http = bool(target.get("allow_http"))
         allowed_netloc = str(target.get("allowed_netloc") or "")
         timeout = aiohttp.ClientTimeout(total=8, connect=5, sock_read=5)
@@ -161,14 +169,18 @@ def install_online_music_routes(app, moss):
         if moss.online_music.is_isolated():
             raise web.HTTPServiceUnavailable(text="当前处于离线隔离模式，在线音频流已禁用。")
         try:
-            target = moss.online_music.resolve_stream_target(mid)
+            target = await asyncio.to_thread(moss.online_music.resolve_stream_target, mid, False)
         except FileNotFoundError as exc:
             raise web.HTTPNotFound(text=str(exc)) from None
         except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc)) from None
 
-        cur_url = target["url"]
         allow_internal = bool(target.get("allow_internal"))
+        ident = request.get("moss_identity")
+        if allow_internal and ident is not None and ident.get("role") != "CS":
+            raise web.HTTPForbidden(text="仅 CS 管理员可访问私有曲库音频流。")
+
+        cur_url = target["url"]
         allow_http = bool(target.get("allow_http"))
         allowed_netloc = str(target.get("allowed_netloc") or "")
         is_live = bool(target.get("live"))
@@ -224,6 +236,8 @@ def install_online_music_routes(app, moss):
                                     break
                             if not next_url:
                                 raise web.HTTPBadGateway(text="电台播放列表中无有效音频地址")
+                            if allow_internal and urlsplit(next_url).netloc != allowed_netloc:
+                                raise web.HTTPBadGateway(text="拒绝跳转到配置以外的服务主机")
                             cur_url = next_url
                             continue
 

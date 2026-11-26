@@ -9,12 +9,12 @@ import subprocess
 
 from playwright.async_api import async_playwright
 
-from browser_lab import BrowserServer, ROOT, open_browser
+from testkit import BrowserServer, ROOT, open_browser, safe_free_port
 from verify_memory import new_chat, send
 
 
 async def run(folder, url, profile):
-    server = BrowserServer(folder, 18227)
+    server = BrowserServer(folder, safe_free_port())
     code = "G-" + secrets.token_hex(3).upper()
     facts = ["坐高铁时，我的订座代号是 " + code, "我更喜欢红茶。", "周二上午开例会。", "冬天喜欢穿蓝色外套。"]
     report = {"passed": False, "profile": profile, "expected": code, "pids": [], "events": []}
@@ -47,7 +47,7 @@ async def run(folder, url, profile):
             await page.get_by_test_id("memory-close").click()
             await server.stop()
             # 只让这个测试进程连接到没有监听的端口，保留共享服务。
-            server.memory_url = "http://127.0.0.1:18279"
+            server.memory_url = "http://127.0.0.1:18379"
             await server.start()
             report["pids"].append(server.pid)
             status, state = await server.post("/api/forget", {"id": original[facts[0]]})
@@ -76,8 +76,8 @@ async def run(folder, url, profile):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=18237)
-    parser.add_argument("--embedding-port", type=int, default=18236)
+    parser.add_argument("--port", type=int, default=18337)
+    parser.add_argument("--embedding-port", type=int, default=18336)
     parser.add_argument("--profile", choices=["nomic", "bge"], default="nomic")
     parser.add_argument("--out", type=Path, default=ROOT / "runs" / datetime.now().strftime("memory-service-%Y%m%d-%H%M%S"))
     args = parser.parse_args()

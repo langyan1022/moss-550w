@@ -34,7 +34,6 @@ export function initOpening({ onFinish } = {}) {
   const waiting = document.getElementById('opening-wait-model');
   const skipBtn = document.getElementById('skip-opening');
   const stageMain = document.querySelector('main');
-  const model = document.getElementById('moss-model');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 
   let timer = 0;
@@ -80,6 +79,7 @@ export function initOpening({ onFinish } = {}) {
   }
 
   function modelStillLoading() {
+    const model = document.getElementById('moss-model');
     return model && !model.hidden && model.dataset.ready !== 'true' && !model.dataset.error;
   }
 

@@ -1,7 +1,7 @@
 """Same-origin provider and media-library settings for the local FUI console."""
 import asyncio
 import base64
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime
 import hashlib
 import hmac
@@ -13,6 +13,7 @@ import re
 import secrets
 import sqlite3
 from tempfile import NamedTemporaryFile
+from time import monotonic
 
 from aiohttp import web
 import aiohttp
@@ -118,30 +119,30 @@ def install_console_settings(app, moss):
     })
     ADMIN_CODE = "MOSS"
 
-    moss.db.execute(
-        """CREATE TABLE IF NOT EXISTS auth_users (
-            code TEXT PRIMARY KEY,
-            role TEXT NOT NULL CHECK(role IN ('CS', 'C')),
-            label TEXT NOT NULL DEFAULT '',
-            disabled INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            last_seen_at TEXT NOT NULL,
-            last_chat_id TEXT NOT NULL DEFAULT ''
-        )"""
-    )
-    existing_cols = {r[1] for r in moss.db.execute("PRAGMA table_info(auth_users)").fetchall()}
-    if "label" not in existing_cols:
-        moss.db.execute("ALTER TABLE auth_users ADD COLUMN label TEXT NOT NULL DEFAULT ''")
-    if "disabled" not in existing_cols:
-        moss.db.execute("ALTER TABLE auth_users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
-    moss.db.execute(
-        """CREATE TABLE IF NOT EXISTS console_prefs (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )"""
-    )
-    moss.db.commit()
+    with (nullcontext() if moss.db.in_transaction else moss.db):
+        moss.db.execute(
+            """CREATE TABLE IF NOT EXISTS auth_users (
+                code TEXT PRIMARY KEY,
+                role TEXT NOT NULL CHECK(role IN ('CS', 'C')),
+                label TEXT NOT NULL DEFAULT '',
+                disabled INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                last_chat_id TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        existing_cols = {r[1] for r in moss.db.execute("PRAGMA table_info(auth_users)").fetchall()}
+        if "label" not in existing_cols:
+            moss.db.execute("ALTER TABLE auth_users ADD COLUMN label TEXT NOT NULL DEFAULT ''")
+        if "disabled" not in existing_cols:
+            moss.db.execute("ALTER TABLE auth_users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+        moss.db.execute(
+            """CREATE TABLE IF NOT EXISTS console_prefs (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"""
+        )
 
     def _pref_get(key, default=None):
         row = moss.db.execute("SELECT value FROM console_prefs WHERE key=?", (key,)).fetchone()
@@ -154,23 +155,23 @@ def install_console_settings(app, moss):
 
     def _pref_set(key, val):
         now_s = datetime.now().isoformat(timespec="seconds")
-        moss.db.execute(
-            "INSERT INTO console_prefs(key, value, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-            (key, json.dumps(val, ensure_ascii=False), now_s),
-        )
-        moss.db.commit()
+        with (nullcontext() if moss.db.in_transaction else moss.db):
+            moss.db.execute(
+                "INSERT INTO console_prefs(key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, json.dumps(val, ensure_ascii=False), now_s),
+            )
 
     def _ensure_user(code: str, *, label: str = "") -> dict:
         norm = code.strip().upper()
         role = "CS" if norm == ADMIN_CODE else "C"
         now_s = datetime.now().isoformat(timespec="seconds")
-        moss.db.execute(
-            "INSERT INTO auth_users(code, role, label, disabled, created_at, last_seen_at, last_chat_id) VALUES (?, ?, ?, 0, ?, ?, '') "
-            "ON CONFLICT(code) DO UPDATE SET role=excluded.role, last_seen_at=excluded.last_seen_at",
-            (norm, role, label[:40], now_s, now_s),
-        )
-        moss.db.commit()
+        with (nullcontext() if moss.db.in_transaction else moss.db):
+            moss.db.execute(
+                "INSERT INTO auth_users(code, role, label, disabled, created_at, last_seen_at, last_chat_id) VALUES (?, ?, ?, 0, ?, ?, '') "
+                "ON CONFLICT(code) DO UPDATE SET role=excluded.role, last_seen_at=excluded.last_seen_at",
+                (norm, role, label[:40], now_s, now_s),
+            )
         row = moss.db.execute(
             "SELECT code, role, label, disabled, created_at, last_seen_at, last_chat_id FROM auth_users WHERE code=?",
             (norm,),
@@ -216,6 +217,9 @@ def install_console_settings(app, moss):
                 continue
         return out
 
+    def _hash_pass(secret_hex: str, password: str) -> str:
+        return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), secret_hex.encode("ascii"), 120_000).hex()
+
     def _auth_cfg():
         cfg = _pref_get("_auth_gate") or {}
         changed = False
@@ -227,6 +231,9 @@ def install_console_settings(app, moss):
             changed = True
         if cfg.get("scope") not in ("lan", "all"):
             cfg["scope"] = "lan"
+            changed = True
+        if "lan_cs_local_only" not in cfg:
+            cfg["lan_cs_local_only"] = os.environ.get("MOSS_LAN_CS_LOCAL_ONLY") == "1"
             changed = True
         if changed:
             _pref_set("_auth_gate", cfg)
@@ -309,10 +316,12 @@ def install_console_settings(app, moss):
                     continue
                 if len(json.dumps(v, ensure_ascii=False)) > 65536:
                     continue
+                if k == "local_cloud_cascade" and role == "CS":
+                    moss.set_local_cloud_cascade(bool(v))
                 _pref_set(f"user:{code}:{k}", v)
                 if k == "last_chat_id" and isinstance(v, str):
-                    moss.db.execute("UPDATE auth_users SET last_chat_id=? WHERE code=?", (v[:64], code))
-                    moss.db.commit()
+                    with (nullcontext() if moss.db.in_transaction else moss.db):
+                        moss.db.execute("UPDATE auth_users SET last_chat_id=? WHERE code=?", (v[:64], code))
             if rejected and len(rejected) == len(patch):
                 return reply({"error": "当前为 C 级权限，仅支持保存工牌、定位、频谱与陪伴语气等个性化配置。", "required_role": "CS"}, status=403)
             return reply({"code": code, "role": role, "is_admin": role == "CS",
@@ -330,17 +339,56 @@ def install_console_settings(app, moss):
         info["registered_users"] = int(users_count)
         return reply(info)
 
+    _verify_failures: dict[str, list[float]] = {}
+    _provision_attempts: dict[str, list[float]] = {}
+
     async def auth_verify(request):
+        remote = str(request.remote or "local")
+        now_m = monotonic()
+        recent_fails = [t for t in _verify_failures.get(remote, ()) if now_m - t < 60.0]
+        if recent_fails:
+            _verify_failures[remote] = recent_fails
+        else:
+            _verify_failures.pop(remote, None)
+        recent_prov = [t for t in _provision_attempts.get(remote, ()) if now_m - t < 60.0]
+        if recent_prov:
+            _provision_attempts[remote] = recent_prov
+        else:
+            _provision_attempts.pop(remote, None)
+        if len(recent_fails) >= 20:
+            return reply({"ok": False, "error": "尝试过于频繁，请一分钟后再试。"}, status=429)
         try:
             body = await body_for(request)
             raw_code = str(body.get("code") or "").strip().upper()
             if not re.fullmatch(r"[A-Z0-9]{4}", raw_code):
+                _verify_failures.setdefault(remote, []).append(now_m)
                 return reply({"ok": False, "error": "授权码须为 4 位字母或数字（不区分大小写）。"}, status=400)
             cfg = _auth_cfg()
+            is_local_req = remote in ("127.0.0.1", "::1", "local")
+            if raw_code == ADMIN_CODE and not is_local_req:
+                env_pass = os.environ.get("MOSS_ADMIN_PASS") or ""
+                pass_hash = _hash_pass(cfg["secret"], env_pass) if env_pass else str(cfg.get("admin_pass_hash") or "")
+                supplied_pass = str(body.get("password") or body.get("admin_pass") or "")
+                if bool(cfg.get("lan_cs_local_only")) or (
+                    os.environ.get("MOSS_LAN_CS_LOCAL_ONLY") == "1"
+                ):
+                    _verify_failures.setdefault(remote, []).append(now_m)
+                    return reply({"error": "局域网已禁用默认 CS 授权，仅允许 C 级访客或从本机登录 CS。", "required_role": "local"}, status=403)
+                if pass_hash and not hmac.compare_digest(_hash_pass(cfg["secret"], supplied_pass), pass_hash):
+                    _verify_failures.setdefault(remote, []).append(now_m)
+                    return reply({"error": "非本机请求 CS 管理身份需要正确的管理员密码。", "password_required": True}, status=403)
             existing_u = moss.db.execute("SELECT disabled FROM auth_users WHERE code=?", (raw_code,)).fetchone()
             if raw_code != ADMIN_CODE and existing_u and existing_u[0]:
+                _verify_failures.setdefault(remote, []).append(now_m)
                 return reply({"ok": False, "error": f"授权码 {raw_code} 已被管理员停用，请联系 CS 管理员。"}, status=403)
+            if raw_code != ADMIN_CODE and existing_u is None:
+                is_local_req = remote in ("127.0.0.1", "::1", "local")
+                cap = 30 if is_local_req else 10
+                if len(recent_prov) >= cap:
+                    return reply({"ok": False, "error": "新授权码注册过于频繁，请稍后再试。"}, status=429)
+                _provision_attempts.setdefault(remote, []).append(now_m)
             user = _ensure_user(raw_code)
+            _verify_failures.pop(remote, None)
             code, role = user["code"], user["role"]
             sig = _sign_session(cfg["secret"], code, role)
             prefs = _user_prefs(code)
@@ -375,10 +423,19 @@ def install_console_settings(app, moss):
             cfg = _auth_cfg()
             enabled = bool(body.get("enabled", cfg.get("enabled", True)))
             scope = body.get("scope") if body.get("scope") in ("lan", "all") else (cfg.get("scope") or "lan")
+            lan_cs_local = bool(body.get("lan_cs_local_only", cfg.get("lan_cs_local_only", False)))
             cfg["enabled"] = enabled
             cfg["scope"] = scope
+            cfg["lan_cs_local_only"] = lan_cs_local
+            if isinstance(body.get("admin_pass"), str):
+                raw_pw = body["admin_pass"].strip()
+                cfg["admin_pass_hash"] = _hash_pass(cfg["secret"], raw_pw) if raw_pw else ""
             _pref_set("_auth_gate", cfg)
-            resp = reply({"enabled": enabled, "scope": scope, "authorized": True, "code": ident["code"], "role": "CS", "is_admin": True})
+            resp = reply({
+                "enabled": enabled, "scope": scope, "lan_cs_local_only": lan_cs_local,
+                "has_admin_pass": bool(cfg.get("admin_pass_hash") or os.environ.get("MOSS_ADMIN_PASS")),
+                "authorized": True, "code": ident["code"], "role": "CS", "is_admin": True,
+            })
             sig = _sign_session(cfg["secret"], ADMIN_CODE, "CS")
             resp.set_cookie(
                 "moss_auth", sig, max_age=30 * 86400, httponly=True, samesite="Lax",
@@ -392,7 +449,7 @@ def install_console_settings(app, moss):
         if request.headers.get("Origin") != f"{request.scheme}://{request.host}":
             raise web.HTTPForbidden()
         resp = reply({"ok": True, "authorized": False})
-        resp.del_cookie("moss_auth", path="/")
+        resp.del_cookie("moss_auth", path="/", httponly=True, samesite="Lax", secure=(request.scheme == "https"))
         return resp
 
     async def auth_users_handler(request):
@@ -408,15 +465,50 @@ def install_console_settings(app, moss):
                 return reply({"error": "无效的 4 位授权码。"}, status=400)
             if target == ADMIN_CODE:
                 return reply({"error": "不可删除终极管理员授权码 MOSS。"}, status=400)
-            moss.db.execute("DELETE FROM auth_users WHERE code=?", (target,))
-            moss.db.execute("DELETE FROM console_prefs WHERE key LIKE ?", (f"user:{target}:%",))
-            moss.db.execute("DELETE FROM operator_chats WHERE owner_code=?", (target,))
-            moss.db.execute("DELETE FROM turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_code=?)", (target,))
-            moss.db.execute("DELETE FROM chats WHERE owner_code=?", (target,))
-            moss.db.execute("DELETE FROM memories WHERE COALESCE(owner_code,'MOSS')=?", (target,))
-            moss.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
-            moss.db.commit()
-            moss._notify()
+            with (nullcontext() if moss.db.in_transaction else moss.db):
+                moss.db.execute("DELETE FROM auth_users WHERE code=?", (target,))
+                moss.db.execute("DELETE FROM console_prefs WHERE key LIKE ?", (f"user:{target}:%",))
+                moss.db.execute("DELETE FROM operator_chats WHERE owner_code=?", (target,))
+                moss.db.execute("DELETE FROM turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_code=?)", (target,))
+                moss.db.execute("DELETE FROM chats WHERE owner_code=?", (target,))
+                moss.db.execute("DELETE FROM memories WHERE COALESCE(owner_code,'MOSS')=?", (target,))
+                for tbl in (
+                    "soul_profile", "soul_beliefs", "soul_distilled_turns",
+                    "rsi_lessons", "rsi_episodes", "rsi_cycles",
+                    "world_model_snapshots", "recurring_tasks", "music_prefs",
+                    "proactive_alerts",
+                ):
+                    try:
+                        moss.db.execute(f"DELETE FROM {tbl} WHERE COALESCE(owner_code,'MOSS')=?", (target,))
+                    except Exception:
+                        pass
+                try:
+                    moss.sag.purge_owner(target)
+                except Exception:
+                    pass
+                moss.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
+            try:
+                kept_alerts = [a for a in moss.pulse.alerts if a.get("owner_code") != target]
+                moss.pulse.alerts.clear()
+                moss.pulse.alerts.extend(kept_alerts)
+            except Exception:
+                pass
+            slot = moss._slots.pop(target, None)
+            if slot is not None:
+                if slot.token:
+                    slot.token.cancel()
+                if slot.track_resume_job and not slot.track_resume_job.done():
+                    slot.track_resume_job.cancel()
+                if slot.job and not slot.job.done() and not slot.job.cancelling():
+                    slot.job.cancel()
+            idx_job = moss._owner_index_sync_jobs.pop(target, None)
+            if idx_job and not idx_job.done():
+                idx_job.cancel()
+            try:
+                moss.rsi._dpo_path_for(target).unlink(missing_ok=True)
+            except Exception:
+                pass
+            moss._notify(target)
             return reply({"deleted": target, "users": _list_auth_users()})
         try:
             body = await body_for(request)
@@ -428,11 +520,11 @@ def install_console_settings(app, moss):
             if target == ADMIN_CODE and disabled:
                 raise ValueError("不可停用终极管理员授权码 MOSS。")
             _ensure_user(target, label=label)
-            if "label" in body:
-                moss.db.execute("UPDATE auth_users SET label=? WHERE code=?", (label, target))
-            if "disabled" in body and target != ADMIN_CODE:
-                moss.db.execute("UPDATE auth_users SET disabled=? WHERE code=?", (1 if disabled else 0, target))
-            moss.db.commit()
+            with (nullcontext() if moss.db.in_transaction else moss.db):
+                if "label" in body:
+                    moss.db.execute("UPDATE auth_users SET label=? WHERE code=?", (label, target))
+                if "disabled" in body and target != ADMIN_CODE:
+                    moss.db.execute("UPDATE auth_users SET disabled=? WHERE code=?", (1 if disabled else 0, target))
             return reply({"users": _list_auth_users()})
         except ValueError as err:
             return reply({"error": str(err)}, status=400)
@@ -443,13 +535,20 @@ def install_console_settings(app, moss):
             if key in SPECS:
                 url = profile.url if allowed(key, profile.url) else SPECS[key][2]
                 rows.append({**profile.public(), "base_url": url})
-        return {"providers": rows, "selected": moss.model_id}
+        return {
+            "providers": rows,
+            "selected": moss.model_id,
+            "local_cloud_cascade": moss.local_cloud_cascade_enabled(),
+        }
 
     async def providers(request):
         if request.method == "GET":
             return reply(provider_state())
         try:
             body = await body_for(request)
+            if "local_cloud_cascade" in body and body.get("id") is None:
+                moss.set_local_cloud_cascade(bool(body.get("local_cloud_cascade")))
+                return reply(provider_state())
             provider_id = body.get("id")
             if not isinstance(provider_id, str) or provider_id not in SPECS:
                 raise ValueError("未知模型服务商。")
@@ -464,13 +563,25 @@ def install_console_settings(app, moss):
             return reply({"error": "无法保存本机模型设置。"}, status=500)
         moss.cloud[provider_id] = profiles()[provider_id]
         retired = moss.clients.pop(provider_id, None)
+        if getattr(moss, "provider_health", None) is not None:
+            moss.provider_health.reset(provider_id)
         if moss.model_id == provider_id:
             moss.agent = None
         with moss.db:
             moss.db.execute("UPDATE state SET revision=revision+1 WHERE id=1")
         moss._notify()
         if retired:
-            await retired.close()
+            active_tasks = [t for t in getattr(getattr(moss, "jobs", None), "_tasks", {}).values() if not t.done()]
+            if not active_tasks:
+                await retired.close()
+            else:
+                async def _close_when_done():
+                    try:
+                        await asyncio.gather(*active_tasks, return_exceptions=True)
+                    finally:
+                        with suppress(Exception):
+                            await retired.close()
+                asyncio.create_task(_close_when_done())
         return reply(provider_state())
 
     def sources():
